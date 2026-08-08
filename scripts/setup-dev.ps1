@@ -28,6 +28,10 @@ Invoke-UvPip @(
     "uvicorn>=0.42.0", "websockets==10.2", "pytest>=9.0.2", "ruff>=0.15.10"
 )
 
+# 2b. Editable install of this repo so src/ packages (inference, static_tables,
+#     mahjong_env, project_data) resolve from source like they did pre-split.
+Invoke-UvPip @("-e", ".")
+
 # 3. keqing_core runtime wheel (built by keqing-mortal; pass -KeqingCoreWheel
 #    to override the default sibling path).
 if (-not $KeqingCoreWheel) {

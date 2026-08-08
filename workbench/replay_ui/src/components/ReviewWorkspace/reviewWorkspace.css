@@ -1,0 +1,190 @@
+/* Review Workspace 三栏外壳
+ * 响应式由 CSS container query 驱动：依据 MainLayout 实际可用宽度，
+ * 而不是监听 window 宽度。默认（紧凑）单栏 + 左右抽屉，宽布局三栏并排。
+ */
+
+.review-workspace-shell {
+  container-type: inline-size;
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  background: var(--page-bg);
+}
+
+.review-workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+/* 中栏：牌桌 */
+.review-workspace-center {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  /* 独立 stacking context：牌桌内部 overlay（结算浮层、focus 提示）不会压到抽屉上 */
+  isolation: isolate;
+  z-index: 0;
+}
+
+.review-workspace-board {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+/* compact toolbar：仅紧凑布局显示 */
+.review-workspace-compact-toolbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.review-workspace-compact-toolbar__button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--page-bg);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.review-workspace-compact-toolbar__button[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 右面板：紧凑布局下为抽屉（absolute 于 shell 内，不遮挡 MainLayout 顶栏）；
+   宽布局为静态右栏（导航 + Q/P 分析共用一个竖栏）。 */
+.review-workspace-right {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--card-bg);
+  /* 关闭抽屉移出键盘焦点顺序，并延迟 visibility 以保留滑出动画 */
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform 0.2s ease,
+    visibility 0s linear 0.2s;
+}
+
+.review-workspace-right {
+  right: 0;
+  width: min(360px, 92%);
+  border-left: 1px solid var(--border);
+  transform: translateX(105%);
+}
+
+.review-workspace-right[data-open="true"] {
+  transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+/* 右栏内导航区（对局/步进/视角控制）：固定在上方，超高时内部滚动 */
+.review-workspace-nav-section {
+  flex-shrink: 1;
+  min-height: 0;
+  max-height: 55%;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.review-workspace-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.42);
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.review-workspace-panel-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.review-workspace-panel-header__close {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--page-bg);
+  color: var(--text-primary);
+  width: 26px;
+  height: 26px;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.review-workspace-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.review-workspace-right-meta {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.review-workspace-right-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 宽布局：两栏并排（牌桌 + 右栏：导航 + 分析），抽屉相关元素退场 */
+@container (min-width: 1160px) {
+  .review-workspace-grid {
+    grid-template-columns: minmax(0, 1fr) 380px;
+  }
+
+  .review-workspace-right {
+    position: static;
+    width: auto;
+    transform: none;
+    z-index: auto;
+    visibility: visible;
+    pointer-events: auto;
+  }
+
+  .review-workspace-compact-toolbar,
+  .review-workspace-scrim,
+  .review-workspace-drawer-only {
+    display: none;
+  }
+}

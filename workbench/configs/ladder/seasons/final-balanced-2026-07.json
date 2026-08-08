@@ -1,0 +1,80 @@
+{
+  "schema": "keqing.ladder.season.v1",
+  "season_id": "final-balanced-2026-07",
+  "title": "Final Balanced League 2026-07",
+  "status": "completed",
+  "report_dir": "artifacts/experiments/model_pool_2026_07/V3_final_rank_mc_warmstart_2026_07/league_1000h_balanced/platform_accounts",
+  "league_summary": "artifacts/experiments/model_pool_2026_07/V3_final_rank_mc_warmstart_2026_07/league_1000h_balanced/league_summary.json",
+  "games_expected": 1000,
+  "scoring": {
+    "system": "tenhou_houou_7dan_fixed",
+    "version": "2026-07-01",
+    "game_length": "hanchan",
+    "room": "houou",
+    "initial_rank": "7dan",
+    "initial_pt": 1400,
+    "initial_rating": 1500,
+    "rank_points": [90, 45, 0, -135],
+    "target_pt": 2800
+  },
+  "models": [
+    {
+      "model_id": "70k",
+      "checkpoint": "artifacts/mortal_training/checkpoints/mortal_default_70k_promoted_candidate.pth",
+      "accounts": [
+        {
+          "account_id": "70k@01",
+          "display_name": "70k@01"
+        },
+        {
+          "account_id": "70k@02",
+          "display_name": "70k@02"
+        }
+      ]
+    },
+    {
+      "model_id": "ext_mortal",
+      "checkpoint": "artifacts/external_mortal_20240308_best_min.pth",
+      "accounts": [
+        {
+          "account_id": "ext_mortal@01",
+          "display_name": "ext_mortal@01"
+        },
+        {
+          "account_id": "ext_mortal@02",
+          "display_name": "ext_mortal@02"
+        }
+      ]
+    },
+    {
+      "model_id": "V3_74000",
+      "checkpoint": "artifacts/experiments/model_pool_2026_07/V3_final_rank_mc_warmstart_2026_07/checkpoints/mortal_74000.pth",
+      "accounts": [
+        {
+          "account_id": "V3_74000@01",
+          "display_name": "V3_74000@01"
+        },
+        {
+          "account_id": "V3_74000@02",
+          "display_name": "V3_74000@02"
+        }
+      ]
+    },
+    {
+      "model_id": "V2_74000",
+      "checkpoint": "artifacts/experiments/model_pool_2026_07/V2_population_mixed_v4_warmstart_2026_07/checkpoints/mortal_74000.pth",
+      "accounts": [
+        {
+          "account_id": "V2_74000@01",
+          "display_name": "V2_74000@01"
+        },
+        {
+          "account_id": "V2_74000@02",
+          "display_name": "V2_74000@02"
+        }
+      ]
+    }
+  ],
+  "notes": "V3 1,000-hanchan balanced model-pool league: five 200-hanchan lineups (L1-L5), each model family received exactly 1,000 seat-hanchans. Rank points [90,45,0,-135]. Accounts are declared explicitly; reports consume these stable ids instead of deriving identities from seats.",
+  "default": false
+}

@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>Replay Review — 结果</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; }
+
+    #nav {
+      position: sticky; top: 0; z-index: 100;
+      background: linear-gradient(135deg, #1e3a5f 0%, #2d5f8b 100%);
+      padding: 8px 16px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+    }
+    .nav-title { color: #fff; font-size: 15px; font-weight: 600; margin-right: auto; }
+    .btn {
+      padding: 5px 12px; font-size: 13px; cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.4); border-radius: 4px;
+      background: rgba(255,255,255,0.15); color: #fff; flex-shrink: 0;
+    }
+    .btn:hover { background: rgba(255,255,255,0.25); }
+    .btn:disabled { opacity: 0.4; cursor: default; }
+    #nav-info { color: rgba(255,255,255,0.85); font-size: 13px; }
+    #shortcuts { font-size: 11px; color: rgba(255,255,255,0.5); margin-left: 12px; }
+
+  /* ---- 统计面板 ---- */
+  #stats-panel {
+    display: none; position: fixed; top: 0; right: 0; bottom: 0; width: 320px;
+    background: #fff; box-shadow: -4px 0 20px rgba(0,0,0,0.15);
+    z-index: 200; overflow-y: auto;
+  }
+  #stats-panel.open { display: block; }
+  #stats-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 199;
+  }
+  #stats-overlay.open { display: block; }
+  .stats-header {
+    background: linear-gradient(135deg, #1e3a5f 0%, #2d5f8b 100%);
+    color: #fff; padding: 14px 16px; font-size: 15px; font-weight: 700;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .stats-close {
+    background: rgba(255,255,255,0.2); border: none; color: #fff;
+    font-size: 18px; width: 28px; height: 28px; border-radius: 50%;
+    cursor: pointer; line-height: 1;
+  }
+  .stats-close:hover { background: rgba(255,255,255,0.35); }
+  .stats-body { padding: 16px; }
+  .stats-summary {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px;
+  }
+  .stats-card {
+    background: #f8fafc; border: 1px solid #e2e8f0;
+    border-radius: 8px; padding: 10px 12px; text-align: center;
+  }
+  .stats-card .val {
+    font-size: 22px; font-weight: 700; color: #1e3a5f;
+    font-family: "Menlo", "Consolas", monospace;
+  }
+  .stats-card .lbl { font-size: 11px; color: #64748b; margin-top: 2px; }
+  .stats-section-title {
+    font-size: 12px; font-weight: 700; color: #475569;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    margin: 14px 0 8px; padding-bottom: 4px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .stats-row {
+    display: flex; align-items: center; gap: 8px; padding: 5px 0;
+    font-size: 13px;
+  }
+  .stats-row .lbl { flex: 1; color: #374151; }
+  .stats-row .val { font-weight: 600; font-family: "Menlo", "Consolas", monospace; color: #1e3a5f; }
+  .stats-bar-bg {
+    flex: 2; background: #e2e8f0; border-radius: 4px; height: 8px; overflow: hidden;
+  }
+  .stats-bar-fg {
+    height: 100%; border-radius: 4px; background: #3498db;
+    display: flex; align-items: center; justify-content: flex-end; padding-right: 4px;
+    font-size: 9px; color: #fff; font-weight: 700; min-width: 20px;
+  }
+  .match-rate-bar {
+    background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+    border-radius: 8px; padding: 12px 14px; text-align: center; margin-bottom: 14px;
+  }
+  .match-rate-bar .pct { font-size: 32px; font-weight: 800; color: #fff; }
+  .match-rate-bar .sub { font-size: 12px; color: rgba(255,255,255,0.8); }
+
+
+    #steps { padding: 12px 16px; }
+
+    .step-card {
+      margin: 10px 0; border: 1px solid #d1d5db; border-radius: 10px;
+      padding: 10px 14px; background: #fff;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+      display: flex; flex-direction: column;
+      min-height: 300px;
+    }
+    .step-top {
+      flex: 0 0 auto;
+      display: flex; align-items: flex-start; justify-content: space-between;
+      flex-wrap: wrap; gap: 6px; overflow: hidden;
+    }
+    .step-header {
+      font-weight: 700; font-size: 14px; color: #1f2937;
+      line-height: 1.4;
+    }
+    .step-top-right {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+    }
+    .score-chip {
+      background: #f3f4f6; border: 1px solid #e5e7eb;
+      border-radius: 4px; padding: 1px 6px; font-size: 11px;
+      font-family: "Menlo", "Consolas", monospace;
+    }
+    .score-chip.reached { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
+    .dora { display: inline-block; margin-right: 3px; vertical-align: middle; }
+
+    .action-row {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+      font-size: 13px; margin-bottom: 10px;
+    }
+    .action-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 10px; border-radius: 6px; font-weight: 600;
+    }
+    .action-chip.bot   { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+    .action-chip.gt    { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+    .action-chip.both  { background: #ede9fe; color: #5b21b6; border: 1px solid #ddd6fe; }
+    .action-chip.none  { background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb; }
+
+    .hand-row {
+      flex: 0 0 auto;
+      display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0;
+      margin-top: 4px;
+      margin-bottom: 4px;
+    }
+    .tile-slot {
+      display: inline-flex; flex-direction: column; align-items: center;
+      margin: 0 1px; vertical-align: bottom; position: relative;
+    }
+    .tile-img {
+      display: block; margin: 0 auto;
+      border-radius: 3px; border: 1px solid #9ca3af;
+    }
+    .tile-slot.is-bot  .tile-img { border: 2px solid #e74c3c; box-shadow: 0 0 4px rgba(231,76,60,0.4); }
+    .tile-slot.is-gt   .tile-img { border: 2px solid #27ae60; box-shadow: 0 0 4px rgba(39,174,96,0.4); }
+    .tile-slot.is-both .tile-img { border: 2px solid #8e44ad; box-shadow: 0 0 4px rgba(142,68,173,0.4); }
+    .tile-slot.is-tsumo { margin-left: 10px !important; }
+    .tile-slot.is-tsumo::before {
+      content: '摸';
+      position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
+      font-size: 9px; font-weight: 700; color: #d97706;
+      background: #fef3c7; border: 1px solid #fcd34d; border-radius: 3px;
+      padding: 0 3px; line-height: 1.4;
+    }
+
+    .bar-wrap {
+      position: relative;
+      width: 38px; height: 57px;
+      display: flex; flex-direction: column; justify-content: flex-end; align-items: center;
+    }
+    .bar-wrap.is-bot  { outline: 2px solid #e74c3c; outline-offset: 1px; border-radius: 4px; }
+    .bar-wrap.is-gt   { outline: 2px solid #27ae60; outline-offset: 1px; border-radius: 4px; }
+    .bar-wrap.is-both { outline: 2px solid #8e44ad; outline-offset: 1px; border-radius: 4px; }
+    .bar-label {
+      font-size: 8px; color: #374151; font-weight: 600;
+      font-family: "Menlo", "Consolas", monospace;
+      white-space: nowrap; margin-bottom: 1px; line-height: 1;
+    }
+    .bar {
+      width: 6px; display: flex; align-items: flex-end; justify-content: center;
+      overflow: visible; min-height: 3px; flex-shrink: 0;
+    }
+    .bar-mark { font-size: 8px; color: #fff; font-weight: bold; white-space: nowrap; line-height: 1; }
+    .bar.r3  { border-radius: 3px 3px 0 0; }
+    .bar.r5  { border-radius: 5px 5px 0 0; }
+
+    .nondahai-box {
+      border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 12px;
+      font-size: 13px; display: inline-flex; flex-direction: column; gap: 4px;
+    }
+
+    #status-box { padding: 60px; text-align: center; font-size: 15px; color: #6b7280; }
+    .error-box {
+      background: #fef2f2; border: 1px solid #fecaca;
+      border-radius: 8px; padding: 20px; margin: 20px; color: #991b1b;
+    }
+
+    /* 加载骨架屏 */
+    .skeleton {
+      background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 4px;
+    }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+  .cand-table { margin-top:6px; font-size:11px; overflow-x:auto; }
+  .cand-table table { border-collapse:collapse; width:100%; }
+  .cand-table th { background:#f1f5f9; padding:2px 8px; text-align:left; font-weight:600; color:#475569; border-bottom:1px solid #e2e8f0; }
+  .cand-table td { padding:2px 8px; border-bottom:1px solid #f1f5f9; }
+  .cand-table .mono { font-family:monospace; text-align:right; }
+  .cand-table .cand-marks { color:#666; font-size:10px; white-space:nowrap; }
+  .cand-table tr.cand-bot { background:#fff0f0; font-weight:600; color:#c0392b; }
+  .cand-table tr.cand-gt  { background:#f0fff4; color:#166534; }
+  .cand-table tr.cand-both { background:#fdf4ff; font-weight:600; color:#6b21a8; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- 导航栏 -->
+  <div id="nav" v-if="!loading && !error">
+    <span class="nav-title">Replay Review</span>
+    <button class="btn" @click="prevKyoku" :disabled="curKyoku === 0">◀ 上一局</button>
+    <span id="nav-info">{{ kyokuLabel }}</span>
+    <button class="btn" @click="nextKyoku" :disabled="curKyoku >= numKyoku - 1">下一局 ▶</button>
+    <span style="margin-left:4px">
+      <button class="btn" @click="prevStep">↑上一步</button>
+      <button class="btn" @click="nextStep">↓下一步</button>
+    </span>
+    <button class="btn" @click="showStats">📊统计</button>
+    <span id="shortcuts">←/→ 局  ↑/↓ 步</span>
+  </div>
+
+  <!-- 统计面板 -->
+  <div id="stats-overlay" :class="{ open: statsOpen }" @click="statsOpen = false"></div>
+  <div id="stats-panel" :class="{ open: statsOpen }">
+    <div class="stats-header">
+      <span>决策统计</span>
+      <button class="stats-close" @click="statsOpen = false">×</button>
+    </div>
+    <div class="stats-body">
+      <!-- 总体匹配率 -->
+      <div class="match-rate-bar">
+        <div class="pct">{{ statsPct }}%</div>
+        <div class="sub">Bot 与玩家一致率 ({{ statsMatch }} / {{ statsTotal }})</div>
+      </div>
+      <div class="stats-summary">
+        <div class="stats-card">
+          <div class="val">{{ statsTotal }}</div>
+          <div class="lbl">总决策数</div>
+        </div>
+        <div class="stats-card">
+          <div class="val">{{ statsMatch }}</div>
+          <div class="lbl">匹配数</div>
+        </div>
+        <div class="stats-card">
+          <div class="val">{{ statsKyoku }}</div>
+          <div class="lbl">总局数</div>
+        </div>
+        <div class="stats-card">
+          <div class="val">{{ statsDahaiRate }}%</div>
+          <div class="lbl">打牌占比</div>
+        </div>
+      </div>
+
+      <!-- 各动作类型准确率 -->
+      <div class="stats-section-title">各动作准确率</div>
+      <div v-for="row in statsByType" :key="row.type" class="stats-row">
+        <span class="lbl">{{ row.label }}</span>
+        <div class="stats-bar-bg">
+          <div class="stats-bar-fg" :style="{ width: row.pct + '%', background: row.pct > 70 ? '#27ae60' : row.pct > 40 ? '#3498db' : '#e74c3c' }">
+            {{ row.pct }}%
+          </div>
+        </div>
+        <span class="val">{{ row.match }}/{{ row.total }}</span>
+      </div>
+
+      <!-- dahai 各类打牌准确率 -->
+      <div class="stats-section-title">打牌详情</div>
+      <div v-for="row in statsByTile" :key="row.tile" class="stats-row">
+        <span class="lbl">{{ row.tile }}</span>
+        <div class="stats-bar-bg">
+          <div class="stats-bar-fg" :style="{ width: row.pct + '%', background: row.pct > 70 ? '#27ae60' : row.pct > 40 ? '#3498db' : '#e74c3c' }">
+            {{ row.pct }}%
+          </div>
+        </div>
+        <span class="val">{{ row.match }}/{{ row.total }}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 错误 -->
+  <div v-if="error" class="error-box">{{ error }}</div>
+
+  <!-- 加载中 -->
+  <div v-else-if="loading" id="status-box">
+    <div class="skeleton" style="width:200px;height:20px;margin:0 auto 10px"></div>
+    正在加载回放数据…
+  </div>
+
+  <!-- 主内容 -->
+  <div v-else-if="log.length">
+    <div id="steps">
+      <div
+        v-for="entry in visibleSteps"
+        :key="entry.step"
+        class="step-card"
+        :id="'step-' + entry.step"
+      >
+        <!-- 顶部行：小局信息 + 右侧标签 -->
+        <div class="step-top">
+          <div class="step-header">
+            {{ entry.bakaze }}{{ entry.kyoku }}局 {{ entry.honba }}本场 · Step {{ entry.step }}
+            <span v-if="entry.value !== undefined" style="font-size:11px;color:#64748b;margin-left:8px;font-family:monospace">V={{ entry.value.toFixed(3) }}</span>
+          </div>
+          <div class="step-top-right">
+            <span
+              v-for="(s, i) in entry.scores"
+              :key="i"
+              class="score-chip"
+              :class="{ reached: entry.reached[i] }"
+            >P{{ i }}{{ entry.reached[i] ? 'R' : '' }}:{{ s }}</span>
+            <span v-if="entry.dora_markers && entry.dora_markers.length">
+              <span style="margin-right:2px;color:#9ca3af;font-size:11px">宝:</span>
+              <img v-for="d in entry.dora_markers" :key="d" class="dora" :src="tileUrl(d)" width="26">
+            </span>
+            <span class="action-chip" :class="chosenClass(entry, entry.chosen)">
+              Bot: {{ actionLabel(entry.chosen) }}
+            </span>
+            <span class="action-chip" :class="gtClass(entry)">
+              实际: {{ entry.gt_action ? actionLabel(entry.gt_action) : '—' }}
+            </span>
+            <span v-if="sameAction(entry.chosen, entry.gt_action)"
+              style="font-size:11px;color:#16a34a;font-weight:600">✓ Match</span>
+          </div>
+        </div>
+
+        <!-- dahai / none：柱状图 + 候选表格 -->
+        <div v-if="entry.chosen.type === 'dahai' || entry.chosen.type === 'none'" style="display:flex;flex-direction:column;">
+          <div class="hand-row">
+            <div
+              v-for="tile in sortedHand(entry)"
+              :key="tile.name"
+              class="tile-slot"
+              :class="[tileCssClass(tile, entry), { 'is-tsumo': tile.isTsumo }]"
+            >
+              <div class="bar-wrap" :class="barWrapClass(tile, entry)">
+                <div v-if="tile.score !== undefined" class="bar-label">{{ barLabel(tile, entry) }}</div>
+                <div v-if="tile.score !== undefined" class="bar" :class="barRoundClass(tile)"
+                  :style="{ height: barHeight(tile) + 'px', background: barColor(tile, entry) }">
+                </div>
+              </div>
+              <img class="tile-img" :src="tileUrl(tile.name)" width="38" :title="tile.name">
+            </div>
+          </div>
+          <!-- 候选评分表格 -->
+          <div v-if="entry.candidates && entry.candidates.length" class="cand-table">
+            <table>
+              <thead><tr>
+                <th>动作</th>
+                <th>Logit</th>
+                <th v-if="entry.candidates.some(c => c.final_score !== undefined)">Final</th>
+                <th v-else-if="entry.candidates.some(c => c.beam_score !== undefined)">Beam</th>
+                <th v-if="entry.candidates.some(c => c.danger_prior)">Danger</th>
+                <th></th>
+              </tr></thead>
+              <tbody>
+                <tr v-for="c in entry.candidates" :key="c.action.type+(c.action.pai||'')"
+                  :class="candRowClass(c, entry)">
+                  <td :title="candidateActionTitle(c)">{{ candidateActionLabel(c) }}</td>
+                  <td class="mono">{{ c.logit.toFixed(3) }}</td>
+                  <td class="mono" v-if="entry.candidates.some(x => x.final_score !== undefined)">{{ c.final_score !== undefined ? c.final_score.toFixed(3) : '—' }}</td>
+                  <td class="mono" v-else-if="entry.candidates.some(x => x.beam_score !== undefined)">{{ c.beam_score !== undefined ? c.beam_score.toFixed(3) : '—' }}</td>
+                  <td class="mono" v-if="entry.candidates.some(x => x.danger_prior)">
+                    <span v-if="c.danger_prior" :title="[(c.danger_prior.reason || ''), (c.danger_prior.source_label || c.danger_prior_source || '')].filter(Boolean).join('\n')">{{ typeof c.danger_prior.value === 'number' ? c.danger_prior.value.toFixed(1) : c.danger_prior.value }}</span>
+                    <span v-else>—</span>
+                  </td>
+                  <td class="cand-marks">{{ candMarks(c, entry) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 非 dahai：候选表格 -->
+        <div v-else style="display:flex;flex-direction:column;padding:4px 0">
+          <div v-if="entry.candidates && entry.candidates.length" class="cand-table" style="width:100%">
+            <table>
+              <thead><tr>
+                <th>动作</th>
+                <th>Logit</th>
+                <th v-if="entry.candidates.some(c => c.final_score !== undefined)">Final</th>
+                <th v-else-if="entry.candidates.some(c => c.beam_score !== undefined)">Beam</th>
+                <th v-if="entry.candidates.some(c => c.danger_prior)">Danger</th>
+                <th></th>
+              </tr></thead>
+              <tbody>
+                <tr v-for="c in entry.candidates" :key="c.action.type+(c.action.pai||'')"
+                  :class="candRowClass(c, entry)">
+                  <td :title="candidateActionTitle(c)">{{ candidateActionLabel(c) }}</td>
+                  <td class="mono">{{ c.logit.toFixed(3) }}</td>
+                  <td class="mono" v-if="entry.candidates.some(x => x.final_score !== undefined)">{{ c.final_score !== undefined ? c.final_score.toFixed(3) : '—' }}</td>
+                  <td class="mono" v-else-if="entry.candidates.some(x => x.beam_score !== undefined)">{{ c.beam_score !== undefined ? c.beam_score.toFixed(3) : '—' }}</td>
+                  <td class="mono" v-if="entry.candidates.some(x => x.danger_prior)">
+                    <span v-if="c.danger_prior" :title="[(c.danger_prior.reason || ''), (c.danger_prior.source_label || c.danger_prior_source || '')].filter(Boolean).join('\n')">{{ typeof c.danger_prior.value === 'number' ? c.danger_prior.value.toFixed(1) : c.danger_prior.value }}</span>
+                    <span v-else>—</span>
+                  </td>
+                  <td class="cand-marks">{{ candMarks(c, entry) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div v-else id="status-box">暂无数据</div>
+
+</div><!-- /#app -->
+
+<script>
+const { createApp, ref, computed, onMounted, onUnmounted, nextTick } = Vue;
+
+const TILE_BASE = '/tiles';
+const TILE_SVG = {
+  '1m':'Man1','2m':'Man2','3m':'Man3','4m':'Man4','5m':'Man5','6m':'Man6','7m':'Man7','8m':'Man8','9m':'Man9',
+  '1p':'Pin1','2p':'Pin2','3p':'Pin3','4p':'Pin4','5p':'Pin5','6p':'Pin6','7p':'Pin7','8p':'Pin8','9p':'Pin9',
+  '1s':'Sou1','2s':'Sou2','3s':'Sou3','4s':'Sou4','5s':'Sou5','6s':'Sou6','7s':'Sou7','8s':'Sou8','9s':'Sou9',
+  '5mr':'Man5-Dora','5pr':'Pin5-Dora','5sr':'Sou5-Dora',
+  'E':'Ton','S':'Nan','W':'Shaa','N':'Pei','P':'Haku','F':'Hatsu','C':'Chun',
+};
+const _TILE_ORDER = {
+  '1m':0,'2m':1,'3m':2,'4m':3,'5m':4,'6m':5,'7m':6,'8m':7,'9m':8,'5mr':4,
+  '1p':9,'2p':10,'3p':11,'4p':12,'5p':13,'6p':14,'7p':15,'8p':16,'9p':17,'5pr':13,
+  '1s':18,'2s':19,'3s':20,'4s':21,'5s':22,'6s':23,'7s':24,'8s':25,'9s':26,'5sr':22,
+  'E':27,'S':28,'W':29,'N':30,'P':31,'F':32,'C':33,
+};
+const MAX_BAR_H = 57;
+
+const _TILE_CN = {
+  'E':'东','S':'南','W':'西','N':'北','P':'发','F':'北','C':'中',
+  '1m':'一万','2m':'二万','3m':'三万','4m':'四万','5m':'五万','6m':'六万','7m':'七万','8m':'八万','9m':'九万',
+  '1p':'一筒','2p':'二筒','3p':'三筒','4p':'四筒','5p':'五筒','6p':'六筒','7p':'七筒','8p':'八筒','9p':'九筒',
+  '1s':'一索','2s':'二索','3s':'三索','4s':'四索','5s':'五索','6s':'六索','7s':'七索','8s':'八索','9s':'九索',
+  '5mr':'赤五万','5pr':'赤五筒','5sr':'赤五索',
+};
+function _cn(t) { return _TILE_CN[t] || t; }
+
+function actionLabel(a) {
+  if (!a) return '—';
+  switch (a.type) {
+    case 'dahai':    return '打 ' + _cn(a.pai) + (a.tsumogiri ? ' (摸切)' : '');
+    case 'reach':    return '立直';
+    case 'chi':      return '吃 ' + _cn(a.pai) + ' (' + (a.consumed||[]).map(_cn).join(',') + ')';
+    case 'pon':      return '碰 ' + _cn(a.pai);
+    case 'daiminkan': return '大明杠 ' + _cn(a.pai);
+    case 'ankan':    return '暗杠 ' + _cn(a.pai);
+    case 'kakan':    return '加杠 ' + _cn(a.pai);
+    case 'hora':     return '胡牌';
+    case 'ryukyoku': return '流局';
+    case 'none':     return '跳过';
+    default:        return a.type;
+  }
+}
+
+function candidateActionLabel(c) {
+  const action = c?.action || null;
+  if (!action) return '—';
+  if (action.type !== 'reach') return actionLabel(action);
+  const reachDiscard = c?.reach_discard;
+  if (!reachDiscard || !reachDiscard.pai) return actionLabel(action);
+  return '立直 → ' + actionLabel(reachDiscard);
+}
+
+function candidateActionTitle(c) {
+  const action = c?.action || null;
+  if (!action || action.type !== 'reach') return '';
+  const reachDiscard = c?.reach_discard;
+  if (!reachDiscard || !reachDiscard.pai) return '';
+  return '联合评估宣言牌: ' + actionLabel(reachDiscard);
+}
+
+createApp({
+  setup() {
+    const log        = ref([]);
+    const kyokuOrder = ref([]);
+    const totalOps   = ref(0);
+    const matchCount = ref(0);
+    const loading    = ref(true);
+    const error      = ref(null);
+    const curKyoku   = ref(0);
+    const statsOpen  = ref(false);
+
+    const numKyoku = computed(() => kyokuOrder.value.length);
+    const statsTotal = computed(() => totalOps.value);
+    const statsMatch = computed(() => matchCount.value);
+    const statsPct = computed(() => {
+      if (!statsTotal.value) return '0.0';
+      return (statsMatch.value / statsTotal.value * 100).toFixed(1);
+    });
+    const statsKyoku = computed(() => kyokuOrder.value.length);
+    const statsDahaiRate = computed(() => {
+      if (!log.value.length) return '0';
+      const dahai = log.value.filter(e => e.chosen?.type === 'dahai').length;
+      return ((dahai / log.value.length) * 100).toFixed(0);
+    });
+    const statsByType = computed(() => {
+      const types = {};
+      log.value.forEach(e => {
+        const t = e.chosen?.type || '?';
+        if (!types[t]) types[t] = { total: 0, match: 0 };
+        types[t].total++;
+        if (sameAction(e.chosen, e.gt_action)) types[t].match++;
+      });
+      const labels = { dahai:'打牌', none:'过', reach:'立直', chi:'吃', pon:'碰', daiminkan:'大明杠', ankan:'暗杠', kakan:'加杠', hora:'胡', ryukyoku:'流局' };
+      return Object.entries(types).map(([t, v]) => ({
+        type: t,
+        label: labels[t] || t,
+        total: v.total,
+        match: v.match,
+        pct: v.total ? Math.round(v.match / v.total * 100) : 0,
+      })).sort((a, b) => b.total - a.total);
+    });
+    const statsByTile = computed(() => {
+      const tiles = {};
+      log.value.forEach(e => {
+        if (e.chosen?.type !== 'dahai') return;
+        const t = e.chosen?.pai || '?';
+        if (!tiles[t]) tiles[t] = { total: 0, match: 0 };
+        tiles[t].total++;
+        if (e.gt_action?.type === 'dahai' && sameAction(e.chosen, e.gt_action)) tiles[t].match++;
+      });
+      return Object.entries(tiles).map(([t, v]) => ({
+        tile: t,
+        total: v.total,
+        match: v.match,
+        pct: v.total ? Math.round(v.match / v.total * 100) : 0,
+      })).sort((a, b) => b.total - a.total).slice(0, 10);
+    });
+    const _CN_BAKAZE = { 'E':'东', 'S':'南', 'W':'西', 'N':'北' };
+    const kyokuLabel = computed(() => {
+      if (!kyokuOrder.value.length) return '';
+      const k = kyokuOrder.value[curKyoku.value];
+      return `第${_CN_BAKAZE[k.bakaze]||k.bakaze}${k.kyoku}局 ${k.honba}本场 (${curKyoku.value+1}/${numKyoku.value})`;
+    });
+    const visibleSteps = computed(() =>
+      log.value.filter(e => {
+        const k = e.kyoku_key || {};
+        return k.bakaze === kyokuOrder.value[curKyoku.value]?.bakaze
+            && k.kyoku  === kyokuOrder.value[curKyoku.value]?.kyoku
+            && k.honba  === kyokuOrder.value[curKyoku.value]?.honba;
+      })
+    );
+
+    function tileUrl(name) {
+      return `${TILE_BASE}/${TILE_SVG[name] || 'Blank'}.svg`;
+    }
+
+    function buildSortedTiles(entry) {
+      const hand = entry.hand || [];
+      const tsumo_pai = entry.tsumo_pai || null;
+      const tileLogit = {}, tileBeam = {}, tileFinal = {};
+      if (entry.candidates && entry.candidates.length) {
+        entry.candidates.forEach(c => {
+          if (c.action && c.action.type === 'dahai' && c.action.pai) {
+            tileLogit[c.action.pai] = c.logit;
+            if (c.final_score !== undefined) tileFinal[c.action.pai] = c.final_score;
+            if (c.beam_score !== undefined) tileBeam[c.action.pai] = c.beam_score;
+          }
+        });
+      }
+      // 柱高依据：优先用 final_score，兼容 beam_score / logit
+      const hasFinal = Object.keys(tileFinal).length > 0;
+      const hasBeam = Object.keys(tileBeam).length > 0;
+      const scoreMap = hasFinal ? tileFinal : (hasBeam ? tileBeam : tileLogit);
+      const vals = Object.values(scoreMap);
+      let minScore = 0, maxScore = 1;
+      if (vals.length > 1) { minScore = Math.min(...vals); maxScore = Math.max(...vals); }
+      else if (vals.length === 1) { minScore = maxScore = vals[0]; }
+      const scoreRange = Math.max(maxScore - minScore, 0.001);
+      const others = hand.filter(t => t !== tsumo_pai);
+      others.sort((a, b) => (_TILE_ORDER[a] ?? 99) - (_TILE_ORDER[b] ?? 99));
+      const sorted = tsumo_pai ? [...others, tsumo_pai] : others;
+      return sorted.map(name => ({
+        name,
+        logit: tileLogit[name],
+        finalScore: tileFinal[name],
+        beamScore: tileBeam[name],
+        score: scoreMap[name],
+        minScore, scoreRange,
+        isTsumo: name === tsumo_pai,
+      }));
+    }
+
+    function sortedHand(entry) { return buildSortedTiles(entry); }
+
+    function barHeight(tile) {
+      if (tile.score === undefined) return 0;
+      const pct = Math.max(1, (tile.score - tile.minScore) / tile.scoreRange * 100);
+      return Math.max(3, Math.round(pct / 100 * MAX_BAR_H));
+    }
+    function barRoundClass(tile) {
+      const h = barHeight(tile);
+      if (h >= 5) return 'r5';
+      return 'r3';
+    }
+    function barColor(tile, entry) {
+      const c = entry.chosen, g = entry.gt_action;
+      if (tile.name === c?.pai && tile.name === g?.pai) return '#8e44ad';
+      if (tile.name === c?.pai) return '#e74c3c';
+      if (tile.name === g?.pai) return '#27ae60';
+      return '#3498db';
+    }
+    function barWrapClass(tile, entry) {
+      const c = entry.chosen, g = entry.gt_action;
+      if (tile.name === c?.pai && tile.name === g?.pai) return 'is-both';
+      if (tile.name === c?.pai) return 'is-bot';
+      if (tile.name === g?.pai) return 'is-gt';
+      return '';
+    }
+    function barLabel(tile, entry) {
+      if (tile.score === undefined) return '';
+      if (tile.beamScore !== undefined)
+        return tile.beamScore.toFixed(2) + ' (L:' + tile.logit.toFixed(2) + ')';
+      return tile.logit.toFixed(2);
+    }
+    function tileCssClass(tile, entry) {
+      const c = entry.chosen, g = entry.gt_action;
+      const b = tile.name === c?.pai, gg = tile.name === g?.pai;
+      if (b && gg) return 'is-both';
+      if (b) return 'is-bot';
+      if (gg) return 'is-gt';
+      return '';
+    }
+
+    function normalizeTileForCompare(tile) {
+      if (!tile) return tile;
+      if (tile === '5mr' || tile === '5pr' || tile === '5sr') return tile;
+      return tile.endsWith('r') ? tile.slice(0, -1) : tile;
+    }
+    function normalizedConsumed(action) {
+      return (action?.consumed || []).map(normalizeTileForCompare).sort().join('|');
+    }
+    function sameAction(left, right) {
+      if (!left || !right) return false;
+      const lt = left.type === 'pass' ? 'none' : left.type;
+      const rt = right.type === 'pass' ? 'none' : right.type;
+      if (lt !== rt) return false;
+      if (lt === 'none' || lt === 'reach' || lt === 'ryukyoku') return true;
+      if (lt === 'dahai') return normalizeTileForCompare(left.pai) === normalizeTileForCompare(right.pai);
+      if (lt === 'hora') {
+        const lp = left.pai ? normalizeTileForCompare(left.pai) : null;
+        const rp = right.pai ? normalizeTileForCompare(right.pai) : null;
+        return left.target === right.target && (lp === null || rp === null || lp === rp);
+      }
+      if (['chi', 'pon', 'daiminkan', 'ankan', 'kakan'].includes(lt)) {
+        const lp = left.pai ? normalizeTileForCompare(left.pai).replace(/r$/, '') : null;
+        const rp = right.pai ? normalizeTileForCompare(right.pai).replace(/r$/, '') : null;
+        return (
+          left.target === right.target &&
+          (lp === null || rp === null || lp === rp) &&
+          normalizedConsumed(left) === normalizedConsumed(right)
+        );
+      }
+      return JSON.stringify(left) === JSON.stringify(right);
+    }
+
+    function chosenClass(entry, chosen) {
+      if (!chosen) return 'none';
+      const g = entry.gt_action;
+      if (sameAction(chosen, g)) return 'both';
+      if (chosen.type === 'dahai' || chosen.type === 'none') return 'bot';
+      return 'gt';
+    }
+    function gtClass(entry) {
+      const c = entry.chosen, g = entry.gt_action;
+      if (!g) return 'none';
+      if (sameAction(c, g)) return 'both';
+      return 'gt';
+    }
+
+    function candRowClass(c, entry) {
+      const isBot = sameAction(c.action, entry.chosen);
+      const isGt  = entry.gt_action && sameAction(c.action, entry.gt_action);
+      if (isBot && isGt) return 'cand-both';
+      if (isBot) return 'cand-bot';
+      if (isGt)  return 'cand-gt';
+      return '';
+    }
+    function candMarks(c, entry) {
+      const isBot = sameAction(c.action, entry.chosen);
+      const isGt  = entry.gt_action && sameAction(c.action, entry.gt_action);
+      let m = '';
+      if (isBot) m += '✓Bot ';
+      if (isGt)  m += '★玩家';
+      return m;
+    }
+
+    function prevKyoku() { if (curKyoku.value > 0) curKyoku.value--; }
+    function nextKyoku() { if (curKyoku.value < numKyoku.value - 1) curKyoku.value++; }
+
+    function getVisibleStepEls() { return Array.from(document.querySelectorAll('.step-card')); }
+    function prevStep() {
+      const els = getVisibleStepEls();
+      for (let i = els.length - 1; i >= 0; i--) {
+        if (els[i].getBoundingClientRect().bottom < 80) { els[i].scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+      }
+      if (els.length) els[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    function nextStep() {
+      const els = getVisibleStepEls();
+      for (let i = 0; i < els.length; i++) {
+        if (els[i].getBoundingClientRect().top > 80) { els[i].scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+      }
+    }
+    function showStats() {
+      statsOpen.value = true;
+    }
+    function onKey(e) {
+      const tag = document.activeElement.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'ArrowLeft'  || e.key === 'h') { e.preventDefault(); prevKyoku(); }
+      if (e.key === 'ArrowRight' || e.key === 'l') { e.preventDefault(); nextKyoku(); }
+      if (e.key === 'ArrowUp'    || e.key === 'k') { e.preventDefault(); prevStep(); }
+      if (e.key === 'ArrowDown'  || e.key === 'j') { e.preventDefault(); nextStep(); }
+    }
+
+    onMounted(() => {
+      window.addEventListener('keydown', onKey);
+      const d = window.__replayData;
+      if (d) {
+        log.value        = d.log || [];
+        kyokuOrder.value = d.kyoku_order || [];
+        totalOps.value   = d.total_ops || 0;
+        matchCount.value = d.match_count || 0;
+        curKyoku.value   = 0;
+      } else {
+        error.value = '未找到回放数据，请通过 /api/replay 获取数据。';
+      }
+      loading.value = false;
+    });
+    onUnmounted(() => { window.removeEventListener('keydown', onKey); });
+
+    return {
+      log, kyokuOrder, totalOps, matchCount, loading, error, curKyoku, statsOpen,
+      numKyoku, kyokuLabel, visibleSteps,
+      statsTotal, statsMatch, statsPct, statsKyoku, statsDahaiRate, statsByType, statsByTile,
+      tileUrl, sortedHand, barHeight, barRoundClass, barColor, barWrapClass, barLabel, tileCssClass,
+      prevKyoku, nextKyoku, prevStep, nextStep, showStats,
+      actionLabel, candidateActionLabel, candidateActionTitle, chosenClass, gtClass,
+    };
+  },
+}).mount('#app');
+</script>
+</body>
+</html>

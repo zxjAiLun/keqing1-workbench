@@ -1,0 +1,65 @@
+name: Workbench verify
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  python:
+    name: Python default tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install keqing_core runtime wheel
+        run: |
+          # The keqing_core wheel is built by keqing-mortal (rust/keqing_core).
+          # Publishing it as a release asset is future work; until then the
+          # Python job needs it injected (e.g. via a repository secret URL).
+          if [ -n "${KEQING_CORE_WHEEL_URL:-}" ]; then
+            uv pip install --system "$KEQING_CORE_WHEEL_URL"
+          fi
+
+      - name: Install dependencies
+        run: uv sync --dev --frozen
+
+      - name: Run default pytest suite
+        run: uv run python -m pytest -q
+
+  replay-ui:
+    name: Replay UI build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workbench/replay_ui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: workbench/replay_ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build

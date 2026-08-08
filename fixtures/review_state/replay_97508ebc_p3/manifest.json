@@ -1,0 +1,1 @@
+{"source":"workbench artifacts/replays/replay_97508ebc_1785858273 (real API render, player_id=3, ext_mortal)","rendered_at":"2026-08-05 (with bot.py source_event_index for own decisions)","coverage":"S1-S4 multi-turn states, G1-G6, first-10 own decisions divergence, teacher independence (G5)","note":"decisions.json 已裁剪 aux_outputs/mortal_meta 与候选的重型字段，board facts 原样保留"}

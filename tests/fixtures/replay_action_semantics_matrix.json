@@ -1,0 +1,68 @@
+[
+  {
+    "name": "dahai_tsumogiri_difference_is_equivalent",
+    "left": { "type": "dahai", "actor": 1, "pai": "3p", "tsumogiri": false },
+    "right": { "type": "dahai", "actor": 1, "pai": "3p", "tsumogiri": true },
+    "same": true
+  },
+  {
+    "name": "pass_and_none_are_equivalent",
+    "left": { "type": "pass" },
+    "right": { "type": "none", "actor": 2 },
+    "same": true
+  },
+  {
+    "name": "hora_without_pai_matches_targeted_hora",
+    "left": { "type": "hora", "actor": 0, "target": 1 },
+    "right": { "type": "hora", "actor": 0, "target": 1, "pai": "8m" },
+    "same": true
+  },
+  {
+    "name": "chi_aka_consumed_is_equivalent",
+    "left": {
+      "type": "chi",
+      "actor": 1,
+      "target": 0,
+      "pai": "4p",
+      "consumed": ["5p", "6p"]
+    },
+    "right": {
+      "type": "chi",
+      "actor": 1,
+      "target": 0,
+      "pai": "4p",
+      "consumed": ["5pr", "6p"]
+    },
+    "same": true
+  },
+  {
+    "name": "kakan_aka_pai_family_is_equivalent",
+    "left": {
+      "type": "kakan",
+      "actor": 2,
+      "target": 1,
+      "pai": "5p",
+      "consumed": ["5p", "5p", "5p"]
+    },
+    "right": {
+      "type": "kakan",
+      "actor": 2,
+      "target": 1,
+      "pai": "5pr",
+      "consumed": ["5p", "5p", "5pr"]
+    },
+    "same": true
+  },
+  {
+    "name": "different_hora_target_is_not_equivalent",
+    "left": { "type": "hora", "actor": 0, "target": 1, "pai": "8m" },
+    "right": { "type": "hora", "actor": 0, "target": 2, "pai": "8m" },
+    "same": false
+  },
+  {
+    "name": "different_discard_tile_is_not_equivalent",
+    "left": { "type": "dahai", "actor": 1, "pai": "3p", "tsumogiri": false },
+    "right": { "type": "dahai", "actor": 1, "pai": "4p", "tsumogiri": false },
+    "same": false
+  }
+]

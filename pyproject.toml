@@ -1,0 +1,83 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "keqing-workbench"
+version = "0.1.0"
+description = "Control-plane application for the Mortal-based riichi mahjong stack: gateway, replay, participants, UI."
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.135.2",
+  "mahjong>=1.4.0",
+  "numpy>=1.24",
+  "python-dotenv>=1.2.2",
+  "python-multipart>=0.0.20",
+  "pyyaml>=6.0",
+  "riichienv==0.4.8",
+  "torch>=2.11.0",
+  "uvicorn>=0.42.0",
+  "websockets==10.2",
+]
+
+# keqing_core is installed as the runtime wheel built by keqing-mortal
+# (see scripts/setup-dev.ps1); it is intentionally not a source dependency.
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["workbench", "src", "."]
+testpaths = ["tests"]
+python_files = [
+    "test_action_spec_aka_ankan.py",
+    "test_aka_consistency.py",
+    "test_final_rank.py",
+    "test_gateway_*.py",
+    "test_import_boundary.py",
+    "test_inspect_event_decision.py",
+    "test_ladder_api.py",
+    "test_ladder_ingest.py",
+    "test_ladder_progression.py",
+    "test_ladder_server.py",
+    "test_legal_actions_rules.py",
+    "test_normal_progress.py",
+    "test_participants_*.py",
+    "test_playwithyou_capture.py",
+    "test_playwithyou_stop.py",
+    "test_publish_ladder_snapshot.py",
+    "test_rank_systems.py",
+    "test_replay_action_semantics_matrix.py",
+    "test_replay_actionspec_alignment.py",
+    "test_replay_decision_normalization.py",
+    "test_replay_final_rank_targets.py",
+    "test_replay_hora_reconstruction.py",
+    "test_replay_ryukyoku_obs.py",
+    "test_replay_server_ippatsu_fix.py",
+    "test_replay_state_reconstruction.py",
+    "test_replay_strict_legal.py",
+    "test_replay_teacher_alignment.py",
+    "test_replay_tsumogiri_reconstruction.py",
+    "test_report_builder_rank.py",
+    "test_responder_playwithyou.py",
+    "test_riichi_dev_client.py",
+    "test_riichi_dev_opportunity_analysis.py",
+    "test_rulebase_battle_support.py",
+    "test_rulebase_bot.py",
+    "test_scoring_backend_boundary.py",
+    "test_shared_bot_entrypoint.py",
+    "test_static_tables.py",
+    "test_tenhou6_daiminkan_placeholder.py",
+    "test_tenhou6_review_input.py",
+    "test_tenhou_bot_client.py",
+    "test_tenhou_bridge.py",
+    "test_tenhou_public_state_sync.py",
+]
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.15.10",
+]

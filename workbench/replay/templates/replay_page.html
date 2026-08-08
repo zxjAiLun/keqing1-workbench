@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Replay Review</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; color: #1f2937; }
+
+  #app { max-width: 860px; margin: 0 auto; padding: 20px 16px 60px; }
+
+  .card {
+    background: #fff; border: 1px solid #e5e7eb;
+    border-radius: 10px; padding: 18px 20px; margin-bottom: 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .card-title { font-size: 15px; font-weight: 700; margin-bottom: 14px; color: #374151; }
+
+  label { display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px; }
+  input[type="text"], select {
+    width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px;
+    font-size: 14px; background: #fff; color: #1f2937;
+  }
+  input[type="text"]:focus, select:focus { outline: none; border-color: #3498db; }
+  #player-id-hint { font-size: 11px; color: #9ca3af; margin-top: 2px; min-height: 14px; }
+
+  .type-radios { display: flex; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+  .type-radios label { font-weight: 400; display: flex; align-items: center; gap: 5px; cursor: pointer; margin: 0; }
+  .type-radios input[type="radio"] { margin: 0; cursor: pointer; }
+
+  textarea {
+    width: 100%; height: 110px; padding: 10px 12px;
+    border: 1px solid #d1d5db; border-radius: 6px;
+    font-size: 13px; font-family: "Menlo", "Consolas", monospace; resize: vertical;
+    color: #1f2937; background: #fff;
+  }
+  textarea:focus { outline: none; border-color: #3498db; }
+  #input-hint { font-size: 12px; color: #9ca3af; margin-top: 4px; }
+
+  #upload-zone {
+    border: 2px dashed #d1d5db; border-radius: 8px; padding: 20px; text-align: center;
+    cursor: pointer; color: #9ca3af; font-size: 13px; margin-bottom: 10px;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  #upload-zone.dragover { border-color: #3498db; background: #f0f7ff; }
+  #file-input { display: none; }
+  #file-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .file-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px;
+    padding: 2px 8px; font-size: 12px;
+  }
+  .file-chip .remove { cursor: pointer; color: #9ca3af; font-weight: bold; }
+  .file-chip .remove:hover { color: #ef4444; }
+
+  #btn-run {
+    height: 40px; padding: 0 28px; background: #3498db; color: #fff;
+    border: none; border-radius: 8px; font-size: 15px; font-weight: 600;
+    cursor: pointer; transition: background 0.2s, transform 0.1s; white-space: nowrap;
+  }
+  #btn-run:hover { background: #2589c5; }
+  #btn-run:active { transform: scale(0.98); }
+  #btn-run:disabled { background: #9ca3af; cursor: not-allowed; transform: none; }
+
+  .spinner {
+    display: inline-block; width: 16px; height: 16px;
+    border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff;
+    border-radius: 50%; animation: spin 0.7s linear infinite;
+    vertical-align: middle; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #status { margin-top: 10px; font-size: 13px; color: #6b7280; min-height: 20px; }
+  #status.error { color: #dc2626; }
+  #status.ok    { color: #16a34a; }
+
+  /* ---- 结果视图 ---- */
+  #result-view { display: none; }
+  #result-view.show { display: block; }
+
+  #result-view #nav {
+    position: sticky; top: 0; z-index: 100;
+    background: linear-gradient(135deg, #1e3a5f 0%, #2d5f8b 100%);
+    padding: 8px 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  }
+  #result-view .nav-title { color: #fff; font-size: 15px; font-weight: 600; margin-right: auto; }
+  #result-view .btn {
+    padding: 5px 12px; font-size: 13px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.4); border-radius: 4px;
+    background: rgba(255,255,255,0.15); color: #fff; flex-shrink: 0;
+  }
+  #result-view .btn:hover { background: rgba(255,255,255,0.25); }
+  #result-view .btn:disabled { opacity: 0.4; cursor: default; }
+  #result-view #nav-info { color: rgba(255,255,255,0.85); font-size: 13px; }
+  #result-view #shortcuts { font-size: 11px; color: rgba(255,255,255,0.5); margin-left: 12px; }
+
+  #result-view #steps { padding: 12px 16px; }
+
+  #result-view .step-card {
+    margin: 10px 0; border: 1px solid #d1d5db; border-radius: 10px;
+    padding: 10px 14px; background: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    display: flex; flex-direction: column;
+    height: 300px;
+  }
+  #result-view .step-top {
+    flex: 0 0 auto;
+    display: flex; align-items: flex-start; justify-content: space-between;
+    flex-wrap: wrap; gap: 6px; overflow: hidden;
+  }
+  #result-view .step-header {
+    font-weight: 700; font-size: 14px; color: #1f2937; line-height: 1.4;
+  }
+  #result-view .step-meta-right {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  }
+  #result-view .score-chip {
+    background: #f3f4f6; border: 1px solid #e5e7eb;
+    border-radius: 4px; padding: 1px 6px; font-size: 11px;
+    font-family: "Menlo", "Consolas", monospace;
+  }
+  #result-view .score-chip.reached { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
+  #result-view .dora { display: inline-block; margin-right: 3px; vertical-align: middle; }
+  #result-view .action-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 10px; border-radius: 6px; font-weight: 600; font-size: 12px;
+  }
+  #result-view .action-chip.bot   { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+  #result-view .action-chip.gt    { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+  #result-view .action-chip.both  { background: #ede9fe; color: #5b21b6; border: 1px solid #ddd6fe; }
+  #result-view .action-chip.none  { background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb; }
+
+  #result-view .hand-row {
+    flex: 1;
+    display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0;
+    margin-top: auto;
+    margin-bottom: 4px;
+  }
+  #result-view .tile-slot {
+    display: inline-flex; flex-direction: column; align-items: center;
+    margin: 0 1px; vertical-align: bottom; position: relative;
+  }
+  #result-view .tile-img {
+    display: block; margin: 0 auto;
+    border-radius: 3px; border: 1px solid #9ca3af;
+  }
+  #result-view .tile-slot.is-bot  .tile-img { border: 2px solid #e74c3c; box-shadow: 0 0 4px rgba(231,76,60,0.4); }
+  #result-view .tile-slot.is-gt   .tile-img { border: 2px solid #27ae60; box-shadow: 0 0 4px rgba(39,174,96,0.4); }
+  #result-view .tile-slot.is-both .tile-img { border: 2px solid #8e44ad; box-shadow: 0 0 4px rgba(142,68,173,0.4); }
+  #result-view .tile-slot.is-tsumo { margin-left: 10px; }
+  #result-view .tile-slot.is-tsumo::before {
+    content: '摸';
+    position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
+    font-size: 9px; font-weight: 700; color: #d97706;
+    background: #fef3c7; border: 1px solid #fcd34d; border-radius: 3px;
+    padding: 0 3px; line-height: 1.4;
+  }
+
+  #result-view .bar-wrap {
+    position: relative;
+    width: 38px; height: 57px;
+    display: flex; flex-direction: column; justify-content: flex-end; align-items: center;
+    pointer-events: none;
+  }
+  #result-view .bar-wrap.is-bot  { outline: 2px solid #e74c3c; outline-offset: 1px; border-radius: 4px; }
+  #result-view .bar-wrap.is-gt   { outline: 2px solid #27ae60; outline-offset: 1px; border-radius: 4px; }
+  #result-view .bar-wrap.is-both { outline: 2px solid #8e44ad; outline-offset: 1px; border-radius: 4px; }
+  #result-view .bar-label {
+    font-size: 8px; color: #374151; font-weight: 600;
+    font-family: "Menlo", "Consolas", monospace;
+    white-space: nowrap; margin-bottom: 1px;
+    min-height: 10px;
+  }
+  #result-view .bar {
+    width: 6px; display: flex; align-items: flex-end; justify-content: center;
+    overflow: visible; min-height: 3px; flex-shrink: 0;
+  }
+  #result-view .bar-mark { font-size: 8px; color: #fff; font-weight: bold; white-space: nowrap; line-height: 1; }
+  #result-view .bar.r3  { border-radius: 3px 3px 0 0; }
+  #result-view .bar.r5  { border-radius: 5px 5px 0 0; }
+
+  #result-view .nondahai-box {
+    border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 12px;
+    font-size: 13px; display: inline-flex; flex-direction: column; gap: 4px;
+  }
+
+  #result-view #status-box { padding: 60px; text-align: center; font-size: 15px; color: #6b7280; }
+  #result-view .error-box {
+    background: #fef2f2; border: 1px solid #fecaca;
+    border-radius: 8px; padding: 20px; margin: 20px; color: #991b1b;
+  }
+  #result-view .skeleton {
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 4px;
+  }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+
+  /* ---- 统计面板 ---- */
+  #stats-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 199;
+  }
+  #stats-overlay.open { display: block; }
+  #stats-panel {
+    display: none; position: fixed; top: 0; right: 0; bottom: 0; width: 320px;
+    background: #fff; box-shadow: -4px 0 20px rgba(0,0,0,0.15); z-index: 200; overflow-y: auto;
+  }
+  #stats-panel.open { display: block; }
+  .stats-header {
+    background: linear-gradient(135deg, #1e3a5f 0%, #2d5f8b 100%);
+    color: #fff; padding: 14px 16px; font-size: 15px; font-weight: 700;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .stats-close {
+    background: rgba(255,255,255,0.2); border: none; color: #fff;
+    font-size: 18px; width: 28px; height: 28px; border-radius: 50%;
+    cursor: pointer; line-height: 1;
+  }
+  .stats-close:hover { background: rgba(255,255,255,0.35); }
+  .stats-body { padding: 16px; }
+  .stats-summary {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px;
+  }
+  .stats-card {
+    background: #f8fafc; border: 1px solid #e2e8f0;
+    border-radius: 8px; padding: 10px 12px; text-align: center;
+  }
+  .stats-card .val {
+    font-size: 22px; font-weight: 700; color: #1e3a5f;
+    font-family: "Menlo", "Consolas", monospace;
+  }
+  .stats-card .lbl { font-size: 11px; color: #64748b; margin-top: 2px; }
+  .stats-section-title {
+    font-size: 12px; font-weight: 700; color: #475569;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    margin: 14px 0 8px; padding-bottom: 4px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .stats-row {
+    display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px;
+  }
+  .stats-row .lbl { flex: 1; color: #374151; }
+  .stats-row .val { font-weight: 600; font-family: "Menlo", "Consolas", monospace; color: #1e3a5f; }
+  .stats-bar-bg {
+    flex: 2; background: #e2e8f0; border-radius: 4px; height: 8px; overflow: hidden;
+  }
+  .stats-bar-fg {
+    height: 100%; border-radius: 4px; background: #3498db;
+    display: flex; align-items: center; justify-content: flex-end; padding-right: 4px;
+    font-size: 9px; color: #fff; font-weight: 700; min-width: 20px;
+  }
+  .match-rate-bar {
+    background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+    border-radius: 8px; padding: 12px 14px; text-align: center; margin-bottom: 14px;
+  }
+  .match-rate-bar .pct { font-size: 32px; font-weight: 800; color: #fff; }
+  .match-rate-bar .sub { font-size: 12px; color: rgba(255,255,255,0.8); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- 表单 -->
+  <div class="card" id="form-section">
+    <div class="card-title">跑谱 Review</div>
+
+    <label>输入类型</label>
+    <div class="type-radios">
+      <label><input type="radio" name="input-type" value="url" checked> 天凤链接</label>
+      <label><input type="radio" name="input-type" value="mjai"> mjai JSONL</label>
+      <label><input type="radio" name="input-type" value="tenhou6"> tenhou6 JSON</label>
+    </div>
+
+    <div id="upload-zone">
+      📁 点击或拖拽文件到此处上传
+      <input type="file" id="file-input" accept=".json,.jsonl,.txt" multiple>
+    </div>
+    <div id="file-list"></div>
+
+    <textarea id="json-text" placeholder="粘贴天凤牌谱链接，如：&#10;https://tenhou.net/0/?log=2026031123gm-0009-2147-fcff044d&tw=0"></textarea>
+    <div id="input-hint">自动从链接的 tw= 参数获取视角并设为默认，无需手动选择</div>
+
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:14px">
+      <div style="flex:1;min-width:160px">
+        <label for="player-id">视角座位</label>
+        <select id="player-id">
+          <option value="auto">自动（来自链接 tw=）</option>
+          <option value="0">东家</option>
+          <option value="1" selected>南家</option>
+          <option value="2">西家</option>
+          <option value="3">北家</option>
+        </select>
+        <div id="player-id-hint"></div>
+      </div>
+      <div style="flex:1;min-width:130px">
+        <label for="bot-type">模型类型</label>
+        <select id="bot-type">
+          <option value="mortal" selected>mortal · 当前主线</option>
+          <option value="70k">70k · 标准锚点</option>
+          <option value="ext_mortal">External Mortal</option>
+          <option value="rulebase">rulebase · 规则基线</option>
+        </select>
+      </div>
+      <div style="flex:2;min-width:200px">
+        <label for="checkpoint">模型路径</label>
+        <input type="text" id="checkpoint" value="artifacts/mortal_serving/gui_mortal.pth">
+      </div>
+      <button id="btn-run">▶ 运行 Review</button>
+    </div>
+    <div id="status"></div>
+  </div>
+
+  <!-- 结果 -->
+  <div id="result-view">
+    <div id="result-nav"></div>
+    <div id="steps"></div>
+    <div id="stats-overlay"></div>
+    <div id="stats-panel">
+      <div class="stats-header">
+        <span>决策统计</span>
+        <button class="stats-close" id="stats-close-btn">×</button>
+      </div>
+      <div class="stats-body" id="stats-body"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ---- 常量 ----
+const TILE_BASE = '/tiles';
+const TILE_SVG = {
+  '1m':'Man1','2m':'Man2','3m':'Man3','4m':'Man4','5m':'Man5','6m':'Man6','7m':'Man7','8m':'Man8','9m':'Man9',
+  '1p':'Pin1','2p':'Pin2','3p':'Pin3','4p':'Pin4','5p':'Pin5','6p':'Pin6','7p':'Pin7','8p':'Pin8','9p':'Pin9',
+  '1s':'Sou1','2s':'Sou2','3s':'Sou3','4s':'Sou4','5s':'Sou5','6s':'Sou6','7s':'Sou7','8s':'Sou8','9s':'Sou9',
+  '5mr':'Man5-Dora','5pr':'Pin5-Dora','5sr':'Sou5-Dora',
+  'E':'Ton','S':'Nan','W':'Shaa','N':'Pei','P':'Haku','F':'Hatsu','C':'Chun',
+};
+const _TILE_ORDER = {
+  '1m':0,'2m':1,'3m':2,'4m':3,'5m':4,'6m':5,'7m':6,'8m':7,'9m':8,'5mr':4,
+  '1p':9,'2p':10,'3p':11,'4p':12,'5p':13,'6p':14,'7p':15,'8p':16,'9p':17,'5pr':13,
+  '1s':18,'2s':19,'3s':20,'4s':21,'5s':22,'6s':23,'7s':24,'8s':25,'9s':26,'5sr':22,
+  'E':27,'S':28,'W':29,'N':30,'P':31,'F':32,'C':33,
+};
+const MAX_BAR_H = 57;
+const _CN_TILE = {
+  'E':'东','S':'南','W':'西','N':'北','P':'发','F':'北','C':'中',
+  '1m':'一万','2m':'二万','3m':'三万','4m':'四万','5m':'五万','6m':'六万','7m':'七万','8m':'八万','9m':'九万',
+  '1p':'一筒','2p':'二筒','3p':'三筒','4p':'四筒','5p':'五筒','6p':'六筒','7p':'七筒','8p':'八筒','9p':'九筒',
+  '1s':'一索','2s':'二索','3s':'三索','4s':'四索','5s':'五索','6s':'六索','7s':'七索','8s':'八索','9s':'九索',
+  '5mr':'赤五万','5pr':'赤五筒','5sr':'赤五索',
+};
+const _CN_BAKAZE = { 'E':'东', 'S':'南', 'W':'西', 'N':'北' };
+function _cn(t) { return _CN_TILE[t] || t; }
+
+// ---- 工具函数 ----
+function tileUrl(name) {
+  return `${TILE_BASE}/${TILE_SVG[name] || 'Blank'}.svg`;
+}
+
+function actionLabel(a) {
+  if (!a) return '—';
+  switch (a.type) {
+    case 'dahai':    return '打 ' + _cn(a.pai) + (a.tsumogiri ? ' (摸切)' : '');
+    case 'reach':    return '立直';
+    case 'chi':      return '吃 ' + _cn(a.pai) + ' (' + (a.consumed||[]).map(_cn).join(',') + ')';
+    case 'pon':      return '碰 ' + _cn(a.pai);
+    case 'daiminkan': return '大明杠 ' + _cn(a.pai);
+    case 'ankan':    return '暗杠 ' + _cn(a.pai);
+    case 'kakan':    return '加杠 ' + _cn(a.pai);
+    case 'hora':     return '胡牌';
+    case 'ryukyoku': return '流局';
+    case 'none':     return '跳过';
+    default:        return a.type;
+  }
+}
+
+function buildSortedTiles(entry) {
+  const hand = entry.hand || [];
+  const tsumo_pai = entry.tsumo_pai || null;
+  const tileLogit = {};
+  let minLogit = 0, maxLogit = 1;
+  if (entry.candidates && entry.candidates.length) {
+    entry.candidates.forEach(c => {
+      if (c.action && c.action.type === 'dahai' && c.action.pai) {
+        tileLogit[c.action.pai] = c.logit;
+      }
+    });
+    const vals = Object.values(tileLogit);
+    if (vals.length > 1) { minLogit = Math.min(...vals); maxLogit = Math.max(...vals); }
+    else if (vals.length === 1) { minLogit = maxLogit = vals[0]; }
+  }
+  const logitRange = Math.max(maxLogit - minLogit, 0.001);
+  const others = hand.filter(t => t !== tsumo_pai);
+  others.sort((a, b) => (_TILE_ORDER[a] ?? 99) - (_TILE_ORDER[b] ?? 99));
+  const sorted = tsumo_pai ? [...others, tsumo_pai] : others;
+  return sorted.map(name => ({ name, logit: tileLogit[name], minLogit, logitRange, isTsumo: name === tsumo_pai }));
+}
+
+function calcBarHeight(tile) {
+  if (tile.logit === undefined) return 0;
+  const pct = Math.max(1, (tile.logit - tile.minLogit) / tile.logitRange * 100);
+  return Math.max(3, Math.round(pct / 100 * MAX_BAR_H));
+}
+
+function getBarLabel(tile) {
+  if (tile.logit === undefined) return '';
+  return tile.logit.toFixed(2);
+}
+
+function getBarColor(tileName, entry) {
+  const c = entry.chosen, g = entry.gt_action;
+  if (tileName === c?.pai && tileName === g?.pai) return '#8e44ad';
+  if (tileName === c?.pai) return '#e74c3c';
+  if (tileName === g?.pai) return '#27ae60';
+  return '#3498db';
+}
+
+function getBarWrapClass(tileName, entry) {
+  const c = entry.chosen, g = entry.gt_action;
+  if (tileName === c?.pai && tileName === g?.pai) return 'is-both';
+  if (tileName === c?.pai) return 'is-bot';
+  if (tileName === g?.pai) return 'is-gt';
+  return '';
+}
+
+function getTileClass(tileName, entry) {
+  const c = entry.chosen, g = entry.gt_action;
+  const b = tileName === c?.pai, gg = tileName === g?.pai;
+  if (b && gg) return 'is-both';
+  if (b) return 'is-bot';
+  if (gg) return 'is-gt';
+  return '';
+}
+
+function getChosenClass(entry) {
+  const chosen = entry.chosen;
+  if (!chosen) return 'none';
+  const g = entry.gt_action;
+  if (sameAction(chosen, g)) return 'both';
+  if (chosen.type === 'dahai' || chosen.type === 'none') return 'bot';
+  return 'gt';
+}
+
+function getGtClass(entry) {
+  const c = entry.chosen, g = entry.gt_action;
+  if (!g) return 'none';
+  if (sameAction(c, g)) return 'both';
+  return 'gt';
+}
+
+// ---- 渲染 ----
+let _curKyoku = 0;
+let _kyokuData = [];
+let _totalOps = 0;
+let _matchCount = 0;
+
+function renderNav(data) {
+  _logData = data;
+  _kyokuData = data.kyoku_order || [];
+  _totalOps = data.total_ops || 0;
+  _matchCount = data.match_count || 0;
+  const numKyoku = _kyokuData.length;
+  const pid = data.player_id || 0;
+  const names = ['东家','南家','西家','北家'];
+  _curKyoku = 0;
+
+  document.getElementById('result-nav').innerHTML = `
+    <div id="nav">
+      <span class="nav-title">Replay Review — ${names[pid]}视角</span>
+      <button class="btn" id="btn-prev" onclick="navPrevKyoku()">◀ 上一局</button>
+      <span id="kyoku-label"></span>
+      <button class="btn" id="btn-next" onclick="navNextKyoku()">下一局 ▶</button>
+      <span style="margin-left:8px">
+        <button class="btn" onclick="navPrevStep()">↑上一步</button>
+        <button class="btn" onclick="navNextStep()">↓下一步</button>
+      </span>
+      <button class="btn" onclick="navShowStats()">📊统计</button>
+      <button class="btn" onclick="navSaveOffline()">💾保存离线版</button>
+      <span id="shortcuts">←/→ 局  ↑/↓ 步</span>
+    </div>
+  `;
+
+  document.addEventListener('keydown', function(e) {
+    const tag = document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (e.key === 'ArrowLeft'  || e.key === 'h') { e.preventDefault(); navPrevKyoku(); }
+    if (e.key === 'ArrowRight' || e.key === 'l') { e.preventDefault(); navNextKyoku(); }
+    if (e.key === 'ArrowUp'    || e.key === 'k') { e.preventDefault(); navPrevStep(); }
+    if (e.key === 'ArrowDown'  || e.key === 'j') { e.preventDefault(); navNextStep(); }
+  });
+
+  doShowKyoku(0);
+}
+
+function doShowKyoku(idx) {
+  _curKyoku = Math.max(0, Math.min(idx, _kyokuData.length - 1));
+  document.querySelectorAll('.step-card').forEach(el => {
+    el.style.display = (parseInt(el.dataset.kyoku) === _curKyoku) ? '' : 'none';
+  });
+  const _CN_BAKAZE = { 'E':'东', 'S':'南', 'W':'西', 'N':'北' };
+  const k = _kyokuData[_curKyoku];
+  document.getElementById('kyoku-label').textContent =
+    `第${_CN_BAKAZE[k.bakaze]||k.bakaze}${k.kyoku}局 ${k.honba}本场 (${_curKyoku+1}/${_kyokuData.length})`;
+  document.getElementById('btn-prev').disabled = _curKyoku === 0;
+  document.getElementById('btn-next').disabled = _curKyoku === _kyokuData.length - 1;
+}
+
+function navPrevKyoku() { doShowKyoku(_curKyoku - 1); }
+function navNextKyoku() { doShowKyoku(_curKyoku + 1); }
+
+function navPrevStep() {
+  const els = Array.from(document.querySelectorAll('.step-card[style=""]'));
+  for (let i = els.length - 1; i >= 0; i--) {
+    if (els[i].getBoundingClientRect().bottom < 80) { els[i].scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+  }
+  const visible = Array.from(document.querySelectorAll('.step-card')).filter(el => el.style.display !== 'none');
+  if (visible.length) visible[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function navNextStep() {
+  const els = Array.from(document.querySelectorAll('.step-card'));
+  for (let i = 0; i < els.length; i++) {
+    if (els[i].getBoundingClientRect().top > 80) { els[i].scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+  }
+}
+
+function navShowStats() {
+  document.getElementById('stats-overlay').classList.add('open');
+  document.getElementById('stats-panel').classList.add('open');
+  renderStats(_logData);
+}
+
+function navSaveOffline() {
+  if (!_logData) return;
+  const form = new FormData();
+  form.append('data', JSON.stringify(_logData));  // Form field name must match server's Form("")
+  fetch('/api/export-html', { method: 'POST', body: form })
+    .then(resp => resp.blob())
+    .then(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'replay.html';
+      a.click();
+      URL.revokeObjectURL(url);
+    })
+    .catch(err => alert('导出失败: ' + err.message));
+}
+
+function renderStats(data) {
+  const log = data.log || [];
+  const total = log.length;
+  const match = data.match_count || 0;
+  const pct = total ? (match / total * 100).toFixed(1) : '0.0';
+  const dahaiCount = log.filter(e => e.chosen?.type === 'dahai').length;
+  const dahaiRate = total ? ((dahaiCount / total) * 100).toFixed(0) : 0;
+
+  // 各动作类型统计
+  const byType = {};
+  log.forEach(e => {
+    const t = e.chosen?.type || '?';
+    if (!byType[t]) byType[t] = { total: 0, match: 0 };
+    byType[t].total++;
+    if (sameAction(e.chosen, e.gt_action)) byType[t].match++;
+  });
+  const labels = { dahai:'打牌', none:'过', reach:'立直', chi:'吃', pon:'碰', daiminkan:'大明杠', ankan:'暗杠', kakan:'加杠', hora:'胡', ryukyoku:'流局' };
+  const typeRows = Object.entries(byType).map(([t, v]) => {
+    const p = v.total ? Math.round(v.match / v.total * 100) : 0;
+    const barColor = p > 70 ? '#27ae60' : p > 40 ? '#3498db' : '#e74c3c';
+    return `<div class="stats-row"><span class="lbl">${labels[t] || t}</span><div class="stats-bar-bg"><div class="stats-bar-fg" style="width:${p}%;background:${barColor}">${p}%</div></div><span class="val">${v.match}/${v.total}</span></div>`;
+  }).sort((a, b) => {
+    const ta = byType[a.match]?.total || 0;
+    const tb = byType[b.match]?.total || 0;
+    return tb - ta;
+  }).join('');
+
+  // 打牌详情
+  const byTile = {};
+  log.forEach(e => {
+    if (e.chosen?.type !== 'dahai') return;
+    const t = e.chosen?.pai || '?';
+    if (!byTile[t]) byTile[t] = { total: 0, match: 0 };
+    byTile[t].total++;
+    if (e.gt_action?.type === 'dahai' && sameAction(e.chosen, e.gt_action)) byTile[t].match++;
+  });
+  const tileRows = Object.entries(byTile).map(([t, v]) => {
+    const p = v.total ? Math.round(v.match / v.total * 100) : 0;
+    const barColor = p > 70 ? '#27ae60' : p > 40 ? '#3498db' : '#e74c3c';
+    return `<div class="stats-row"><span class="lbl">${t}</span><div class="stats-bar-bg"><div class="stats-bar-fg" style="width:${p}%;background:${barColor}">${p}%</div></div><span class="val">${v.match}/${v.total}</span></div>`;
+  }).sort((a, b) => {
+    const ta = byTile[a.match]?.total || 0;
+    const tb = byTile[b.match]?.total || 0;
+    return tb - ta;
+  }).slice(0, 10).join('');
+
+  document.getElementById('stats-body').innerHTML = `
+    <div class="match-rate-bar">
+      <div class="pct">${pct}%</div>
+      <div class="sub">Bot 与玩家一致率 (${match} / ${total})</div>
+    </div>
+    <div class="stats-summary">
+      <div class="stats-card"><div class="val">${total}</div><div class="lbl">总决策数</div></div>
+      <div class="stats-card"><div class="val">${match}</div><div class="lbl">匹配数</div></div>
+      <div class="stats-card"><div class="val">${data.kyoku_order?.length || 0}</div><div class="lbl">总局数</div></div>
+      <div class="stats-card"><div class="val">${dahaiRate}%</div><div class="lbl">打牌占比</div></div>
+    </div>
+    ${typeRows ? `<div class="stats-section-title">各动作准确率</div>${typeRows}` : ''}
+    ${tileRows ? `<div class="stats-section-title">打牌详情（Top 10）</div>${tileRows}` : ''}
+  `;
+}
+
+let _logData = null;
+function closeStats() {
+  document.getElementById('stats-overlay').classList.remove('open');
+  document.getElementById('stats-panel').classList.remove('open');
+}
+document.getElementById('stats-close-btn').addEventListener('click', closeStats);
+document.getElementById('stats-overlay').addEventListener('click', closeStats);
+
+function normalizeTileForCompare(tile) {
+  if (!tile) return tile;
+  if (tile === '5mr' || tile === '5pr' || tile === '5sr') return tile;
+  return tile.endsWith('r') ? tile.slice(0, -1) : tile;
+}
+function normalizedConsumed(action) {
+  return (action?.consumed || []).map(normalizeTileForCompare).sort().join('|');
+}
+function sameAction(left, right) {
+  if (!left || !right) return false;
+  const lt = left.type === 'pass' ? 'none' : left.type;
+  const rt = right.type === 'pass' ? 'none' : right.type;
+  if (lt !== rt) return false;
+  if (lt === 'none' || lt === 'reach' || lt === 'ryukyoku') return true;
+  if (lt === 'dahai') return normalizeTileForCompare(left.pai) === normalizeTileForCompare(right.pai);
+  if (lt === 'hora') {
+    const lp = left.pai ? normalizeTileForCompare(left.pai) : null;
+    const rp = right.pai ? normalizeTileForCompare(right.pai) : null;
+    return left.target === right.target && (lp === null || rp === null || lp === rp);
+  }
+  if (['chi', 'pon', 'daiminkan', 'ankan', 'kakan'].includes(lt)) {
+    const lp = left.pai ? normalizeTileForCompare(left.pai).replace(/r$/, '') : null;
+    const rp = right.pai ? normalizeTileForCompare(right.pai).replace(/r$/, '') : null;
+    return (
+      left.target === right.target &&
+      (lp === null || rp === null || lp === rp) &&
+      normalizedConsumed(left) === normalizedConsumed(right)
+    );
+  }
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function renderSteps(data) {
+  const log = data.log || [];
+  const kOrder = data.kyoku_order || [];
+  const stepsDiv = document.getElementById('steps');
+  const html = log.map((entry, idx) => {
+    const kyokuIdx = kOrder.findIndex(k =>
+      k.bakaze === entry.bakaze && k.kyoku === entry.kyoku && k.honba === entry.honba
+    );
+    const tiles = buildSortedTiles(entry);
+    const isDahai = entry.chosen?.type === 'dahai' || entry.chosen?.type === 'none';
+
+    // 立直宣言牌：从下一条 dahai 获取
+    let reachInfo = '';
+    if (entry.chosen?.type === 'reach') {
+      const next = log[idx + 1];
+      if (next?.chosen?.type === 'dahai') {
+        reachInfo = `<span style="font-size:11px;color:#888">（宣言牌 ${_cn(next.chosen.pai)}）</span>`;
+      }
+    }
+
+    // Dora
+    let doraHtml = '';
+    if (entry.dora_markers?.length) {
+      doraHtml = entry.dora_markers.map(d => `<img class="dora" src="${tileUrl(d)}" width="26">`).join('');
+      doraHtml = `<span style="margin-right:2px;color:#9ca3af;font-size:11px">宝:</span>${doraHtml}`;
+    }
+
+    // 手牌 + 指示条
+    let handHtml = '';
+    if (isDahai) {
+      const tileParts = tiles.map(tile => {
+        const h = calcBarHeight(tile);
+        const bc = getBarColor(tile.name, entry);
+        const barWrapClass = getBarWrapClass(tile.name, entry);
+        const cls = getTileClass(tile.name, entry);
+        const tsumo = tile.isTsumo ? ' is-tsumo' : '';
+        const rClass = h >= 5 ? 'r5' : 'r3';
+        const barWrapClass = getBarWrapClass(tile.name, entry);
+        const bar = h > 0 ? `<div class="bar-wrap ${barWrapClass}"><div class="bar-label">${getBarLabel(tile)}</div><div class="bar ${rClass}" style="height:${h}px;background:${bc}"></div></div>` : '';
+        return `<div class="tile-slot ${cls}${tsumo}">${bar}<img class="tile-img" src="${tileUrl(tile.name)}" width="38" title="${tile.name}"></div>`;
+      });
+      handHtml = `<div class="hand-row">${tileParts.join('')}</div>`;
+    }
+
+    // 非 dahai
+    let nondahaiHtml = '';
+    if (!isDahai) {
+      const cl = actionLabel(entry.chosen);
+      const gl = entry.gt_action ? actionLabel(entry.gt_action) : '—';
+      nondahaiHtml = `<div class="nondahai-box"><div>Bot: <b>${cl}</b>${reachInfo}</div><div style="color:#166534">实际: <b>${gl}</b></div></div>`;
+    }
+
+    // 分数
+    const scoresHtml = entry.scores.map((s, i) =>
+      `<span class="score-chip${entry.reached[i] ? ' reached' : ''}">P${i}${entry.reached[i] ? 'R' : ''}:${s}</span>`
+    ).join('');
+
+    const cc = getChosenClass(entry);
+    const gc = getGtClass(entry);
+    const chosenL = actionLabel(entry.chosen);
+    const gtL = entry.gt_action ? actionLabel(entry.gt_action) : '—';
+    const isMatch = sameAction(entry.chosen, entry.gt_action);
+
+    return `<div class="step-card" data-kyoku="${kyokuIdx}">
+      <div class="step-top">
+        <div class="step-header">${_CN_BAKAZE[entry.bakaze]||entry.bakaze}${entry.kyoku}局 ${entry.honba}本场 · Step ${entry.step}</div>
+        <div class="step-meta-right">${scoresHtml}${doraHtml}
+          <span class="action-chip ${cc}">Bot: ${chosenL}</span>
+          <span class="action-chip ${gc}">实际: ${gtL}</span>
+          ${isMatch ? '<span style="font-size:11px;color:#16a34a;font-weight:600">✓ Match</span>' : ''}
+        </div>
+      </div>
+      <div style="flex:1;display:flex;flex-direction:column;min-height:0;">${handHtml}${nondahaiHtml}</div>
+    </div>`;
+  }).join('');
+  stepsDiv.innerHTML = html;
+}
+
+// ---- 表单 ----
+const PLAYER_NAMES = ['东家','南家','西家','北家'];
+const placeholders = {
+  url: '粘贴天凤牌谱链接，如：\nhttps://tenhou.net/0/?log=2026031123gm-0009-2147-fcff044d&tw=0',
+  tenhou6: '粘贴 tenhou6 JSON 文本，如：\n{"tehai":["1m",…], "log":"...", …}',
+  mjai: '粘贴 mjai JSONL 文本（多行），如：\n{"type":"start_game",…}\n{"type":"start_kyoku",…}',
+};
+const hints = {
+  url: '自动从链接的 tw= 参数获取视角，无需手动选择',
+  tenhou6: 'tenhou6 JSON 格式；需手动选择视角',
+  mjai: 'mjai JSONL 格式；需手动选择视角',
+};
+
+const jsonTextarea = document.getElementById('json-text');
+const hintEl = document.getElementById('input-hint');
+
+document.querySelectorAll('input[name="input-type"]').forEach(r => {
+  r.addEventListener('change', () => {
+    const sel = document.querySelector('input[name="input-type"]:checked').value;
+    jsonTextarea.placeholder = placeholders[sel];
+    hintEl.textContent = hints[sel];
+    document.getElementById('player-id-hint').textContent = '';
+    if (sel === 'url') autoFillTw();
+  });
+});
+
+jsonTextarea.addEventListener('input', () => {
+  if (document.querySelector('input[name="input-type"]:checked').value === 'url') autoFillTw();
+});
+
+// bot 类型切换时自动更新默认 checkpoint 路径
+const BOT_DEFAULTS = {
+  mortal: 'artifacts/mortal_serving/gui_mortal.pth',
+  '70k': 'artifacts/mortal_serving/70k.pth',
+  ext_mortal: 'artifacts/external_mortal_20240308_best_min.pth',
+  rulebase: '',
+};
+const checkpointInput = document.getElementById('checkpoint');
+document.getElementById('bot-type').addEventListener('change', function() {
+  if (!checkpointInput.value || Object.values(BOT_DEFAULTS).includes(checkpointInput.value)) {
+    checkpointInput.value = BOT_DEFAULTS[this.value];
+  }
+});
+
+function autoFillTw() {
+  const text = jsonTextarea.value.trim();
+  const m = text.match(/[?&]tw=(\d)/);
+  if (m) {
+    const tw = parseInt(m[1]);
+    if (tw >= 0 && tw <= 3) {
+      document.getElementById('player-id').value = String(tw);
+      document.getElementById('player-id-hint').textContent = `已自动设为 ${PLAYER_NAMES[tw]}（来自 tw=${tw}）`;
+    }
+  }
+}
+
+const fileInput  = document.getElementById('file-input');
+const uploadZone = document.getElementById('upload-zone');
+const fileList   = document.getElementById('file-list');
+let selectedFiles = [];
+
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('dragover'); addFiles(Array.from(e.dataTransfer.files)); });
+fileInput.addEventListener('change', () => addFiles(Array.from(fileInput.files)));
+uploadZone.addEventListener('click', () => fileInput.click());
+
+function addFiles(files) { files.forEach(f => { if (!selectedFiles.some(s => s.name === f.name)) selectedFiles.push(f); }); renderFileList(); }
+window.removeFile = function(name) { selectedFiles = selectedFiles.filter(f => f.name !== name); renderFileList(); };
+function renderFileList() {
+  fileList.innerHTML = selectedFiles.map(f => `<div class="file-chip">📄 ${f.name}<span class="remove" onclick="removeFile('${f.name}')">×</span></div>`).join('');
+}
+
+// ---- run ----
+const btnRun = document.getElementById('btn-run');
+const statusEl = document.getElementById('status');
+const formSec = document.getElementById('form-section');
+const resultView = document.getElementById('result-view');
+
+async function runReplay() {
+  const playerIdRaw = document.getElementById('player-id').value;
+  const checkpoint = document.getElementById('checkpoint').value.trim();
+  const json_val = jsonTextarea.value.trim();
+  const inputType = document.querySelector('input[name="input-type"]:checked').value;
+
+  if (!selectedFiles.length && !json_val) { statusEl.textContent = '请上传文件或粘贴 JSON 文本'; statusEl.className = 'error'; return; }
+  if (!checkpoint) { statusEl.textContent = '请填写模型路径'; statusEl.className = 'error'; return; }
+
+  let playerIdToSend;
+  if (playerIdRaw === 'auto') {
+    if (inputType === 'url' && json_val) {
+      const m = json_val.match(/[?&]tw=(\d)/);
+      if (m && parseInt(m[1]) >= 0 && parseInt(m[1]) <= 3) playerIdToSend = parseInt(m[1]);
+      else { statusEl.textContent = 'URL 模式默认从链接的 tw 参数获取视角，但链接中未找到有效的 tw 值'; statusEl.className = 'error'; return; }
+    } else { statusEl.textContent = '请选择具体的视角座位'; statusEl.className = 'error'; return; }
+  } else { playerIdToSend = parseInt(playerIdRaw); }
+
+  btnRun.disabled = true; btnRun.innerHTML = '<span class="spinner"></span>运行中…';
+  resultView.classList.remove('show');
+  statusEl.textContent = '正在运行跑谱，请稍候…'; statusEl.className = '';
+
+  const form = new FormData();
+  form.append('player_id', playerIdToSend);
+  form.append('checkpoint', checkpoint);
+  form.append('bot_type', document.getElementById('bot-type').value);
+  for (const f of selectedFiles) form.append('files', f);
+  if (json_val) { form.append('json_text', json_val); form.append('input_type', inputType); }
+
+  try {
+    const resp = await fetch('/api/replay', { method: 'POST', body: form });
+    const data = await resp.json();
+    if (!resp.ok) {
+      statusEl.textContent = `请求失败 (${resp.status})：${data.error || JSON.stringify(data)}`; statusEl.className = 'error';
+      resultView.classList.remove('show'); return;
+    }
+    formSec.style.display = 'none';
+    resultView.classList.add('show');
+    renderNav(data);
+    renderSteps(data);
+    statusEl.textContent = '';
+  } catch (err) {
+    statusEl.textContent = `网络错误：${err.message}`; statusEl.className = 'error';
+    resultView.classList.remove('show');
+  } finally {
+    btnRun.disabled = false; btnRun.innerHTML = '▶ 运行 Review';
+  }
+}
+
+btnRun.addEventListener('click', runReplay);
+</script>
+</body>
+</html>

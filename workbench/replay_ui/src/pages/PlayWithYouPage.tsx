@@ -1,0 +1,563 @@
+// src/replay_ui/src/pages/PlayWithYouPage.tsx
+// "Play with you" — 呼出模型（Play-with-you simplification）。
+// 只负责「呼出哪些模型、几个 bot、进哪个房间」。账号是谁、实际東南西北是谁、
+// 记到谁名下、是否进正式天梯——全部由赛后 Tenhou Import 决定。
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
+import { PageShell, SectionTitle } from "../components/Layout/PageScaffold";
+import {
+  startPlayWithYou,
+  stopPlayWithYou,
+  getPlayWithYouStatus,
+  type SpeedId,
+  type DeviceId,
+  type BotInfo,
+  type PlayWithYouStatus,
+} from "../api/playwithyouApi";
+import { participantsApi } from "../api/participantsApi";
+import type { ModelIdentity } from "../types/participants";
+import { useNavigate } from "react-router-dom";
+import { routes } from "../routes";
+
+const ACCENT = "#8e44ad";
+
+const SPEED_OPTIONS: Array<{ value: SpeedId; label: string }> = [
+  { value: "slow", label: "Slow" },
+  { value: "normal", label: "Normal" },
+  { value: "fast", label: "Fast" },
+  { value: "turbo", label: "Turbo" },
+];
+
+const DEVICE_OPTIONS: Array<{ value: DeviceId; label: string }> = [
+  { value: "cuda", label: "CUDA" },
+  { value: "cpu", label: "CPU" },
+];
+
+function shortSpec(spec: string): string {
+  if (!spec) return spec;
+  if (spec.includes("/") || spec.includes("\\")) {
+    return spec.split(/[\\/]/).pop() || spec;
+  }
+  return spec;
+}
+
+function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  options: Array<{ value: T; label: string }>;
+  value: T;
+  onChange: (v: T) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(${options.length}, 1fr)`, gap: 6 }}>
+      {options.map((opt) => {
+        const active = opt.value === value;
+        return (
+          <button
+            key={opt.value}
+            disabled={disabled}
+            onClick={() => onChange(opt.value)}
+            style={{
+              height: 32,
+              borderRadius: 6,
+              fontSize: 13,
+              fontWeight: 700,
+              border: `1px solid ${active ? ACCENT : "var(--border)"}`,
+              background: active ? "rgba(142,68,173,0.08)" : "var(--surface-subtle)",
+              color: active ? ACCENT : "var(--text-primary)",
+              cursor: disabled ? "not-allowed" : "pointer",
+              opacity: disabled ? 0.5 : 1,
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+type LauncherRow = {
+  model_identity_id: string;
+  model_artifact_id: string;
+};
+
+export function PlayWithYouPage() {
+  const navigate = useNavigate();
+  const [lobbyId, setLobbyId] = useState<string>("2147");
+  const [speed, setSpeed] = useState<SpeedId>("normal");
+  const [device, setDevice] = useState<DeviceId>("cuda");
+
+  const [status, setStatus] = useState<PlayWithYouStatus | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Play-with-you simplification：只选择要呼出的模型（1-4 个）。
+  const [launchers, setLaunchers] = useState<LauncherRow[]>([
+    { model_identity_id: "", model_artifact_id: "" },
+  ]);
+  const [identities, setIdentities] = useState<ModelIdentity[]>([]);
+
+  const logRef = useRef<HTMLDivElement | null>(null);
+  const pollingRef = useRef<number | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      window.clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  }, []);
+
+  const refresh = useCallback(async () => {
+    try {
+      const s = await getPlayWithYouStatus();
+      setStatus(s);
+      if (s.running) {
+        if (!pollingRef.current) {
+          pollingRef.current = window.setInterval(refresh, 2000);
+        }
+      } else {
+        stopPolling();
+      }
+    } catch {
+      /* ignore transient */
+    }
+  }, [stopPolling]);
+
+  const updateLauncher = (index: number, patch: Partial<LauncherRow>) => {
+    setLaunchers((prev) =>
+      prev.map((row, i) => (i === index ? { ...row, ...patch } : row)),
+    );
+  };
+
+  const addLauncher = () => {
+    setLaunchers((prev) => [...prev, { model_identity_id: "", model_artifact_id: "" }]);
+  };
+
+  const removeLauncher = (index: number) => {
+    setLaunchers((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const start = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const filled = launchers.filter(
+        (l) => l.model_identity_id && l.model_artifact_id,
+      );
+      if (filled.length === 0) {
+        throw new Error("请至少选择一个要呼出的模型");
+      }
+      const s = await startPlayWithYou({
+        lobby_id: lobbyId,
+        speed,
+        device,
+        launchers: filled.map((l) => ({
+          model_identity_id: l.model_identity_id,
+          model_artifact_id: l.model_artifact_id,
+        })),
+      });
+      setStatus(s);
+      stopPolling();
+      void refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "启动失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const stop = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const s = await stopPlayWithYou();
+      setStatus(s);
+      stopPolling();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "停止失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    participantsApi
+      .listModels(controller.signal)
+      .then((resp) => setIdentities(resp.identities))
+      .catch(() => {});
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => stopPolling, [stopPolling]);
+
+  // mount 时恢复运行状态（F5 刷新后仍能看到 running / frozen roster）
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [status?.log_tail]);
+
+  const isRunning = status?.running ?? false;
+  const joinUrl = `https://tenhou.net/0/?${status?.lobby_id ?? lobbyId}`;
+
+  return (
+    <PageShell width={960}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+          flexWrap: "wrap",
+          marginBottom: 12,
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "var(--text-primary)" }}>
+            Play with you · 天凤在线呼出
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            只负责呼出模型进入天凤个室；账号/坐席/正式计分全部在赛后导入时决定。
+          </div>
+        </div>
+        {isRunning ? (
+          <button
+            onClick={stop}
+            disabled={loading}
+            className="btn-primary"
+            style={{ height: 34, padding: "0 16px", fontSize: 13, background: loading ? "var(--text-muted)" : "#c0392b" }}
+          >
+            {loading ? "处理中..." : "停止呼出"}
+          </button>
+        ) : (
+          <button
+            onClick={start}
+            disabled={loading}
+            className="btn-primary"
+            style={{ height: 34, padding: "0 16px", fontSize: 13, background: loading ? "var(--text-muted)" : ACCENT }}
+          >
+            {loading ? "呼出中..." : `呼出 ${launchers.filter((l) => l.model_identity_id && l.model_artifact_id).length} 个 Bot`}
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div style={{ fontSize: 13, color: "var(--error)", marginBottom: 10 }}>{error}</div>
+      )}
+
+      <div className="card" style={{ padding: 14, marginBottom: 12 }}>
+        <SectionTitle title="呼出设置" description="选择要进入天凤个室的模型（1-4 个）。" />
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 12 }}>
+          <div>
+            <label style={labelStyle}>Tenhou Lobby ID</label>
+            <input
+              value={lobbyId}
+              onChange={(e) => setLobbyId(e.target.value)}
+              placeholder="2147"
+              disabled={isRunning}
+              style={inputStyle}
+            />
+            <div style={hintStyle}>将进入 L{lobbyId || "2147"} 个室（半庄，4 人）。</div>
+          </div>
+          <div>
+            <label style={labelStyle}>Speed / Device</label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <Segmented options={SPEED_OPTIONS} value={speed} onChange={setSpeed} disabled={isRunning} />
+              <Segmented options={DEVICE_OPTIONS} value={device} onChange={setDevice} disabled={isRunning} />
+            </div>
+            <div style={hintStyle}>Speed 在自己回合前的思考停顿，便于观战。</div>
+          </div>
+        </div>
+
+        {/* 呼出模型列表 */}
+        <label style={labelStyle}>呼出模型（实际坐席由天凤牌谱决定，不是这里的顺序）</label>
+        <div style={{ display: "grid", gap: 8 }}>
+          {launchers.map((row, index) => {
+            const relevantIdentities = identities;
+            const chosenIdentity = relevantIdentities.find(
+              (m) => m.model_identity_id === row.model_identity_id,
+            );
+            const artifacts = chosenIdentity?.artifacts ?? [];
+            return (
+              <div
+                key={index}
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                  background: "var(--surface-subtle)",
+                }}
+              >
+                <span style={{ width: 24, fontWeight: 800, color: "var(--text-muted)" }}>#{index + 1}</span>
+                <select
+                  value={row.model_identity_id}
+                  disabled={isRunning}
+                  onChange={(e) =>
+                    updateLauncher(index, { model_identity_id: e.target.value, model_artifact_id: "" })
+                  }
+                  style={{ ...inputStyle, flex: 1, minWidth: 150 }}
+                >
+                  <option value="">选择模型身份…</option>
+                  {relevantIdentities.map((m) => (
+                    <option key={m.model_identity_id} value={m.model_identity_id}>
+                      {m.label}{m.kind === "external_agent" ? "（外部）" : ""}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={row.model_artifact_id}
+                  disabled={isRunning || artifacts.length === 0}
+                  onChange={(e) => updateLauncher(index, { model_artifact_id: e.target.value })}
+                  style={{ ...inputStyle, flex: 1, minWidth: 150 }}
+                >
+                  <option value="">
+                    {artifacts.length === 0 ? "该身份无产物" : "选择模型产物…"}
+                  </option>
+                  {artifacts.map((art) => (
+                    <option key={art.model_artifact_id} value={art.model_artifact_id}>
+                      {art.label}{art.is_current ? "（当前）" : ""} · {shortSpec(art.artifact_path ?? "")}
+                    </option>
+                  ))}
+                </select>
+                {launchers.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeLauncher(index)}
+                    disabled={isRunning}
+                    style={ghostSmallBtn}
+                  >
+                    移除
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+          {launchers.length < 4 && (
+            <button type="button" onClick={addLauncher} disabled={isRunning} style={ghostSmallBtn}>
+              + 添加一个 Bot
+            </button>
+          )}
+        </div>
+        <div style={hintStyle}>
+          每个模型对应一个被呼出的 bot（天凤名 NoName / NoName-1 / NoName-2…）。
+          赛后 Tenhou Import 时人工/自动确认账号。
+        </div>
+      </div>
+
+      {/* Status / live log */}
+      {status && (
+        <div className="card" style={{ padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+            <span
+              style={{
+                padding: "4px 10px",
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 700,
+                color: "#fff",
+                background: isRunning ? "#27ae60" : "#7f8c8d",
+              }}
+            >
+              {isRunning ? "运行中" : "已结束"}
+            </span>
+            <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
+              个室 L{status.lobby_id} · Speed {status.speed} · {status.device}
+            </span>
+            {status.lobby_id && (
+              <a
+                href={joinUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{ fontSize: 13, color: ACCENT, fontWeight: 700 }}
+              >
+                打开天凤加入 L{status.lobby_id} ↗
+              </a>
+            )}
+          </div>
+
+          {status.bots.length > 0 && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+              {status.bots.map((b: BotInfo) => (
+                <span
+                  key={b.name}
+                  style={{
+                    fontSize: 12,
+                    padding: "3px 8px",
+                    borderRadius: 6,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-subtle)",
+                    color: "var(--text-primary)",
+                  }}
+                >
+                  {b.name} = {shortSpec(b.spec)}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* P1-C：session_id 展示 + 赛后导入链接（session alias 依赖它解析 NoName→模型） */}
+          {status.session_id && (
+            <div
+              style={{
+                marginBottom: 10,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                flexWrap: "wrap",
+                fontSize: 12,
+                padding: "8px 10px",
+                borderRadius: 6,
+                border: "1px solid rgba(142,68,173,0.3)",
+                background: "rgba(142,68,173,0.05)",
+                color: "var(--text-secondary)",
+              }}
+            >
+              <span>
+                Session: <b style={{ color: "var(--text-primary)" }}>{status.session_id}</b>
+              </span>
+              <button
+                type="button"
+                onClick={() => void navigator.clipboard?.writeText(status.session_id ?? "")}
+                style={ghostSmallBtn}
+              >
+                复制
+              </button>
+              <span style={{ color: "var(--text-muted)" }}>对局结束后用它自动识别 NoName-N → 模型</span>
+              <button
+                type="button"
+                onClick={() => {
+                  const params = new URLSearchParams();
+                  if (status.session_id) params.set("session_id", status.session_id);
+                  navigate(`${routes.matchImport}?${params.toString()}`);
+                }}
+                style={{ ...ghostSmallBtn, borderColor: ACCENT, color: ACCENT, fontWeight: 700 }}
+              >
+                赛后导入 →
+              </button>
+            </div>
+          )}
+
+          {/* 本次启动的模型（不是账号事实；账号在赛后导入决定） */}
+          {isRunning && (
+            <div
+              style={{
+                marginTop: 4,
+                marginBottom: 10,
+                fontSize: 12,
+                padding: "8px 10px",
+                borderRadius: 6,
+                border: "1px solid rgba(142,68,173,0.3)",
+                background: "rgba(142,68,173,0.05)",
+                color: "var(--text-secondary)",
+              }}
+            >
+              <div style={{ fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>
+                本次启动的模型（session 冻结；账号/坐席由赛后导入决定）
+              </div>
+              {(status.frozen_roster ?? []).length > 0
+                ? status.frozen_roster!.map((entry, index) => {
+                    if (entry.launcher_slot === null || entry.launcher_slot === undefined) return null;
+                    const identity = identities.find((m) => m.model_identity_id === entry.model_identity_id);
+                    const artifact = identity?.artifacts.find((a) => a.model_artifact_id === entry.model_artifact_id);
+                    return (
+                      <div key={index} style={{ padding: "2px 0" }}>
+                        <b>{entry.expected_raw_name}</b>
+                        {identity && (
+                          <span style={{ color: "var(--text-muted)" }}>
+                            {" "}→ {identity.label}
+                            {artifact ? ` / ${artifact.label}` : ""}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })
+                : launchers.map((row, index) => {
+                    const identity = identities.find((m) => m.model_identity_id === row.model_identity_id);
+                    return (
+                      <div key={index} style={{ padding: "2px 0" }}>
+                        {index === 0 && launchers.filter((l) => l.model_identity_id && l.model_artifact_id).length === 1
+                          ? "NoName"
+                          : `NoName-${index + 1}`}
+                        {identity && <span style={{ color: "var(--text-muted)" }}> → {identity.label}</span>}
+                      </div>
+                    );
+                  })}
+            </div>
+          )}
+
+          <div
+            ref={logRef}
+            style={{
+              height: 320,
+              overflow: "auto",
+              background: "#0f1115",
+              color: "#d6dde6",
+              borderRadius: 8,
+              padding: 10,
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+              fontSize: 12,
+              lineHeight: 1.5,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {status.log_tail.length > 0
+              ? status.log_tail.join("\n")
+              : "（暂无日志，呼出后这里会实时滚动显示 bot / gateway 输出）"}
+          </div>
+        </div>
+      )}
+    </PageShell>
+  );
+}
+
+const labelStyle: CSSProperties = {
+  fontSize: 12,
+  color: "var(--text-muted)",
+  fontWeight: 600,
+  display: "block",
+  marginBottom: 5,
+};
+
+const hintStyle: CSSProperties = {
+  fontSize: 11,
+  color: "var(--text-muted)",
+  marginTop: 4,
+};
+
+const inputStyle: CSSProperties = {
+  height: 34,
+  borderRadius: 6,
+  border: "1px solid var(--border)",
+  background: "var(--surface-subtle)",
+  color: "var(--text-primary)",
+  padding: "0 10px",
+  fontSize: 13,
+  boxSizing: "border-box",
+};
+
+const ghostSmallBtn: CSSProperties = {
+  border: "1px solid var(--border)",
+  background: "transparent",
+  color: "var(--text-secondary)",
+  borderRadius: 4,
+  fontSize: 12,
+  padding: "4px 10px",
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+};

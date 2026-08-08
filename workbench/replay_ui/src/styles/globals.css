@@ -1,0 +1,1065 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   KEQING MJ — Theme System
+   ============================================================ */
+
+/* ---------- 0. CSS 变量（默认 white） ---------- */
+:root,
+[data-theme="white"] {
+  /* 页面背景 */
+  --page-bg: #f0f2f5;
+
+  /* 侧边栏 */
+  --sidebar-bg: #ffffff;
+  --sidebar-border: #e5e7eb;
+  --sidebar-text: #1f2937;
+  --sidebar-text-muted: #9ca3af;
+  --sidebar-hover-bg: #f3f4f6;
+  --sidebar-active-bg: #eff6ff;
+  --sidebar-active-text: #2563eb;
+
+  /* 卡片 */
+  --card-bg: #ffffff;
+  --card-border: #e5e7eb;
+  --card-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  --card-title-color: #374151;
+
+  /* 文字 */
+  --text-primary: #1f2937;
+  --text-secondary: #6b7280;
+  --text-muted: #9ca3af;
+
+  /* 主色调 */
+  --accent: #3498db;
+  --accent-hover: #2589c5;
+  --accent-text: #ffffff;
+  --accent-shadow: rgba(52,152,219,0.3);
+
+  /* 成功/警告/错误 */
+  --success: #27ae60;
+  --warning: #d97706;
+  --error: #dc2626;
+
+  /* 金色（立直/胜利） */
+  --gold: #d4a853;
+  --gold-bg: #fef3c7;
+  --gold-border: #fcd34d;
+
+  /* 座位颜色 */
+  --seat-0: #e74c3c;
+  --seat-1: #3498db;
+  --seat-2: #8e44ad;
+  --seat-3: #27ae60;
+
+  /* 牌桌 — 2D天凤风纯平桌面（浅色模式） */
+  --table-bg-r: 232;
+  --table-bg-g: 224;
+  --table-bg-b: 208;
+  --table-bg: rgb(var(--table-bg-r), var(--table-bg-g), var(--table-bg-b));
+  --table-border: transparent;
+  --table-shadow: none;
+  --table-texture-opacity: 0;
+  --table-radius: 0;
+
+  /* 牌桌文字颜色（浅色模式用深色） */
+  --table-text: #3a3530;
+  --table-text-muted: #6b635a;
+  --table-text-faint: rgba(58,53,48,0.35);
+
+  /* 牌桌交互态过渡 — 天凤风格克制动效 */
+  --table-transition-fast: 0.12s ease;
+  --table-transition-mid: 0.18s ease;
+  --tile-glow-gold: rgba(180,140,60,0.35);
+  --tile-glow-gold-strong: rgba(180,140,60,0.55);
+  --state-emphasis-shadow: 0 0 0 2px rgba(180,140,60,0.7), 0 2px 8px rgba(0,0,0,0.15);
+
+  /* 外围低存在感控件 */
+  --overlay-bg: rgba(40, 35, 30, 0.55);
+  --overlay-border: rgba(0,0,0,0.08);
+  --overlay-toolbar-bg: rgba(40, 35, 30, 0.50);
+  --overlay-toolbar-border: rgba(0,0,0,0.06);
+  --sidepanel-bg: var(--sidebar-bg);
+  --sidepanel-border: rgba(0,0,0,0.08);
+  --control-muted: rgba(80,75,70,0.70);
+
+  /* 麻将牌 — 白面 */
+  --tile-bg: #f0ebe0;
+  --tile-shadow: 0 4px 0px #b8b0a0, 0 7px 0px #a09888, 0 10px 4px rgba(0,0,0,0.20);
+  --tile-selected-ring: 0 0 0 3px #c9a033, 0 0 14px rgba(180,140,60,0.55);
+  /* 麻将牌 — 黑背（默认深蓝，RGB 可通过 JS 覆盖） */
+  --tile-back-r: 15;
+  --tile-back-g: 30;
+  --tile-back-b: 60;
+  --tile-back-bg: linear-gradient(145deg,
+    rgb(calc(var(--tile-back-r) + 8), calc(var(--tile-back-g) + 12), calc(var(--tile-back-b) + 20)) 0%,
+    rgb(var(--tile-back-r), var(--tile-back-g), var(--tile-back-b)) 50%,
+    rgb(calc(var(--tile-back-r) - 5), calc(var(--tile-back-g) - 8), calc(var(--tile-back-b) - 10)) 100%);
+
+  /* 中央区 — 浅色模式下淡暖灰底 */
+  --center-bg: rgba(180, 170, 155, 0.30);
+  --center-border: rgba(100, 90, 75, 0.25);
+  --center-shadow: none;
+
+  /* 左下控制条 */
+  --ctrlbar-bg: rgba(30, 28, 25, 0.80);
+  --ctrlbar-border: rgba(0,0,0,0.08);
+  --ctrlbar-text: rgba(220,215,210,0.90);
+  --ctrlbar-active-text: rgba(255,220,100,0.95);
+  --ctrlbar-active-bg: rgba(180,140,60,0.20);
+
+  /* 结算层 — 天凤风格黑幕面板 */
+  --result-overlay-bg: rgba(30, 25, 20, 0.75);
+  --result-panel-bg: rgba(35, 30, 25, 0.96);
+  --result-panel-border: rgba(0,0,0,0.12);
+  --result-panel-shadow: 0 16px 48px rgba(0,0,0,0.40);
+  --result-title: #f4efe3;
+  --result-subtitle: rgba(244,239,227,0.70);
+  --result-positive: #5ec8e8;
+  --result-negative: #f07070;
+  --result-muted: rgba(244,239,227,0.55);
+  --result-row-bg: rgba(255,255,255,0.06);
+
+  /* Canvas 牌桌绘制色（white 主题） */
+  --canvas-tile-face: #f5f0e8;
+  --canvas-tile-stroke: #c8cdd6;
+  --canvas-tile-back-start: #1e4a7a;
+  --canvas-tile-back-end: #0f2d4a;
+  --canvas-highlight-red: #e74c3c;
+  --canvas-highlight-green: #27ae60;
+  --canvas-highlight-purple: #9b6dff;
+  --canvas-board-bg: #e8ecf0;
+  --canvas-text-label: #6b7280;
+  --canvas-text-dark: #1f2937;
+  --canvas-active-actor: #3498db;
+
+  /* 按钮 */
+  --btn-primary-bg: #3498db;
+  --btn-primary-hover: #2589c5;
+  --btn-primary-text: #ffffff;
+
+  /* 边框 */
+  --border: #e5e7eb;
+  --border-focus: #3498db;
+
+  /* 导航栏 */
+  --nav-bg: linear-gradient(135deg, #1e3a5f 0%, #2d5f8b 100%);
+
+  /* 滚动条 */
+  --scrollbar-track: #f1f1f1;
+  --scrollbar-thumb: #c1c1c1;
+
+  /* 过渡 */
+  --transition: 0.2s;
+
+  /* 圆角 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+}
+
+/* ============================================================
+   MODERN 主题
+   ============================================================ */
+[data-theme="modern"] {
+  /* 页面背景 — 深色麻将馆氛围 */
+  --page-bg: #0b1120;
+
+  /* 侧边栏 — 深色玻璃拟态 */
+  --sidebar-bg: rgba(20, 30, 50, 0.85);
+  --sidebar-border: rgba(255,255,255,0.08);
+  --sidebar-text: #e2e8f0;
+  --sidebar-text-muted: #64748b;
+  --sidebar-hover-bg: rgba(255,255,255,0.06);
+  --sidebar-active-bg: rgba(52,152,219,0.15);
+  --sidebar-active-text: #60a5fa;
+
+  /* 卡片 — 玻璃拟态 */
+  --card-bg: rgba(255,255,255,0.05);
+  --card-border: rgba(255,255,255,0.1);
+  --card-shadow: 0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08);
+  --card-title-color: #e2e8f0;
+
+  /* 文字 */
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #475569;
+
+  /* 主色调 — 更亮的蓝 */
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+  --accent-text: #ffffff;
+  --accent-shadow: rgba(59,130,246,0.35);
+
+  /* 成功/警告/错误 */
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --error: #ef4444;
+
+  /* 金色（立直/胜利）— 更亮 */
+  --gold: #fbbf24;
+  --gold-bg: rgba(251,191,36,0.15);
+  --gold-border: rgba(251,191,36,0.4);
+
+  /* 座位颜色 */
+  --seat-0: #f87171;
+  --seat-1: #60a5fa;
+  --seat-2: #a78bfa;
+  --seat-3: #34d399;
+
+  /* 牌桌 — 2D天凤风纯平桌面 */
+  --table-bg-r: 14;
+  --table-bg-g: 24;
+  --table-bg-b: 36;
+  --table-bg: rgb(var(--table-bg-r), var(--table-bg-g), var(--table-bg-b));
+  --table-border: transparent;
+  --table-shadow: none;
+  --table-texture-opacity: 0;
+  --table-radius: 0;
+
+  /* 牌桌文字颜色（深色模式用浅色） */
+  --table-text: rgba(244,239,227,0.92);
+  --table-text-muted: rgba(244,239,227,0.50);
+  --table-text-faint: rgba(244,239,227,0.25);
+
+  /* 牌桌交互态过渡 — 天凤风格克制动效 */
+  --table-transition-fast: 0.12s ease;
+  --table-transition-mid: 0.18s ease;
+  --tile-glow-gold: rgba(251,191,36,0.22);
+  --tile-glow-gold-strong: rgba(251,191,36,0.45);
+  --state-emphasis-shadow: 0 0 0 2px rgba(251,191,36,0.6), 0 2px 8px rgba(0,0,0,0.3);
+
+  /* 外围低存在感控件 */
+  --overlay-bg: rgba(4, 6, 12, 0.65);
+  --overlay-border: rgba(255,255,255,0.07);
+  --overlay-toolbar-bg: rgba(4, 6, 12, 0.60);
+  --overlay-toolbar-border: rgba(255,255,255,0.06);
+  --sidepanel-bg: rgba(4, 6, 12, 0.75);
+  --sidepanel-border: rgba(255,255,255,0.06);
+  --control-muted: rgba(200,210,225,0.70);
+
+  /* 麻将牌 */
+  --tile-bg: #ddd8cc;
+  --tile-shadow: 0 4px 0px #a09888, 0 7px 0px #8c8278, 0 10px 4px rgba(0,0,0,0.4);
+  --tile-selected-ring: 0 0 0 3px #fbbf24, 0 0 14px rgba(251,191,36,0.55);
+  /* 麻将牌 — 黑背（默认深蓝，RGB 可通过 JS 覆盖） */
+  --tile-back-r: 15;
+  --tile-back-g: 30;
+  --tile-back-b: 60;
+  --tile-back-bg: linear-gradient(145deg,
+    rgb(calc(var(--tile-back-r) + 8), calc(var(--tile-back-g) + 12), calc(var(--tile-back-b) + 20)) 0%,
+    rgb(var(--tile-back-r), var(--tile-back-g), var(--tile-back-b)) 50%,
+    rgb(calc(var(--tile-back-r) - 5), calc(var(--tile-back-g) - 8), calc(var(--tile-back-b) - 10)) 100%);
+
+  /* 中央区 — 天凤实际样式：淡蓝灰底 + 淡边框 */
+  --center-bg: rgba(30, 50, 80, 0.30);
+  --center-border: rgba(120, 160, 200, 0.30);
+  --center-shadow: none;
+
+  /* 左下控制条 */
+  --ctrlbar-bg: rgba(6, 8, 16, 0.82);
+  --ctrlbar-border: rgba(255,255,255,0.06);
+  --ctrlbar-text: rgba(200,210,225,0.80);
+  --ctrlbar-active-text: rgba(255,220,100,0.95);
+  --ctrlbar-active-bg: rgba(251,191,36,0.15);
+
+  /* 结算层 — 天凤风格黑幕面板 */
+  --result-overlay-bg: rgba(4, 6, 12, 0.78);
+  --result-panel-bg: rgba(6, 8, 16, 0.96);
+  --result-panel-border: rgba(255,255,255,0.08);
+  --result-panel-shadow: 0 16px 48px rgba(0,0,0,0.6);
+  --result-title: #f4efe3;
+  --result-subtitle: rgba(244,239,227,0.68);
+  --result-positive: #5ec8e8;
+  --result-negative: #f07070;
+  --result-muted: rgba(244,239,227,0.5);
+  --result-row-bg: rgba(255,255,255,0.04);
+
+  /* Canvas 牌桌绘制色（modern 主题） */
+  --canvas-tile-face: #ddd8cc;
+  --canvas-tile-stroke: #a09888;
+  --canvas-tile-back-start: #1a2a3a;
+  --canvas-tile-back-end: #0d1a26;
+  --canvas-highlight-red: #f87171;
+  --canvas-highlight-green: #34d399;
+  --canvas-highlight-purple: #c084fc;
+  --canvas-board-bg: #1a2e1a;
+  --canvas-text-label: #94a3b8;
+  --canvas-text-dark: #e2e8f0;
+  --canvas-active-actor: #60a5fa;
+
+  /* 按钮 */
+  --btn-primary-bg: #3b82f6;
+  --btn-primary-hover: #60a5fa;
+  --btn-primary-text: #ffffff;
+
+  /* 边框 */
+  --border: rgba(255,255,255,0.1);
+  --border-focus: #3b82f6;
+
+  /* 导航栏 */
+  --nav-bg: rgba(15,23,42,0.95);
+
+  /* 滚动条 */
+  --scrollbar-track: #1e293b;
+  --scrollbar-thumb: #475569;
+
+  /* 过渡 */
+  --transition: 0.3s;
+
+  /* 圆角 */
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+}
+
+/* ============================================================
+   KEQING MJ — Shared Styles (white 原有内容)
+   ============================================================ */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--page-bg);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100dvh;
+  transition: background var(--transition), color var(--transition);
+}
+
+#root {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- 1. 卡片系统 ---------- */
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  margin-bottom: 14px;
+  box-shadow: var(--card-shadow);
+  backdrop-filter: blur(12px);
+  transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
+}
+
+.card-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 14px;
+  color: var(--card-title-color);
+}
+
+/* ---------- 2. 表单元素 ---------- */
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+input[type="text"], select {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  background: var(--card-bg);
+  color: var(--text-primary);
+}
+
+input[type="text"]:focus, select:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+textarea {
+  width: 100%;
+  height: 110px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: "Menlo", "Consolas", monospace;
+  resize: vertical;
+  color: var(--text-primary);
+  background: var(--card-bg);
+}
+
+textarea:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+/* ---------- 3. 按钮 ---------- */
+.btn-primary {
+  height: 40px;
+  padding: 0 28px;
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition), transform 0.1s, box-shadow var(--transition);
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-primary:hover { background: var(--btn-primary-hover); }
+.btn-primary:active { transform: scale(0.98); }
+.btn-primary:disabled { background: var(--text-muted); cursor: not-allowed; transform: none; }
+
+.btn {
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.4);
+  border-radius: 4px;
+  background: rgba(255,255,255,0.15);
+  color: #fff;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.btn:hover { background: rgba(255,255,255,0.25); }
+.btn:disabled { opacity: 0.4; cursor: default; }
+
+/* ---------- 4. 状态 ---------- */
+.text-muted { color: var(--text-muted); font-size: 12px; }
+.text-success { color: var(--success); }
+.text-error { color: var(--error); }
+
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255,255,255,0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- 4b. 导航链接（Sidebar/Drawer） ---------- */
+.nav-link-item {
+  color: var(--sidebar-text);
+  text-decoration: none;
+  transition: background var(--transition), color var(--transition);
+}
+.nav-link-item:hover {
+  background: var(--sidebar-hover-bg);
+}
+.nav-link-active {
+  background: var(--sidebar-active-bg) !important;
+  color: var(--sidebar-active-text) !important;
+}
+
+/* ---------- 5. 上传区 ---------- */
+.upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  text-align: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: 10px;
+  transition: border-color 0.2s, background 0.2s;
+  background: var(--page-bg);
+}
+
+.upload-zone.dragover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--page-bg));
+}
+
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--page-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.file-chip .remove {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-weight: bold;
+}
+
+.file-chip .remove:hover { color: #ef4444; }
+
+/* ---------- 6. 导航栏 ---------- */
+.nav-bar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--nav-bg);
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  transition: background var(--transition);
+}
+
+.nav-title {
+  color: rgba(255,255,255,0.95);
+  font-size: 15px;
+  font-weight: 600;
+  margin-right: auto;
+}
+
+/* ---------- 7. Step 卡片 ---------- */
+.step-card {
+  margin: 10px 0;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  display: flex;
+  flex-direction: column;
+  min-height: 200px;
+}
+
+.step-top {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.step-header {
+  font-weight: 700;
+  font-size: 14px;
+  color: #1f2937;
+  line-height: 1.4;
+}
+
+.step-meta-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.score-chip {
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-family: "Menlo", "Consolas", monospace;
+}
+
+.score-chip.reached {
+  background: #fef3c7;
+  border-color: #fcd34d;
+  color: #92400e;
+}
+
+.dora {
+  display: inline-block;
+  margin-right: 3px;
+  vertical-align: middle;
+}
+
+.action-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.action-chip.bot   { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+.action-chip.gt    { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+.action-chip.both  { background: #ede9fe; color: #5b21b6; border: 1px solid #ddd6fe; }
+.action-chip.none  { background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb; }
+
+/* ---------- 8. 手牌行 ---------- */
+.hand-row {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0;
+  margin-top: auto;
+  margin-bottom: 4px;
+}
+
+.tile-slot {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0 1px;
+  vertical-align: bottom;
+  position: relative;
+}
+
+.tile-slot.is-bot  .tile-img { border: 2px solid #e74c3c; box-shadow: 0 0 4px rgba(231,76,60,0.4); }
+.tile-slot.is-gt   .tile-img { border: 2px solid #27ae60; box-shadow: 0 0 4px rgba(39,174,96,0.4); }
+.tile-slot.is-both .tile-img { border: 2px solid #8e44ad; box-shadow: 0 0 4px rgba(142,68,173,0.4); }
+.tile-slot.is-tsumo { margin-left: 10px; }
+.tile-slot.is-tsumo::before {
+  content: '摸';
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 700;
+  color: #d97706;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 3px;
+  padding: 0 3px;
+  line-height: 1.4;
+}
+
+.bar-wrap {
+  position: relative;
+  width: 38px;
+  height: 57px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  pointer-events: none;
+}
+
+.bar-wrap.is-bot  { outline: 2px solid #e74c3c; outline-offset: 1px; border-radius: 4px; }
+.bar-wrap.is-gt   { outline: 2px solid #27ae60; outline-offset: 1px; border-radius: 4px; }
+.bar-wrap.is-both { outline: 2px solid #8e44ad; outline-offset: 1px; border-radius: 4px; }
+
+.bar-label {
+  font-size: 8px;
+  color: #374151;
+  font-weight: 600;
+  font-family: "Menlo", "Consolas", monospace;
+  white-space: nowrap;
+  margin-bottom: 1px;
+  min-height: 10px;
+}
+
+.bar {
+  width: 6px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: visible;
+  min-height: 3px;
+  flex-shrink: 0;
+}
+
+.bar.r3 { border-radius: 3px 3px 0 0; }
+.bar.r5 { border-radius: 5px 5px 0 0; }
+
+.nondahai-box {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ---------- 9. 统计面板 ---------- */
+.stats-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.62);
+  z-index: 199;
+}
+
+.stats-overlay.open { display: block; }
+
+.stats-panel {
+  display: none;
+  position: fixed;
+  top: 8vh;
+  left: 50%;
+  width: min(780px, calc(100vw - 32px));
+  max-height: 84vh;
+  transform: translateX(-50%);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  box-shadow: 0 18px 60px rgba(0,0,0,0.42);
+  z-index: 200;
+  overflow-y: auto;
+}
+
+.stats-panel.open { display: block; }
+
+.stats-header {
+  background: var(--card-bg);
+  color: var(--text-primary);
+  padding: 14px 16px;
+  font-size: 15px;
+  font-weight: 700;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.stats-close {
+  background: var(--button-bg);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 18px;
+  width: 28px;
+  height: 28px;
+  border-radius: 5px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.stats-close:hover { background: var(--button-hover-bg); }
+.stats-body { padding: 16px; }
+
+.stats-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.stats-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.stats-card .val {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1e3a5f;
+  font-family: "Menlo", "Consolas", monospace;
+}
+
+.stats-card .lbl { font-size: 11px; color: #64748b; margin-top: 2px; }
+
+.stats-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 14px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.stats-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 13px;
+}
+
+.stats-row .lbl { flex: 1; color: #374151; }
+.stats-row .val { font-weight: 600; font-family: "Menlo", "Consolas", monospace; color: #1e3a5f; }
+
+.stats-bar-bg {
+  flex: 2;
+  background: #e2e8f0;
+  border-radius: 4px;
+  height: 8px;
+  overflow: hidden;
+}
+
+.stats-bar-fg {
+  height: 100%;
+  border-radius: 4px;
+  background: #3498db;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 4px;
+  font-size: 9px;
+  color: #fff;
+  font-weight: 700;
+  min-width: 20px;
+}
+
+.match-rate-bar {
+  background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+  border-radius: 8px;
+  padding: 12px 14px;
+  text-align: center;
+  margin-bottom: 14px;
+}
+
+.match-rate-bar .pct { font-size: 32px; font-weight: 800; color: #fff; }
+.match-rate-bar .sub { font-size: 12px; color: rgba(255,255,255,0.8); }
+
+/* ---------- 10. 骨架屏 ---------- */
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* ---------- 11. 滚动条 ---------- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ---------- 12. 3D 麻将牌（保留） ---------- */
+/* 牌主体：象牙白 + 顶部/右边3D白边 */
+.tile-3d {
+  position: relative;
+  border-radius: 4px;
+  background: #f5f0e8;
+  box-shadow: 2px 2px 0px #c8cdd6, 4px 4px 0px #9ea7b3, 5px 5px 10px rgba(0,0,0,0.25);
+}
+
+.tile-3d::before {
+  content: '';
+  position: absolute;
+  top: 0; right: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.0) 0%, rgba(255,255,255,0.9) 30%, rgba(255,255,255,1) 100%);
+  border-radius: 4px 4px 0 0;
+}
+
+.tile-3d::after {
+  content: '';
+  position: absolute;
+  top: 0; right: 0;
+  width: 2px;
+  height: 100%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.6) 30%, rgba(255,255,255,0.3) 100%);
+  border-radius: 0 4px 4px 0;
+}
+
+.tile-3d.selected {
+  transform: translateY(-6px);
+  box-shadow: 0 0 0 3px #d4a853, 4px 4px 0px #c8cdd6, 6px 6px 0px #9ea7b3, 8px 8px 16px rgba(0,0,0,0.3);
+}
+
+.tile-3d.highlighted {
+  box-shadow: 0 0 0 2px #e85a5a, 2px 2px 0px #c8cdd6, 4px 4px 0px #9ea7b3, 5px 5px 12px rgba(0,0,0,0.25);
+}
+
+/* 麻将背面 */
+.tile-3d-back {
+  background: linear-gradient(135deg, #1e4a7a 0%, #0f2d4a 100%);
+  border-radius: 4px;
+  box-shadow: 2px 2px 0px #c8cdd6, 4px 4px 0px #9ea7b3, 5px 5px 10px rgba(0,0,0,0.25);
+  position: relative;
+  overflow: hidden;
+}
+
+.tile-3d-back::before {
+  content: '';
+  position: absolute;
+  top: 0; right: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.0) 0%, rgba(255,255,255,0.6) 30%, rgba(255,255,255,0.8) 100%);
+  border-radius: 4px 4px 0 0;
+}
+
+.tile-3d-back::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  background: repeating-linear-gradient(45deg, rgba(255,255,255,0.06) 0px, rgba(255,255,255,0.06) 2px, transparent 2px, transparent 7px);
+  border-radius: 2px;
+}
+
+/* 现代主题：麻将牌正面 */
+[data-theme="modern"] .tile-3d {
+  background: #ddd8cc;
+  box-shadow: 2px 2px 0px #a09888, 4px 4px 0px #8c8278, 5px 5px 10px rgba(0,0,0,0.4);
+}
+
+/* 现代主题：麻将牌正面顶部/右边高光 */
+[data-theme="modern"] .tile-3d::before {
+  background: linear-gradient(90deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.85) 25%, rgba(255,255,255,1) 100%);
+}
+
+[data-theme="modern"] .tile-3d::after {
+  background: linear-gradient(180deg, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.5) 30%, rgba(255,255,255,0.2) 100%);
+}
+
+[data-theme="modern"] .tile-3d.selected {
+  box-shadow: 0 0 0 3px #fbbf24, 4px 4px 0px #a09888, 6px 6px 0px #8c8278, 8px 8px 16px rgba(0,0,0,0.5);
+}
+
+[data-theme="modern"] .tile-3d.highlighted {
+  box-shadow: 0 0 0 2px #f87171, 2px 2px 0px #a09888, 4px 4px 0px #8c8278, 5px 5px 12px rgba(0,0,0,0.4);
+}
+
+/* 现代主题：麻将牌背面 */
+[data-theme="modern"] .tile-3d-back {
+  background: linear-gradient(135deg, #1a2a3a 0%, #0d1a26 100%);
+  box-shadow: 2px 2px 0px #2a3a4a, 4px 4px 0px #1e2e3e, 5px 5px 10px rgba(0,0,0,0.5);
+}
+
+[data-theme="modern"] .tile-3d-back::before {
+  background: linear-gradient(90deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.5) 30%, rgba(255,255,255,0.8) 100%);
+}
+
+[data-theme="modern"] .tile-3d-back::after {
+  background: repeating-linear-gradient(45deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 2px, transparent 2px, transparent 10px);
+}
+
+/* ---------- 13. 座位指示器 ---------- */
+@keyframes seat-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+.seat-indicator {
+  animation: seat-pulse 2s ease-in-out infinite;
+}
+
+/* ---------- 14. 辅助类 ---------- */
+.text-blue { color: #3498db; }
+.text-gold { color: #d4a853; }
+.text-red { color: #e74c3c; }
+.text-green { color: #27ae60; }
+.text-purple { color: #8e44ad; }
+
+[data-theme="modern"] .text-blue { color: #60a5fa; }
+[data-theme="modern"] .text-gold { color: #fbbf24; }
+[data-theme="modern"] .text-red { color: #f87171; }
+[data-theme="modern"] .text-green { color: #34d399; }
+[data-theme="modern"] .text-purple { color: #a78bfa; }
+
+.rounded-lg { border-radius: 10px; }
+.rounded-xl { border-radius: 16px; }
+
+.bg-card { background: var(--card-bg); }
+.bg-page { background: var(--page-bg); }
+
+/* ============================================================
+   MODERN 主题专属样式
+   ============================================================ */
+
+/* 现代主题：背景粒子效果层 */
+[data-theme="modern"] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 10%, rgba(59,130,246,0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 80% at 80% 90%, rgba(139,92,246,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 50% at 50% 50%, rgba(34,197,94,0.03) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+  animation: modernBgPulse 8s ease-in-out infinite alternate;
+}
+
+@keyframes modernBgPulse {
+  0% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+/* 现代主题：玻璃拟态卡片增强 */
+[data-theme="modern"] .card {
+  border-color: rgba(255,255,255,0.12);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1);
+}
+
+/* 现代主题：麻将牌背景 */
+[data-theme="modern"] .tile-bg-surface {
+  background: var(--tile-bg);
+  box-shadow: var(--tile-shadow);
+}
+
+/* 现代主题：座位颜色覆盖 */
+[data-theme="modern"] .seat-0 { color: var(--seat-0); }
+[data-theme="modern"] .seat-1 { color: var(--seat-1); }
+[data-theme="modern"] .seat-2 { color: var(--seat-2); }
+[data-theme="modern"] .seat-3 { color: var(--seat-3); }
+
+/* 现代主题：输入框 */
+[data-theme="modern"] input[type="text"],
+[data-theme="modern"] select,
+[data-theme="modern"] textarea {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.1);
+  color: #e2e8f0;
+}
+
+[data-theme="modern"] input[type="text"]:focus,
+[data-theme="modern"] select:focus,
+[data-theme="modern"] textarea:focus {
+  border-color: var(--accent);
+  background: rgba(59,130,246,0.08);
+}
+
+/* 现代主题：NavLink */
+[data-theme="modern"] .nav-link-active {
+  background: rgba(59,130,246,0.15) !important;
+  color: #60a5fa !important;
+}
+
+/* 现代主题：step-card */
+[data-theme="modern"] .step-card {
+  background: var(--card-bg);
+  border-color: var(--card-border);
+}
+
+/* 现代主题：stats-panel */
+[data-theme="modern"] .stats-panel {
+  background: rgba(15,23,42,0.98);
+}
+
+[data-theme="modern"] .stats-card {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.1);
+}
+
+/* 现代主题：match-rate-bar */
+[data-theme="modern"] .match-rate-bar {
+  background: linear-gradient(135deg, rgba(34,197,94,0.3) 0%, rgba(34,197,94,0.15) 100%);
+  border: 1px solid rgba(34,197,94,0.3);
+}

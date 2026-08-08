@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+.ipynb_checkpoints/
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+.venv-win/
+
+# Local runtime data (keep only the layout guide in Git)
+/data/*
+!/data/README.md
+
+# Third-party runtimes are vendored locally, not committed
+third_party/
+
+# Logs, temp, and scratch
+logs/
+tmp/
+*.log
+*.tmp
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db

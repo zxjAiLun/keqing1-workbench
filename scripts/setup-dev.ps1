@@ -52,8 +52,13 @@ if ($LASTEXITCODE -ne 0) { throw "libriichi install verification failed" }
 #    b. already importable in this venv
 #    c. $RuntimeWheelDir (published by the keqing1_experiment setup)
 #    d. clear error
-& $VenvPython -c "import keqing_core" 2>$null
-$Installed = ($LASTEXITCODE -eq 0)
+$Installed = $false
+try {
+    & $VenvPython -c "import keqing_core" 2>$null
+    if ($LASTEXITCODE -eq 0) { $Installed = $true }
+} catch {
+    $Installed = $false
+}
 if ($KeqingCoreWheel) {
     if (-not (Test-Path $KeqingCoreWheel)) { throw "keqing_core wheel not found: $KeqingCoreWheel" }
     Invoke-UvPip @($KeqingCoreWheel)

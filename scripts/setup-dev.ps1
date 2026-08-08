@@ -1,7 +1,6 @@
 param(
     [string]$Venv = ".venv-win",
     [string]$KeqingCoreWheel = "",
-    [string]$ReferenceVenv = "..\keqing1\.venv-win",
     [switch]$SkipUiBuild
 )
 
@@ -9,14 +8,19 @@ $ErrorActionPreference = "Stop"
 $Repo = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $Repo
 
+$DataRoot = if ($env:KEQING_DATA_ROOT) { $env:KEQING_DATA_ROOT } else { Join-Path (Resolve-Path (Join-Path $Repo "..\..")) "keqing-data" }
+$RuntimeWheelDir = Join-Path $DataRoot "runtime\keqing_core"
+$VenvPython = Join-Path $Repo "$Venv\Scripts\python.exe"
+$Site = Join-Path $Repo "$Venv\Lib\site-packages"
+
 function Invoke-UvPip {
     param([string[]]$Packages)
-    & uv pip install --python (Join-Path $Repo "$Venv\Scripts\python.exe") @Packages
+    & uv pip install --python $VenvPython @Packages
     if ($LASTEXITCODE -ne 0) { throw "uv pip install failed" }
 }
 
 # 1. venv
-if (-not (Test-Path (Join-Path $Repo "$Venv\Scripts\python.exe"))) {
+if (-not (Test-Path $VenvPython)) {
     uv venv --python 3.12 $Venv
     if ($LASTEXITCODE -ne 0) { throw "uv venv failed" }
 }
@@ -28,32 +32,43 @@ Invoke-UvPip @(
     "uvicorn>=0.42.0", "websockets==10.2", "pytest>=9.0.2", "ruff>=0.15.10"
 )
 
-# 2b. Editable install of this repo so src/ packages (inference, static_tables,
-#     mahjong_env, project_data) resolve from source like they did pre-split.
+# 2b. Editable install so src/ packages (inference, static_tables, mahjong_env,
+#     project_data) resolve from source.
 Invoke-UvPip @("-e", ".")
 
-# 3. keqing_core runtime wheel (built by keqing-mortal; pass -KeqingCoreWheel
-#    to override the default sibling path).
-if (-not $KeqingCoreWheel) {
-    $KeqingCoreWheel = "..\keqing-mortal\rust\keqing_core\target\wheels\keqing_core-0.1.0-cp312-cp312-win_amd64.whl"
-}
-if (-not (Test-Path $KeqingCoreWheel)) {
-    throw "keqing_core wheel not found at $KeqingCoreWheel; build it in keqing-mortal or pass -KeqingCoreWheel"
-}
-Invoke-UvPip @($KeqingCoreWheel)
+# 3. libriichi runtime, built from the vendored Mortal crate (same as the
+#    keqing1_experiment setup; requires cargo on PATH).
+$env:PYO3_PYTHON = $VenvPython
+cargo build --manifest-path (Join-Path $Repo "third_party\Mortal\Cargo.toml") -p libriichi --lib --release
+if ($LASTEXITCODE -ne 0) { throw "libriichi cargo build failed" }
+Copy-Item -LiteralPath (Join-Path $Repo "third_party\Mortal\target\release\riichi.dll") -Destination (Join-Path $Site "riichi.pyd") -Force
+if (Test-Path (Join-Path $Site "libriichi")) { Remove-Item -Recurse -Force (Join-Path $Site "libriichi") }
+Copy-Item -Recurse -LiteralPath (Join-Path $Repo "third_party\libriichi\libriichi") -Destination (Join-Path $Site "libriichi")
+& $VenvPython -c "from libriichi.arena import OneVsThree; assert hasattr(OneVsThree, 'py_selfplay'); print('libriichi OK')"
+if ($LASTEXITCODE -ne 0) { throw "libriichi install verification failed" }
 
-# 4. libriichi runtime bits (same reference-venv mechanism as keqing-mortal)
-$Site = Join-Path $Repo "$Venv\Lib\site-packages"
-if (-not (Test-Path (Join-Path $Site "libriichi\__init__.py"))) {
-    $RefSite = Join-Path (Resolve-Path $ReferenceVenv -ErrorAction SilentlyContinue) "Lib\site-packages"
-    if (-not (Test-Path (Join-Path $RefSite "libriichi\__init__.py"))) {
-        throw "libriichi python package not found under $RefSite; pass -ReferenceVenv"
+# 4. keqing_core runtime wheel.  Resolution order:
+#    a. explicit -KeqingCoreWheel <path>
+#    b. already importable in this venv
+#    c. $RuntimeWheelDir (published by the keqing1_experiment setup)
+#    d. clear error
+& $VenvPython -c "import keqing_core" 2>$null
+$Installed = ($LASTEXITCODE -eq 0)
+if ($KeqingCoreWheel) {
+    if (-not (Test-Path $KeqingCoreWheel)) { throw "keqing_core wheel not found: $KeqingCoreWheel" }
+    Invoke-UvPip @($KeqingCoreWheel)
+} elseif ($Installed) {
+    Write-Output "keqing_core already installed; reusing it"
+} else {
+    $Wheel = Get-ChildItem -Path $RuntimeWheelDir -Filter "keqing_core-*.whl" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $Wheel) {
+        throw "keqing_core wheel not found: publish one into $RuntimeWheelDir (run the keqing1_experiment setup) or pass -KeqingCoreWheel <path>"
     }
-    Copy-Item -Recurse -LiteralPath (Join-Path $RefSite "libriichi") -Destination (Join-Path $Site "libriichi")
-    if (-not (Test-Path (Join-Path $Site "riichi.pyd"))) {
-        Copy-Item -LiteralPath (Join-Path $RefSite "riichi.pyd") -Destination (Join-Path $Site "riichi.pyd")
-    }
+    Invoke-UvPip @($Wheel.FullName)
 }
+& $VenvPython -c "import keqing_core; print('keqing_core OK (rust available:', keqing_core.is_available(), ')')"
+if ($LASTEXITCODE -ne 0) { throw "keqing_core verification failed" }
 
 # 5. Replay UI
 if (-not $SkipUiBuild) {

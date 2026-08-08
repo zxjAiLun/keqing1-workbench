@@ -1,9 +1,9 @@
 """Minimal shared convention for the repository-local runtime data directory.
 
 ``KEQING_DATA_ROOT`` is intentionally the only new cross-feature setting.  It
-defaults to the sibling ``keqing-data`` directory when present (the shared
-exchange point with keqing-mortal), otherwise to ``<repo>/data`` so a checkout
-works without machine-specific setup.
+defaults to the shared ``keqing-data`` directory beside the project folder
+when present (the exchange point with keqing-mortal), otherwise to
+``<repo>/data`` so a checkout works without machine-specific setup.
 """
 from __future__ import annotations
 

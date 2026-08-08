@@ -5,7 +5,8 @@ Gateway, replay/review, participants/ladder operations, and the React UI.
 
 This repository was split from `keqing1` at commit `b714e5c` (initial split).
 The training repository is `keqing-mortal`; runtime data shared between them
-lives in `KEQING_DATA_ROOT` (defaults to the sibling `keqing-data` directory).
+lives in `KEQING_DATA_ROOT` (defaults to the shared `keqing-data` directory
+beside the project folder).
 
 ## Layout
 
@@ -37,6 +38,6 @@ python launch_tenhou_bots.py --room ... # Participants
 python scripts/participants/seed_participants.py ...
 ```
 
-Runtime state is rooted at `KEQING_DATA_ROOT`, which defaults to the sibling
-`keqing-data` directory when it exists (otherwise the repository-local
-`data/`).
+Runtime state is rooted at `KEQING_DATA_ROOT`, which defaults to the shared
+`keqing-data` directory beside the project folder when it exists (otherwise
+the repository-local `data/`).

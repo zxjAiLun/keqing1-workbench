@@ -76,3 +76,38 @@ def test_bridge_does_not_reconnect_after_connect_failure(monkeypatch) -> None:
     with pytest.raises(OSError, match="simulated network drop"):
         asyncio.run(bridge.run())
     assert calls == ["connect"]
+
+
+def test_bridge_connect_kwargs_use_websockets_14_api(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class CapturingConnection:
+        async def __aenter__(self):
+            raise OSError("stop after connect")
+
+        async def __aexit__(self, *_args):
+            return False
+
+    def fake_connect(uri: str, **kwargs) -> CapturingConnection:
+        captured["uri"] = uri
+        captured["kwargs"] = kwargs
+        return CapturingConnection()
+
+    monkeypatch.setattr("gateway.tenhou_bridge.websockets.connect", fake_connect)
+
+    async def send_to_mjai(_message):
+        return {"type": "none"}
+
+    bridge = TenhouBridge(state=State("NoName", "L2147_9"), send_to_mjai=send_to_mjai)
+    with pytest.raises(OSError):
+        asyncio.run(bridge.run())
+
+    kwargs = captured["kwargs"]
+    # websockets >= 14 renamed extra_headers -> additional_headers and moved
+    # User-Agent into user_agent_header.
+    assert "extra_headers" not in kwargs
+    assert kwargs["origin"] == "https://tenhou.net"
+    headers = kwargs["additional_headers"]
+    assert "Accept-Encoding" in headers
+    assert "User-Agent" not in headers
+    assert kwargs["user_agent_header"] == bridge.config.user_agent

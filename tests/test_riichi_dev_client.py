@@ -1930,6 +1930,30 @@ def test_client_websocket_connect_kwargs_uses_explicit_http_proxy(monkeypatch) -
     ]
 
 
+def test_client_websocket_connect_kwargs_splits_user_agent() -> None:
+    client = rdc.RiichiDevBotClient(
+        rdc.RiichiDevClientConfig(
+            token="t", queue="ranked", model_path=Path("fake.pth")
+        ),
+        agent=StubAgent({"type": "none"}),
+    )
+    kwargs = client._websocket_connect_kwargs(
+        {
+            "Authorization": "Bearer t",
+            "Cookie": "session=abc",
+            "User-Agent": "keqing/1.0",
+        }
+    )
+    # websockets >= 14 API: extra_headers is gone; headers -> additional_headers,
+    # and User-Agent is moved to its dedicated user_agent_header.
+    assert "extra_headers" not in kwargs
+    assert kwargs["additional_headers"] == {
+        "Authorization": "Bearer t",
+        "Cookie": "session=abc",
+    }
+    assert kwargs["user_agent_header"] == "keqing/1.0"
+
+
 def test_audit_logger_logs_protocol_action(tmp_path: Path) -> None:
     logger = rdc.RiichiDevAuditLogger(tmp_path / "riichi.jsonl")
 

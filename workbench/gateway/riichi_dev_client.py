@@ -1751,13 +1751,21 @@ class RiichiDevBotClient:
         return self._saw_start_game and not self._saw_end_game
 
     def _websocket_connect_kwargs(self, headers: dict[str, str]) -> dict[str, Any]:
+        # websockets >= 14 renamed the client handshake-header kwarg from
+        # extra_headers to additional_headers and added a dedicated
+        # user_agent_header.  Split User-Agent out; copy so we never mutate the
+        # caller's dict.
+        request_headers = dict(headers)
+        user_agent = request_headers.pop("User-Agent", None)
         kwargs: dict[str, Any] = {
-            "extra_headers": headers,
+            "additional_headers": request_headers,
             "origin": self.config.origin,
             "open_timeout": self.config.open_timeout,
             "ping_interval": self.config.ping_interval,
             "ping_timeout": self.config.ping_timeout,
         }
+        if user_agent is not None:
+            kwargs["user_agent_header"] = user_agent
         if self.config.ws_proxy:
             ws_url = self.config.ws_url()
             parsed_ws = urllib.parse.urlparse(ws_url)

@@ -191,10 +191,18 @@ class TenhouBridge:
         """
         if _is_set(stop_event):
             return
+        # websockets >= 14 renamed the client handshake-header kwarg from
+        # extra_headers to additional_headers and added a dedicated
+        # user_agent_header.  Keep config.extra_headers() as the header source
+        # but split the User-Agent out so we use the current API.
+        headers = self.config.extra_headers()
+        user_agent = headers.pop("User-Agent", None)
         connect_kwargs = {
             "origin": self.config.origin,
-            "extra_headers": self.config.extra_headers(),
+            "additional_headers": headers,
         }
+        if user_agent is not None:
+            connect_kwargs["user_agent_header"] = user_agent
         # Production Tenhou uses wss://.  Keeping ws:// usable for a local
         # protocol simulator makes the full relay testable without weakening
         # the production transport.

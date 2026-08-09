@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
 $ScriptPath = Join-Path $ProjectRoot "workbench\tools\windows_launcher.py"
-$VenvPython = Join-Path $ProjectRoot ".venv-win\Scripts\python.exe"
+$VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $OutputDir = Join-Path $ProjectRoot "dist"
 $ExeName = "Keqing1WorkbenchLauncher"
 
@@ -20,7 +20,7 @@ Write-Host ""
 # 检查 Python 环境
 if (-not (Test-Path $VenvPython)) {
     Write-Host "[错误] 找不到 Python 虚拟环境: $VenvPython" -ForegroundColor Red
-    Write-Host "请先创建虚拟环境: python -m venv .venv-win" -ForegroundColor Yellow
+    Write-Host "请先创建虚拟环境: python -m venv .venv" -ForegroundColor Yellow
     exit 1
 }
 

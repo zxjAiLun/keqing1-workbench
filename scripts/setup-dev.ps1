@@ -1,5 +1,5 @@
 param(
-    [string]$Venv = ".venv-win",
+    [string]$Venv = ".venv",
     [string]$KeqingCoreWheel = "",
     [switch]$SkipUiBuild
 )
@@ -14,10 +14,9 @@ $VenvPython = Join-Path $Repo "$Venv\Scripts\python.exe"
 $Site = Join-Path $Repo "$Venv\Lib\site-packages"
 
 # 1. Project environment.  uv project mode manages the env via pyproject.toml
-#    + uv.lock, but we keep a single non-default environment (.venv-win) so it
-#    never collides with uv's default .venv.  UV_PROJECT_ENVIRONMENT makes both
-#    `uv sync` and `uv run` target .venv-win.
-$env:UV_PROJECT_ENVIRONMENT = $Venv
+#    + uv.lock.  We use uv's native default (.venv) so ``uv sync`` and ``uv run``
+#    resolve the same environment in any fresh terminal without needing an
+#    exported UV_PROJECT_ENVIRONMENT.
 if (-not (Test-Path $VenvPython)) {
     uv venv --python 3.12 $Venv
     if ($LASTEXITCODE -ne 0) { throw "uv venv failed" }

@@ -19,7 +19,7 @@ from urllib.parse import quote, urlencode
 APP_TITLE = "Keqing1 工作台"
 DEFAULT_PORT = 8000
 LAUNCH_CMD_TEMPLATE = [
-    r".\.venv-win\Scripts\python.exe",
+    r".\.venv\Scripts\python.exe",
     "workbench/main.py",
     "--port",
     str(DEFAULT_PORT),
@@ -495,10 +495,10 @@ class WorkbenchLauncher:
             return
 
         # 检查 Python 可执行文件
-        python_exe = self.project_root / ".venv-win" / "Scripts" / "python.exe"
+        python_exe = self.project_root / ".venv" / "Scripts" / "python.exe"
         if not python_exe.exists():
             self.logger.error(f"找不到 {python_exe}")
-            messagebox.showerror("错误", f"找不到 Python 虚拟环境:\n{python_exe}\n\n请先创建 .venv-win 虚拟环境。")
+            messagebox.showerror("错误", f"找不到 Python 虚拟环境:\n{python_exe}\n\n请先创建 .venv 虚拟环境。")
             return
 
         # 检查端口
@@ -526,7 +526,7 @@ class WorkbenchLauncher:
         try:
             # 构建命令
             cmd = LAUNCH_CMD_TEMPLATE.copy()
-            cmd[0] = str(self.project_root / ".venv-win" / "Scripts" / "python.exe")
+            cmd[0] = str(self.project_root / ".venv" / "Scripts" / "python.exe")
 
             self.logger.info(f"命令: {' '.join(cmd)}")
             self.logger.info(f"工作目录: {self.project_root}")

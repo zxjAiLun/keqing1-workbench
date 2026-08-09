@@ -7,12 +7,13 @@ from inference.mortal_bot import MortalReviewBot
 from inference.rulebase_bot import RulebaseBot
 from project_data import data_root
 
-# Legacy repo-layout anchors.  The authoritative Mortal checkpoints live under
-# the shared keqing-data root (``mortal/authoritative/<id>/models``); these
-# names are used as basenames to locate the current promoted model there.
-_ANCHOR_70K = Path("artifacts/mortal_training/checkpoints/mortal_default_70k_promoted_candidate.pth")
-_EXT_MORTAL = Path("artifacts/external_mortal_20240308_best_min.pth")
-_V2_CANDIDATE = Path("artifacts/experiments/model_pool_2026_07/V2_population_mixed_v4_warmstart_2026_07/checkpoints/mortal_74000.pth")
+# Authoritative Mortal anchors, relative to ``<data_root>/mortal/authoritative/
+# <id>/models``.  Model-family subdirectory + basename (not a bare basename) so
+# e.g. V2_74000 vs V3_74000 resolve deterministically even though both contain
+# ``mortal_74000.pth``.
+_ANCHOR_70K = Path("K0_70k/mortal_default_70k_promoted_candidate.pth")
+_EXT_MORTAL = Path("ext_mortal/external_mortal_20240308_best_min.pth")
+_V2_CANDIDATE = Path("V2_74000/mortal_74000.pth")
 
 # Named local Mortal checkpoints. ``mortal`` prefers the promoted V2 candidate
 # once available and falls back to the 70k anchor during training.
@@ -30,22 +31,46 @@ SUPPORTED_BOT_NAMES = {"rulebase", *MORTAL_CHECKPOINTS.keys()}
 _CHECKPOINT_SUFFIXES = {".pth", ".pt", ".ckpt"}
 
 
-def _search_authoritative_checkpoint(filename: str) -> Path | None:
-    """Locate ``filename`` under the current authoritative Mortal model dir.
+def _search_authoritative_checkpoint(relative: str | Path) -> Path | None:
+    """Locate a checkpoint under the current authoritative Mortal model dir.
 
     The authoritative id (e.g. ``D3_top2_discard_v1_2026_08``) rotates, so we
-    glob ``<data_root>/mortal/authoritative/*/models`` and match by basename
-    rather than pinning a directory id.
+    glob ``<data_root>/mortal/authoritative/*/models`` rather than pinning a
+    directory id.
+
+    * A multi-component ``relative`` (family dir + basename) is matched by the
+      exact subpath, so ``V2_74000/mortal_74000.pth`` and
+      ``V3_74000/mortal_74000.pth`` never collide.
+    * A bare basename is matched across all models dirs as a legacy fallback.
+
+    Exactly one match is returned.  Multiple matches are ambiguous -- filesystem
+    enumeration order must not decide -- so we raise instead of guessing.
     """
+    rel = Path(relative)
+    if not rel.parts or not rel.name:
+        return None
     base = data_root() / "mortal" / "authoritative"
     if not base.is_dir():
         return None
+    matches: list[Path] = []
     for models_dir in base.glob("*/models"):
         if not models_dir.is_dir():
             continue
-        hit = next((p for p in models_dir.rglob(filename) if p.is_file()), None)
-        if hit is not None:
-            return hit.resolve()
+        if len(rel.parts) > 1:
+            cand = models_dir / rel
+            if cand.is_file():
+                matches.append(cand.resolve())
+        else:
+            hit = next((p for p in models_dir.rglob(rel.name) if p.is_file()), None)
+            if hit is not None:
+                matches.append(hit.resolve())
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"ambiguous authoritative checkpoint {rel!r}: "
+            f"{sorted(str(m) for m in matches)}"
+        )
     return None
 
 
@@ -56,7 +81,7 @@ def resolve_model_checkpoint(path: str | Path, project_root: str | Path) -> Path
       1. absolute path
       2. ``<project_root>/<path>`` (legacy repo-relative)
       3. ``<data_root>/<path>`` (shared keqing-data, project-relative)
-      4. authoritative Mortal model dir by basename
+      4. authoritative Mortal model dir (exact family subpath, or basename)
 
     Raises ``FileNotFoundError`` listing every location searched.
     """
@@ -67,7 +92,7 @@ def resolve_model_checkpoint(path: str | Path, project_root: str | Path) -> Path
         cand = base / p
         if cand.exists():
             return cand.resolve()
-    hit = _search_authoritative_checkpoint(p.name)
+    hit = _search_authoritative_checkpoint(p)
     if hit is not None:
         return hit
     searched = [str(p.resolve())]

@@ -226,12 +226,13 @@ def _resolve_model_path(
         return None
     if model_path is not None:
         return Path(model_path)
-    # Named Mortal checkpoints now live under the shared keqing-data root;
-    # resolve the legacy repo-relative anchors there (authoritative models dir).
-    from inference.bot_registry import resolve_model_checkpoint
+    # Named Mortal checkpoints now live under the shared keqing-data root
+    # (authoritative models dir).  Reuse bot_registry's family-relative anchor
+    # for the "mortal" default so V2/V3-style collisions never get guessed.
+    from inference.bot_registry import MORTAL_CHECKPOINTS, resolve_model_checkpoint
 
     if bot_name == "mortal":
-        anchor = Path("artifacts/mortal_training/checkpoints/mortal_default_70k_promoted_candidate.pth")
+        anchor = MORTAL_CHECKPOINTS["70k"]
     else:
         anchor = Path("artifacts") / "models" / bot_name / "best.pth"
     try:

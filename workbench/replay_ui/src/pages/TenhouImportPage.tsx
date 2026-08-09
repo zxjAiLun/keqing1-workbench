@@ -5,6 +5,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageHeader, PageShell } from '../components/Layout/PageScaffold';
 import { SEAT_WINDS } from '../components/Matches/labels';
 import { participantsApi } from '../api/participantsApi';
+import { ladderApi } from '../api/ladderApi';
 import { ApiError } from '../api/replayApi';
 import { routes } from '../routes';
 import type { Account, IntakePreview, ModelIdentity, SeatResolution, SeatNo } from '../types/participants';
@@ -47,16 +48,23 @@ export function TenhouImportPage() {
   const [error, setError] = useState<string | null>(null);
   // R10 UX Repair P1-6：正式天梯由 intake/confirm 决定（不再是 Play-with-you 启动选项）
   const [ladderEligible, setLadderEligible] = useState(false);
-  const [ladderSeason, setLadderSeason] = useState('official-ladder-v1');
+  const [ladderSeason, setLadderSeason] = useState('');
+  // R11-A1：该牌谱已存在（preview 检出或 confirm 返回 duplicate_match）时的已有对局 ID
+  const [duplicateMatchId, setDuplicateMatchId] = useState<string | null>(null);
 
   const load = useCallback(async (signal: AbortSignal) => {
     try {
-      const [accountsResp, modelsResp] = await Promise.all([
+      const [accountsResp, modelsResp, seasonsResp] = await Promise.all([
         participantsApi.listAccounts(signal),
         participantsApi.listModels(signal),
+        // R11-A1.5：正式赛季不再硬编码，取 season catalog 的当前默认赛季
+        ladderApi.listSeasons(signal),
       ]);
       setAccounts(accountsResp.accounts);
       setIdentities(modelsResp.identities);
+      if (seasonsResp.default_season_id) {
+        setLadderSeason(seasonsResp.default_season_id);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -82,9 +90,12 @@ export function TenhouImportPage() {
     if (!url.trim()) return;
     setLoading(true);
     setError(null);
+    setDuplicateMatchId(null);
     try {
       const result = await participantsApi.intakePreview({ url: url.trim(), session_id: sessionId });
       setPreview(result);
+      // R11-A1：preview 已检出重复 → 直接进入"已有对局"状态，不再要求逐座确认
+      setDuplicateMatchId(result.duplicate_match_id ?? null);
       setDrafts(
         result.seats.map((seat) => {
           const autoCandidate =
@@ -149,11 +160,18 @@ export function TenhouImportPage() {
       });
       navigate(routes.matchDetail(resp.match.match_id));
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409 && e.body && typeof e.body === 'object') {
-        const detail = e.body as { error?: string };
-        setError(detail.error ?? '重复导入');
+      // R11-A1：结构化错误 envelope {code, message, context}；仅 duplicate_match
+      // 进入"已有对局"状态，其余一律显示后端真实 message，绝不谎报"重复导入"。
+      const detail = e instanceof ApiError
+        && e.body && typeof e.body === 'object'
+        && 'detail' in e.body
+        && e.body.detail && typeof e.body.detail === 'object'
+        ? (e.body.detail as { code?: string; message?: string; context?: { existing_match_id?: string } })
+        : null;
+      if (detail?.code === 'duplicate_match') {
+        setDuplicateMatchId(detail.context?.existing_match_id ?? preview?.duplicate_match_id ?? null);
       } else {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(detail?.message ?? (e instanceof Error ? e.message : String(e)));
       }
     } finally {
       setConfirming(false);
@@ -210,11 +228,36 @@ export function TenhouImportPage() {
 
         {preview && (
           <>
-            {preview.duplicate_match_id && (
-              <div style={{ border: '1px solid #e67e22', background: 'rgba(230,126,34,0.08)', borderRadius: 8, padding: 10, fontSize: 13 }}>
-                该牌谱已导入为对局 <b>{preview.duplicate_match_id}</b>（防重）。
-              </div>
+            {duplicateMatchId && (
+              <section style={cardStyle}>
+                <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 6 }}>该牌谱已存在</div>
+                <div style={{ fontSize: 13, marginBottom: 10, color: 'var(--text-secondary)' }}>
+                  本天凤牌谱已作为对局 <b style={{ color: 'var(--text-primary)' }}>{duplicateMatchId}</b> 导入（防重），
+                  不再创建重复对局。可查看已有对局，或在其详情页修订身份 / 作废。
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    onClick={() => navigate(routes.matchDetail(duplicateMatchId))}
+                    style={{
+                      border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff',
+                      borderRadius: 6, fontSize: 13, fontWeight: 700, padding: '8px 14px', cursor: 'pointer',
+                    }}
+                  >
+                    查看已有对局
+                  </button>
+                  <button
+                    onClick={() => navigate(routes.matchDetail(duplicateMatchId))}
+                    style={{
+                      border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-primary)',
+                      borderRadius: 6, fontSize: 13, padding: '8px 14px', cursor: 'pointer',
+                    }}
+                  >
+                    修订已有对局
+                  </button>
+                </div>
+              </section>
             )}
+
             <section style={cardStyle}>
               <div style={{ fontWeight: 800, marginBottom: 8 }}>
                 {preview.game_length === 'hanchan' ? '半庄' : '东风'} · {preview.occurred_at.slice(0, 10)} · {preview.hand_count} 局 · 完整牌谱
@@ -237,7 +280,9 @@ export function TenhouImportPage() {
               </div>
             </section>
 
-            <section style={cardStyle}>
+            {!duplicateMatchId && (
+              <>
+              <section style={cardStyle}>
               <div style={{ fontWeight: 800, marginBottom: 10 }}>身份解析</div>
               <div style={{ display: 'grid', gap: 8 }}>
                 {drafts.map((draft) => {
@@ -390,7 +435,9 @@ export function TenhouImportPage() {
               >
                 {confirming ? '导入中…' : '确认导入'}
               </button>
-            </div>
+              </div>
+              </>
+            )}
           </>
         )}
       </div>

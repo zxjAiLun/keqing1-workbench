@@ -107,9 +107,10 @@ def test_resolve_and_create_match(fake_download, participants_root):
     session_alias = aliases.resolve_candidates("tenhou", "NoName-1", session_id="s1")
     assert any(a.scope == "session" for a in session_alias)
     assert aliases.resolve_candidates("tenhou", "NoName-1") == []
-    # 重复导入被拒绝
-    with pytest.raises(ValueError, match="已导入"):
+    # 重复导入被拒绝（R11-A1：结构化 DuplicateMatchError，带已有对局 ID）
+    with pytest.raises(intake.DuplicateMatchError) as exc_info:
         intake.resolve_and_create_match(log_id=FAKE_LOG_ID, resolutions=resolutions)
+    assert exc_info.value.existing_match_id
     assert ledger.list_matches().total == 1
 
 

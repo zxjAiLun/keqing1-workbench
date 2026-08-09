@@ -210,7 +210,7 @@ def test_intake_confirm_endpoint(four_account_ids, monkeypatch):
     )
     assert resp.match.provider == "tenhou"
     assert resp.match.data_completeness == "full_replay"
-    # 重复确认 → 409
+    # 重复确认 → 409 + R11-A1 结构化 envelope（code=duplicate_match + existing_match_id）
     from fastapi import HTTPException as HE
 
     with pytest.raises(HE) as exc:
@@ -218,6 +218,8 @@ def test_intake_confirm_endpoint(four_account_ids, monkeypatch):
             IntakeConfirmRequest(log_id="20260804gm-0009-2147-32af115e", resolutions=resolutions, session_id="s9")
         )
     assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "duplicate_match"
+    assert exc.value.detail["context"]["existing_match_id"] == resp.match.match_id
     # replay artifact 可查，match_id 一致（P2-2）
     replay = api.api_match_replay_artifact(resp.match.match_id)
     assert replay["replay_id"] == "20260804gm-0009-2147-32af115e"

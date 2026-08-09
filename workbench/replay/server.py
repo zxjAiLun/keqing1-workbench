@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
+import os
 import sys
 import numpy as np
 from pathlib import Path
@@ -1570,6 +1572,14 @@ async def list_selfplay_anomaly_replays():
 _LADDER_PROJECT_ROOT = BASE_DIR.parent.parent
 # 默认读取仓库 workbench/configs/ladder/seasons；正式 runtime 可用 KEQING_LADDER_CONFIG_DIR 指向外部注册表
 _LADDER_SEASONS_DIR = ladder_data.resolve_config_dir(_LADDER_PROJECT_ROOT)
+# R11-A1 可观测性：启动即打印实际加载的赛季注册表，避免"到底读哪份配置"靠猜。
+logging.getLogger(__name__).info(
+    "Ladder registry: %s source=%s",
+    _LADDER_SEASONS_DIR,
+    "KEQING_LADDER_CONFIG_DIR"
+    if os.environ.get("KEQING_LADDER_CONFIG_DIR", "").strip()
+    else "KEQING_DATA_ROOT default",
+)
 
 
 @app.get("/api/ladder/seasons", response_class=JSONResponse)

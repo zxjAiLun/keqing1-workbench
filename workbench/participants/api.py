@@ -40,6 +40,22 @@ def _error(status: int, message: str):
     return HTTPException(status_code=status, detail={"error": message})
 
 
+def _intake_error(status: int, code: str, message: str, context: dict | None = None):
+    """R11-A1：结构化 intake 错误 envelope ``{detail: {code, message, context}}``。
+
+    前端按 ``code`` 精确分类业务错误（只有 ``duplicate_match`` 才展示"重复导入"），
+    其余一律原样显示 ``message``，不再靠 HTTP status 或猜测文案。
+    """
+    return HTTPException(
+        status_code=status,
+        detail={
+            "code": code,
+            "message": message,
+            "context": context or {},
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # 账号
 # ---------------------------------------------------------------------------
@@ -290,14 +306,23 @@ def api_intake_confirm(payload: IntakeConfirmRequest) -> MatchResponse:
             rating_eligible=payload.rating_eligible,
         )
     except ValidationError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail={"error": "校验失败", "issues": [i.model_dump() for i in exc.issues], "score_mismatch": exc.score_mismatch},
+        raise _intake_error(
+            422,
+            "validation_failed",
+            "校验失败",
+            {"issues": [i.model_dump() for i in exc.issues], "score_mismatch": exc.score_mismatch},
+        ) from exc
+    except intake.DuplicateMatchError as exc:
+        raise _intake_error(
+            409,
+            "duplicate_match",
+            "该天凤牌谱已经导入",
+            {"existing_match_id": exc.existing_match_id},
         ) from exc
     except ValueError as exc:
-        raise _error(409, str(exc)) from exc
+        raise _intake_error(409, "intake_conflict", str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail={"error": f"落账失败: {exc}"}) from exc
+        raise _intake_error(502, "intake_ledger_failed", f"落账失败: {exc}") from exc
     match = ledger.get_match(result["match_id"])
     projection.request_projection(match.season_id if match else None)
     return MatchResponse(

@@ -39,6 +39,19 @@ from .ledger import ValidationError
 
 _INTENT = "intake"
 
+
+class DuplicateMatchError(ValueError):
+    """该 provider + external_match_id 已在 Match Ledger 中存在。
+
+    结构化错误：API 层据此返回 ``code=duplicate_match`` 与
+    ``context.existing_match_id``，前端展示"该牌谱已存在"而非误报"重复导入"。
+    """
+
+    def __init__(self, external_match_id: str, existing_match_id: str):
+        super().__init__("该天凤牌谱已经导入")
+        self.external_match_id = external_match_id
+        self.existing_match_id = existing_match_id
+
 HANDS_CONTRACT_VERSION = "keqing.participant.hands.v2"
 
 _write_lock = threading.RLock()
@@ -613,8 +626,9 @@ def resolve_and_create_match(
 
     with _write_lock, data_lock():
         ledger._recover_pending_transaction()
-        if ledger.find_match_by_external("tenhou", log_id) is not None:
-            raise ValueError(f"该天凤牌谱已导入")
+        existing = ledger.find_match_by_external("tenhou", log_id)
+        if existing is not None:
+            raise DuplicateMatchError(log_id, existing.match_id)
 
         # 锁内解析：账号/别名/seat/audit 全部在内存中构造（校验失败时无任何副作用）
         accounts_to_create: list[AccountCreate] = []

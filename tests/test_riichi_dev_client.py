@@ -496,11 +496,16 @@ def test_resolve_default_token_with_source_prefers_lattekey(monkeypatch) -> None
 
 
 def test_resolve_model_path_uses_mortal_default_checkpoint() -> None:
-    assert rdc._resolve_model_path(
+    # Named Mortal checkpoints resolve under the shared keqing-data root (the
+    # authoritative models dir), not the legacy repo-relative artifacts path.
+    resolved = rdc._resolve_model_path(
         bot_name="mortal",
         project_root=Path("/tmp/project"),
         model_path=None,
-    ) == Path("/tmp/project/artifacts/mortal_training/checkpoints/mortal_default_70k_promoted_candidate.pth")
+    )
+    assert resolved is not None
+    assert resolved.name == "mortal_default_70k_promoted_candidate.pth"
+    assert resolved.is_absolute()
 
 
 def test_decode_jwt_payload_unverified_reads_name_and_bot_id() -> None:
@@ -544,7 +549,8 @@ def test_create_agent_supports_mortal(monkeypatch) -> None:
     )
 
     assert isinstance(agent, FakeMortalAgent)
-    assert created["model_path"] == Path("/tmp/project/artifacts/mortal_training/checkpoints/mortal_default_70k_promoted_candidate.pth")
+    assert created["model_path"].name == "mortal_default_70k_promoted_candidate.pth"
+    assert created["model_path"].is_absolute()
     assert created["project_root"] == Path("/tmp/project")
     assert created["device"] == "cpu"
     assert created["verbose"] is True

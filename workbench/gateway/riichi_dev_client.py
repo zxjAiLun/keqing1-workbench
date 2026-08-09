@@ -226,9 +226,18 @@ def _resolve_model_path(
         return None
     if model_path is not None:
         return Path(model_path)
+    # Named Mortal checkpoints now live under the shared keqing-data root;
+    # resolve the legacy repo-relative anchors there (authoritative models dir).
+    from inference.bot_registry import resolve_model_checkpoint
+
     if bot_name == "mortal":
-        return Path(project_root) / "artifacts" / "mortal_training" / "checkpoints" / "mortal_default_70k_promoted_candidate.pth"
-    return Path(project_root) / "artifacts" / "models" / bot_name / "best.pth"
+        anchor = Path("artifacts/mortal_training/checkpoints/mortal_default_70k_promoted_candidate.pth")
+    else:
+        anchor = Path("artifacts") / "models" / bot_name / "best.pth"
+    try:
+        return resolve_model_checkpoint(anchor, project_root)
+    except FileNotFoundError:
+        return None
 
 
 def _decode_jwt_payload_unverified(token: str) -> dict[str, Any] | None:

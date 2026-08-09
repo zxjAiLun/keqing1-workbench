@@ -286,11 +286,18 @@ def _validate_roster_bindings(roster_bindings: List[dict], specs: List[str]) -> 
 
 
 def _resolve_artifact_path(artifact, project_root: Path) -> Path:
-    """artifact 的规范化绝对路径（相对路径按 project_root 解析）。"""
-    path = Path(str(artifact.artifact_path or ""))
-    if not path.is_absolute():
-        path = project_root / path
-    return path.resolve()
+    """artifact 的规范化绝对路径。
+
+    相对路径依次尝试 ``project_root`` 与共享 keqing-data 根
+    （``data_root()``），再回落到 authoritative Mortal 模型目录按文件名匹配，
+    见 ``inference.bot_registry.resolve_model_checkpoint``。
+    """
+    from inference.bot_registry import resolve_model_checkpoint
+
+    try:
+        return resolve_model_checkpoint(str(artifact.artifact_path or ""), project_root)
+    except FileNotFoundError as exc:
+        raise ValueError(f"artifact checkpoint 不存在: {exc}") from exc
 
 
 def _artifact_spec_for_launcher(identity_id: str, artifact_id: str) -> str:

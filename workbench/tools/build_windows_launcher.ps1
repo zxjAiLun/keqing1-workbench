@@ -6,8 +6,8 @@
 
 $ErrorActionPreference = "Stop"
 
-$ProjectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$ScriptPath = Join-Path $ProjectRoot "tools\windows_launcher.py"
+$ProjectRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
+$ScriptPath = Join-Path $ProjectRoot "workbench\tools\windows_launcher.py"
 $VenvPython = Join-Path $ProjectRoot ".venv-win\Scripts\python.exe"
 $OutputDir = Join-Path $ProjectRoot "dist"
 $ExeName = "Keqing1WorkbenchLauncher"

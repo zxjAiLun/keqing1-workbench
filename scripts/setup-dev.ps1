@@ -13,28 +13,22 @@ $RuntimeWheelDir = Join-Path $DataRoot "runtime\keqing_core"
 $VenvPython = Join-Path $Repo "$Venv\Scripts\python.exe"
 $Site = Join-Path $Repo "$Venv\Lib\site-packages"
 
-function Invoke-UvPip {
-    param([string[]]$Packages)
-    & uv pip install --python $VenvPython @Packages
-    if ($LASTEXITCODE -ne 0) { throw "uv pip install failed" }
-}
-
-# 1. venv
+# 1. Project environment.  uv project mode manages the env via pyproject.toml
+#    + uv.lock, but we keep a single non-default environment (.venv-win) so it
+#    never collides with uv's default .venv.  UV_PROJECT_ENVIRONMENT makes both
+#    `uv sync` and `uv run` target .venv-win.
+$env:UV_PROJECT_ENVIRONMENT = $Venv
 if (-not (Test-Path $VenvPython)) {
     uv venv --python 3.12 $Venv
     if ($LASTEXITCODE -ne 0) { throw "uv venv failed" }
 }
 
-# 2. Python dependencies
-Invoke-UvPip @(
-    "fastapi>=0.135.2", "mahjong>=1.4.0", "numpy>=1.24", "python-dotenv>=1.2.2",
-    "python-multipart>=0.0.20", "pyyaml>=6.0", "riichienv==0.4.8", "torch>=2.11.0",
-    "uvicorn>=0.42.0", "websockets==17.0.1", "pytest>=9.0.2", "ruff>=0.15.10"
-)
-
-# 2b. Editable install so src/ packages (inference, static_tables, mahjong_env,
-#     project_data) resolve from source.
-Invoke-UvPip @("-e", ".")
+# 2. All ordinary Python dependencies from pyproject.toml (+ dev group for
+#    pytest/ruff).  This is an exact sync, so it prunes keqing_core -- the
+#    native runtime wheel is intentionally not a registry dependency and is
+#    reinstalled in step 4 after the sync.
+uv sync --group dev
+if ($LASTEXITCODE -ne 0) { throw "uv sync failed" }
 
 # 3. libriichi runtime, built from the vendored Mortal crate (same as the
 #    keqing1_experiment setup; requires cargo on PATH).
@@ -47,31 +41,23 @@ Copy-Item -Recurse -LiteralPath (Join-Path $Repo "third_party\libriichi\libriich
 & $VenvPython -c "from libriichi.arena import OneVsThree; assert hasattr(OneVsThree, 'py_selfplay'); print('libriichi OK')"
 if ($LASTEXITCODE -ne 0) { throw "libriichi install verification failed" }
 
-# 4. keqing_core runtime wheel.  Resolution order:
+# 4. keqing_core runtime wheel.  Must come AFTER uv sync, because the exact
+#    sync above prunes it as extraneous.  Resolution order:
 #    a. explicit -KeqingCoreWheel <path>
-#    b. already importable in this venv
-#    c. $RuntimeWheelDir (published by the keqing1_experiment setup)
-#    d. clear error
-$Installed = $false
-try {
-    & $VenvPython -c "import keqing_core" 2>$null
-    if ($LASTEXITCODE -eq 0) { $Installed = $true }
-} catch {
-    $Installed = $false
-}
+#    b. $RuntimeWheelDir (published by the keqing1_experiment setup)
+#    c. clear error
 if ($KeqingCoreWheel) {
     if (-not (Test-Path $KeqingCoreWheel)) { throw "keqing_core wheel not found: $KeqingCoreWheel" }
-    Invoke-UvPip @($KeqingCoreWheel)
-} elseif ($Installed) {
-    Write-Output "keqing_core already installed; reusing it"
+    $Wheel = Get-Item -LiteralPath $KeqingCoreWheel
 } else {
     $Wheel = Get-ChildItem -Path $RuntimeWheelDir -Filter "keqing_core-*.whl" -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if (-not $Wheel) {
         throw "keqing_core wheel not found: publish one into $RuntimeWheelDir (run the keqing1_experiment setup) or pass -KeqingCoreWheel <path>"
     }
-    Invoke-UvPip @($Wheel.FullName)
 }
+& uv pip install --python $VenvPython $Wheel.FullName
+if ($LASTEXITCODE -ne 0) { throw "keqing_core wheel install failed" }
 & $VenvPython -c "import keqing_core; print('keqing_core OK (rust available:', keqing_core.is_available(), ')')"
 if ($LASTEXITCODE -ne 0) { throw "keqing_core verification failed" }
 

@@ -29,7 +29,7 @@ if (-not (Test-Path $VenvPython)) {
 Invoke-UvPip @(
     "fastapi>=0.135.2", "mahjong>=1.4.0", "numpy>=1.24", "python-dotenv>=1.2.2",
     "python-multipart>=0.0.20", "pyyaml>=6.0", "riichienv==0.4.8", "torch>=2.11.0",
-    "uvicorn>=0.42.0", "websockets==10.2", "pytest>=9.0.2", "ruff>=0.15.10"
+    "uvicorn>=0.42.0", "websockets==17.0.1", "pytest>=9.0.2", "ruff>=0.15.10"
 )
 
 # 2b. Editable install so src/ packages (inference, static_tables, mahjong_env,
@@ -85,6 +85,46 @@ if (-not $SkipUiBuild) {
     } finally {
         Pop-Location
     }
+}
+
+# 5b. Bootstrap smoke: verify the dependency combination actually imports and
+#     the Workbench server can boot.  A green setup-dev.ps1 used to hide a
+#     broken uvicorn/websockets pairing (uvicorn >= 0.52 needs websockets >= 11);
+#     this makes that class of failure fail fast here instead of at first launch.
+$SmokePort = 8123
+try {
+    & $VenvPython -c "import uvicorn, websockets, keqing_core, libriichi; print('smoke imports OK: uvicorn', uvicorn.__version__, '| websockets', websockets.__version__)"
+    if ($LASTEXITCODE -ne 0) { throw "bootstrap import smoke failed" }
+
+    $SmokeOut = Join-Path $Repo "logs\setup-smoke.out"
+    $SmokeErr = Join-Path $Repo "logs\setup-smoke.err"
+    $Proc = Start-Process -FilePath $VenvPython -ArgumentList @("workbench/main.py", "--port", "$SmokePort", "--no-ui-build", "local") `
+        -WorkingDirectory $Repo -NoNewWindow -RedirectStandardOutput $SmokeOut -RedirectStandardError $SmokeErr -PassThru
+    try {
+        $SmokeUp = $false
+        for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 1
+            if ($Proc.HasExited) { break }
+            try {
+                $Resp = Invoke-WebRequest -Uri "http://127.0.0.1:$SmokePort/" -TimeoutSec 2 -UseBasicParsing
+                if ($Resp.StatusCode -eq 200 -and $Resp.Content -match "<title>麻将回放分析</title>") {
+                    $SmokeUp = $true
+                    break
+                }
+            } catch {
+                # still starting; retry
+            }
+        }
+        if (-not $SmokeUp) {
+            $Tail = Get-Content $SmokeErr -Tail 20 -ErrorAction SilentlyContinue
+            throw "workbench launch smoke failed - server did not come up on port $SmokePort`n$($Tail -join [Environment]::NewLine)"
+        }
+        Write-Output "smoke launch OK: workbench/main.py local served on 127.0.0.1:$SmokePort"
+    } finally {
+        if (-not $Proc.HasExited) { Stop-Process -Id $Proc.Id -Force -ErrorAction SilentlyContinue }
+    }
+} finally {
+    Remove-Item $SmokeOut, $SmokeErr -ErrorAction SilentlyContinue
 }
 
 "setup complete: $Venv"

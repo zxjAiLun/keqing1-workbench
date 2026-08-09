@@ -17,7 +17,7 @@ dependencies = [
   "riichienv==0.4.8",
   "torch>=2.11.0",
   "uvicorn>=0.42.0",
-  "websockets==10.2",
+  "websockets==17.0.1",
 ]
 
 # keqing_core is installed as the runtime wheel built by keqing-mortal

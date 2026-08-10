@@ -196,11 +196,6 @@ def _resolve_spec(network: str, custom_paths: Dict[int, str], slot: int) -> Opti
     return network
 
 
-def _ladder_data_root() -> Path:
-    raw = os.environ.get("KEQING_LADDER_DATA_ROOT", "").strip()
-    return Path(raw) if raw else data_path("ladder")
-
-
 def _ladder_config_dir() -> Path:
     from replay import ladder as ladder_data
 
@@ -945,7 +940,6 @@ def start_playwithyou(req: StartPlayWithYouRequest) -> PlayWithYouStatus:
                 status_code=400,
                 detail="通用四人阵容（roster）与「计入正式天梯」不能同时开启；正式计分将由 ledger projection 决定（R10-F）。",
             )
-        from gateway.playwithyou_capture import capture_dir_for_session
         from participants import aliases as participant_aliases
         from participants.paths import data_lock as participants_data_lock
         from participants import ledger as participants_ledger
@@ -976,7 +970,9 @@ def start_playwithyou(req: StartPlayWithYouRequest) -> PlayWithYouStatus:
                 # 不再让子进程按动态名字（mortal/70k）重新解析。
                 launcher_command_specs = frozen_launcher_specs
 
-                capture_dir = capture_dir_for_session(_ladder_data_root(), session_id)
+                # R11-C follow-up：capture 目录与 reader 共用同一 canonical 根
+                # （ladder_capture_root()），不再二次拼接数据根（防未来漂移）。
+                capture_dir = ladder_capture_root() / session_id
                 (capture_dir / "pending").mkdir(parents=True, exist_ok=True)
                 (capture_dir / "ignored").mkdir(parents=True, exist_ok=True)
                 (capture_dir / "errors").mkdir(parents=True, exist_ok=True)
@@ -1027,9 +1023,8 @@ def start_playwithyou(req: StartPlayWithYouRequest) -> PlayWithYouStatus:
             _validate_ladder_capture(req.ladder_capture, specs)
         except (ValueError, FileNotFoundError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        from gateway.playwithyou_capture import capture_dir_for_session
 
-        capture_dir = capture_dir_for_session(_ladder_data_root(), session_id)
+        capture_dir = ladder_capture_root() / session_id
         (capture_dir / "pending").mkdir(parents=True, exist_ok=True)
         (capture_dir / "ignored").mkdir(parents=True, exist_ok=True)
         (capture_dir / "errors").mkdir(parents=True, exist_ok=True)

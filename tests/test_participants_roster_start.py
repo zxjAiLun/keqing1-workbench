@@ -40,6 +40,8 @@ def pw_env(tmp_path, monkeypatch):
         pw, "_resolve_spec",
         lambda network, custom_paths, slot: "70k" if network == "mortal" else None,
     )
+    # R11-C Repair 2：capture root 走 canonical helper（KEQING_LADDER_DATA_ROOT）
+    monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(tmp_path / "ladder"))
     # P1-2：冻结用真实 resolve_bot_spec 解析 checkpoint 路径，再按 artifact 精确匹配
     checkpoint = tmp_path / "checkpoints" / "70k.pth"
     checkpoint.parent.mkdir(parents=True, exist_ok=True)
@@ -52,7 +54,6 @@ def pw_env(tmp_path, monkeypatch):
     fake_subprocess = mock.Mock()
     fake_subprocess.Popen.return_value = FakeProc()
     monkeypatch.setattr(pw, "subprocess", fake_subprocess)
-    monkeypatch.setattr(pw, "_ladder_data_root", lambda: tmp_path / "ladder")
     monkeypatch.setattr(pw, "_ladder_config_dir", lambda: tmp_path / "configs")
     monkeypatch.setenv("KEQING_PARTICIPANT_DATA_ROOT", str(tmp_path / "participants"))
     pw.SESSIONS.clear()
@@ -415,7 +416,7 @@ def test_frozen_checkpoint_does_not_drift(tmp_path, monkeypatch):
         lambda network, custom_paths, slot: "mortal" if network == "mortal" else None,
     )
     monkeypatch.setenv("KEQING_PARTICIPANT_DATA_ROOT", str(tmp_path / "participants"))
-    monkeypatch.setattr(pw, "_ladder_data_root", lambda: tmp_path / "ladder")
+    monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(tmp_path / "ladder"))
     monkeypatch.setattr(pw, "_ladder_config_dir", lambda: tmp_path / "configs")
     fake_subprocess = mock.Mock()
     fake_subprocess.Popen.return_value = FakeProc()

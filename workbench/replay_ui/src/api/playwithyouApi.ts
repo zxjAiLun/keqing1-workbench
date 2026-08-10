@@ -90,6 +90,9 @@ export interface PlayWithYouStatus {
   }> | null;
   // R11-C：对局结束后的 awaiting_import 天凤链接（无则需手工粘贴）
   tenhou_log_url?: string | null;
+  // R11-C Repair：会话结束方式（running / natural_exit / manual_stop）。
+  // manual_stop 不显示任何赛后导入 CTA。
+  termination_reason?: "running" | "natural_exit" | "manual_stop" | null;
 }
 
 // R11-B：运行时模型目录

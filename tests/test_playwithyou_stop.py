@@ -155,6 +155,84 @@ def test_status_reports_finished_session_with_log_url(monkeypatch):
     assert status.tenhou_log_url == "https://tenhou.net/3/?log=20260810gm-0001-2147-abc12345"
     assert status.frozen_roster is not None
     assert status.frozen_roster[0]["model_id"] == "70k"
+    # 自然退出（termination_reason 未显式设置）→ natural_exit
+    assert status.termination_reason == "natural_exit"
+
+
+def test_status_manual_stop_termination_reason(monkeypatch):
+    """R11-C Repair：手动停止后 status 标记 manual_stop——前端不显示赛后导入 CTA。"""
+    import time
+
+    class FakeProc:
+        pid = 7777
+        stdout: list[str] = []
+        killed = False
+        calls = 0
+
+        def poll(self):
+            # 第一次调用：仍在运行（stop 的 running 分支成立）；kill 后：已退出
+            self.calls += 1
+            return None if self.calls == 1 else 0
+
+        def kill(self):
+            FakeProc.killed = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    session = pw.PWYSession(
+        session_id="sess-stop",
+        proc=FakeProc(),
+        command=["python", "launch_tenhou_bots.py"],
+        lobby_id="2147",
+        specs=["70k"],
+        names=["NoName"],
+        speed="normal",
+        device="cpu",
+        started_at=time.time(),
+    )
+    monkeypatch.setattr(pw, "_current_session", lambda: session)
+    monkeypatch.setattr(pw, "_kill_tree", lambda pid: None)
+    monkeypatch.setattr(pw, "_kill_owned_artifacts", lambda: None)
+    monkeypatch.setattr(pw, "_session_log_url", lambda sid: None)
+
+    status = pw.stop_playwithyou()
+
+    assert status.running is False
+    assert status.termination_reason == "manual_stop"
+    assert status.tenhou_log_url is None
+
+
+def test_status_ordering_prefers_orphan_over_finished_session(monkeypatch):
+    """R11-C Repair：finished session 不能遮住仍存活的 owned orphan（保留 Stop 入口）。"""
+    import time
+
+    class FakeProc:
+        stdout: list[str] = []
+
+        def poll(self):
+            return 0  # 已结束
+
+    session = pw.PWYSession(
+        session_id="sess-finished",
+        proc=FakeProc(),
+        command=["python", "launch_tenhou_bots.py"],
+        lobby_id="2147",
+        specs=["70k"],
+        names=["NoName"],
+        speed="normal",
+        device="cpu",
+        started_at=time.time(),
+    )
+    monkeypatch.setattr(pw, "_current_session", lambda: session)
+    monkeypatch.setattr(pw, "_find_owned_pids", lambda: [4242])
+
+    status = pw.playwithyou_status()
+
+    # orphan 优先：running=True、无 session_id、有 Stop 提示
+    assert status.running is True
+    assert status.session_id is None
+    assert "遗留" in status.log_tail[0]
 
 
 def test_session_log_url_only_returns_awaiting_import(monkeypatch, tmp_path):

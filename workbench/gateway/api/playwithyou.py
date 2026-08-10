@@ -120,6 +120,10 @@ class PWYSession:
         self.started_at = started_at
         self.capture_dir: Optional[Path] = None
         self.binding: Optional[dict] = None
+        # R11-C Repair：会话结束方式（running / natural_exit / manual_stop）。
+        # manual_stop 由 stop 端点显式设置；自然退出保持 None，status 按
+        # proc 已退出 + 非 manual_stop 推导为 natural_exit。
+        self.termination_reason: Optional[str] = None
         # P2（UX Repair 2）：roster 模式冻结后的四人阵容（account/model/expected_name）
         self.frozen_roster: Optional[List[dict]] = None
         self.log_lines: List[str] = []
@@ -779,6 +783,9 @@ class PlayWithYouStatus(BaseModel):
     # R11-C：对局结束后该 session 的 awaiting_import capture 的 canonical 天凤链接。
     # 前端据此自动引导"确认结果 → 导入"，不再要求用户手动复制 session_id。
     tenhou_log_url: Optional[str] = None
+    # R11-C Repair：会话结束方式（running / natural_exit / manual_stop）。
+    # 只有 awaiting_import+URL 或 natural_exit 才允许赛后导入 CTA；manual_stop 不显示。
+    termination_reason: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1128,7 +1135,7 @@ def start_playwithyou(req: StartPlayWithYouRequest) -> PlayWithYouStatus:
     )
 
 
-def _session_log_url(session_id: str) -> Optional[str]:
+def _session_log_url(session_id: str) -> str | None:
     """R11-C：返回该 session 的 awaiting_import capture 的 canonical 天凤链接。
 
     对局结束（任一 observer 捕获到 end_game + log_id）即进入 awaiting_import；
@@ -1143,25 +1150,11 @@ def _session_log_url(session_id: str) -> Optional[str]:
 @router.get("/status", response_model=PlayWithYouStatus)
 def playwithyou_status() -> PlayWithYouStatus:
     session = _current_session()
-    if session is not None:
-        # R11-C：无论运行中/已结束都回传 session_id + 冻结阵容 + 赛后链接，
-        # 前端据此自动进入导入引导（session_id 只是内部关联键）。
-        return PlayWithYouStatus(
-            session_id=session.session_id,
-            running=session.running,
-            lobby_id=session.lobby_id,
-            speed=session.speed,
-            device=session.device,
-            bots=[{"name": n, "spec": s} for n, s in zip(session.names, session.specs)] if session.running else [],
-            log_tail=session.tail(200),
-            started_at=session.started_at,
-            ladder_capture=_binding_view(session),
-            frozen_roster=session.frozen_roster,
-            tenhou_log_url=_session_log_url(session.session_id),
-        )
-    # No in-memory session, but a launcher may still be alive as an orphan
-    # (e.g. the backend process was restarted and lost its session record).
-    # Surface it so the GUI keeps offering a Stop button that will clean it up.
+    # 顺序：1) running in-memory session → 2) owned orphan → 3) latest finished
+    # session → 4) empty。finished session 绝不能遮住仍存活的 orphan（否则 UI
+    # 会失去 Stop 入口）。
+    if session is not None and session.running:
+        return _session_status(session)
     if _find_owned_pids():
         return PlayWithYouStatus(
             running=True,
@@ -1175,13 +1168,39 @@ def playwithyou_status() -> PlayWithYouStatus:
             ],
             started_at=None,
         )
+    if session is not None:
+        return _session_status(session)
     return PlayWithYouStatus(running=False)
+
+
+def _session_status(session: PWYSession) -> PlayWithYouStatus:
+    """R11-C：运行中/已结束都回传 session_id + 冻结阵容 + 赛后链接 + 结束方式。"""
+    running = session.running
+    reason = session.termination_reason
+    if not running and reason is None:
+        reason = "natural_exit"  # launcher 自然退出（对局结束）
+    return PlayWithYouStatus(
+        session_id=session.session_id,
+        running=running,
+        lobby_id=session.lobby_id,
+        speed=session.speed,
+        device=session.device,
+        bots=[{"name": n, "spec": s} for n, s in zip(session.names, session.specs)] if running else [],
+        log_tail=session.tail(200),
+        started_at=session.started_at,
+        ladder_capture=_binding_view(session),
+        frozen_roster=session.frozen_roster,
+        tenhou_log_url=_session_log_url(session.session_id),
+        termination_reason=reason,
+    )
 
 
 @router.post("/stop", response_model=PlayWithYouStatus)
 def stop_playwithyou() -> PlayWithYouStatus:
     session = _current_session()
     if session is not None and session.running:
+        # R11-C Repair：先标记手动停止——否则 UI 会把手动停止当成"有局要导入"。
+        session.termination_reason = "manual_stop"
         pid = session.proc.pid
         try:
             # Kill the process tree while the launcher is still alive, so its
@@ -1202,16 +1221,16 @@ def stop_playwithyou() -> PlayWithYouStatus:
     # Also clean a marked launcher/gateway left after a backend restart. This
     # deliberately excludes any manually launched gateway.
     _kill_owned_artifacts()
+    if session is not None:
+        return _session_status(session)
     return PlayWithYouStatus(
-        session_id=session.session_id if session else None,
+        session_id=None,
         running=False,
-        lobby_id=session.lobby_id if session else None,
-        speed=session.speed if session else None,
-        device=session.device if session else None,
-        bots=[{"name": n, "spec": s} for n, s in zip(session.names, session.specs)]
-        if session
-        else [],
-        started_at=session.started_at if session else None,
+        lobby_id=None,
+        speed=None,
+        device=None,
+        bots=[],
+        started_at=None,
     )
 
 

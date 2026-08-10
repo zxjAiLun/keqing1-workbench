@@ -234,9 +234,49 @@ def _auto_account_id(candidates: list, registry) -> str | None:
     return eligible[0] if len(eligible) == 1 else None
 
 
+def _session_id_for_log_id(log_id: str) -> str | None:
+    """R11-C Repair：从 awaiting_import capture 反查 session 归属。
+
+    Play-with-you 对局结束后的 capture（``<data_root>/captures/playwithyou/
+    <session>/pending/*.json``，state=awaiting_import）带有 canonical 天凤链接；
+    解析出其 log_id 与该局一致即返回对应 session_id。这样 Import 只需要
+    ``?url=<tenhou-url>``，地址栏与表单都不再暴露 session_id。
+    """
+    root = data_root() / "captures" / "playwithyou"
+    if not root.is_dir():
+        return None
+    for session_dir in root.iterdir():
+        if not session_dir.is_dir():
+            continue
+        pending = session_dir / "pending"
+        if not pending.is_dir():
+            continue
+        for path in pending.glob("*.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if payload.get("state") != "awaiting_import":
+                continue
+            url = str(payload.get("tenhou_log_url") or "")
+            if not url:
+                continue
+            try:
+                parsed = parse_tenhou_url(url)
+            except (ValueError, KeyError, IndexError):
+                continue
+            if parsed["log_id"] == log_id:
+                return str(payload.get("session_id") or session_dir.name)
+    return None
+
+
 def build_preview(text: str, *, session_id: str | None = None) -> dict:
     """解析 + 下载 + 生成不落账的 preview，含逐座候选身份。"""
     parsed = parse_tenhou_url(text)
+    if not session_id:
+        # R11-C Repair：未显式带 session 时，从 awaiting_import capture 自动恢复
+        # provenance（session alias 照常解析 NoName-N → 模型）。
+        session_id = _session_id_for_log_id(parsed["log_id"])
     tenhou6 = download_tenhou6(parsed["log_id"])
     events = tenhou6_events(tenhou6)
     names = player_names(events)

@@ -1,7 +1,7 @@
 // src/replay_ui/src/pages/TenhouImportPage.tsx
 // R10-D：天凤链接 → preview → 逐座身份解析 → 确认落账。
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { PageHeader, PageShell } from '../components/Layout/PageScaffold';
 import { SEAT_WINDS } from '../components/Matches/labels';
 import { participantsApi } from '../api/participantsApi';
@@ -35,10 +35,16 @@ const EMPTY_DRAFT: DraftResolution = {
 export function TenhouImportPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const prefilledUrl = searchParams.get('url') ?? '';
-  const prefilledSession = searchParams.get('session_id') ?? undefined;
+  // R11-C Repair：session_id 只作为内部关联键——优先来自 SPA navigation state
+  // （Play-with-you 赛后跳转），不放在地址栏；后端也能从 log_id 自动恢复。
+  // 保留 URL 参数读取仅为兼容旧入口。
+  const stateSession = (location.state as { session_id?: string } | null)?.session_id;
   const [url, setUrl] = useState(prefilledUrl);
-  const [sessionId, setSessionId] = useState<string | undefined>(prefilledSession);
+  const [sessionId] = useState<string | undefined>(
+    stateSession ?? searchParams.get('session_id') ?? undefined,
+  );
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [identities, setIdentities] = useState<ModelIdentity[]>([]);
   const [preview, setPreview] = useState<IntakePreview | null>(null);
@@ -208,20 +214,6 @@ export function TenhouImportPage() {
             >
               {loading ? '解析中…' : '解析预览'}
             </button>
-          </div>
-          <div style={{ marginTop: 8 }}>
-            <label style={{ display: 'grid', gap: 4, fontSize: 12, color: 'var(--text-secondary)' }}>
-              会话 ID（可选，来自 play-with-you 会话；用于解析 NoName-1/2 的模型绑定）
-              <input
-                value={sessionId ?? ''}
-                onChange={(e) => setSessionId(e.target.value || undefined)}
-                placeholder="session_id"
-                style={{
-                  border: '1px solid var(--border)', background: 'var(--page-bg)',
-                  color: 'var(--text-primary)', borderRadius: 4, padding: '6px 8px', fontSize: 13,
-                }}
-              />
-            </label>
           </div>
           {error && <div style={{ color: '#e74c3c', fontSize: 13, marginTop: 8 }}>{error}</div>}
         </section>

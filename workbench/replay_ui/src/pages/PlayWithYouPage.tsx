@@ -382,9 +382,12 @@ export function PlayWithYouPage() {
             </div>
           )}
 
-          {/* R11-C：自动赛后导入引导（session_id 只是内部关联键，不再对用户展示）。
-              有 awaiting_import 链接 = 真实对局完成；否则仅在会话已结束时给手工粘贴入口。 */}
-          {status.session_id && (status.tenhou_log_url || !status.running) && (
+          {/* R11-C：自动赛后导入引导（session_id 只作内部关联键）。
+              规则：
+              - awaiting_import + URL        → 本局已完成 / 自动导入
+              - natural_exit + 无 URL        → 本局已结束 / 粘贴链接 fallback
+              - manual_stop                  → 已停止呼出，无任何赛后 CTA */}
+          {status.session_id && status.tenhou_log_url && (
             <div
               style={{
                 marginBottom: 10,
@@ -396,12 +399,10 @@ export function PlayWithYouPage() {
               }}
             >
               <div style={{ fontWeight: 800, color: "var(--text-primary)", fontSize: 13, marginBottom: 4 }}>
-                {status.tenhou_log_url ? "本局已完成" : "本局已结束"}
+                本局已完成
               </div>
               <div style={{ fontSize: 12, marginBottom: 8 }}>
-                {status.tenhou_log_url
-                  ? "已自动获取本局牌谱链接，确认结果并导入账号/正式计分。"
-                  : "未自动拿到牌谱链接（可能天凤未输出 log），去导入页粘贴链接即可；本局会话信息已自动带上。"}
+                已自动获取本局牌谱链接，确认结果并导入账号/正式计分。
               </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button
@@ -409,12 +410,45 @@ export function PlayWithYouPage() {
                   onClick={() => {
                     const params = new URLSearchParams();
                     if (status.tenhou_log_url) params.set("url", status.tenhou_log_url);
-                    if (status.session_id) params.set("session_id", status.session_id);
-                    navigate(`${routes.matchImport}?${params.toString()}`);
+                    navigate(`${routes.matchImport}?${params.toString()}`, {
+                      state: { session_id: status.session_id },
+                    });
                   }}
                   style={{ ...ghostSmallBtn, borderColor: "#27ae60", color: "#27ae60", fontWeight: 700 }}
                 >
-                  {status.tenhou_log_url ? "确认结果 → 导入牌谱" : "打开导入页（粘贴链接）"}
+                  确认结果 → 导入牌谱
+                </button>
+              </div>
+            </div>
+          )}
+          {status.session_id &&
+            !status.tenhou_log_url &&
+            status.termination_reason === "natural_exit" && (
+            <div
+              style={{
+                marginBottom: 10,
+                padding: "10px 12px",
+                borderRadius: 6,
+                border: "1px solid var(--border)",
+                background: "var(--surface-subtle)",
+                color: "var(--text-secondary)",
+              }}
+            >
+              <div style={{ fontWeight: 800, color: "var(--text-primary)", fontSize: 13, marginBottom: 4 }}>
+                本局已结束
+              </div>
+              <div style={{ fontSize: 12, marginBottom: 8 }}>
+                未自动拿到牌谱链接（可能天凤未输出 log），去导入页粘贴链接即可；本局会话信息已自动带上。
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigate(routes.matchImport, { state: { session_id: status.session_id } })
+                  }
+                  style={ghostSmallBtn}
+                >
+                  打开导入页（粘贴链接）
                 </button>
               </div>
             </div>

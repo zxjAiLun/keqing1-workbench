@@ -114,6 +114,43 @@ def test_resolve_and_create_match(fake_download, participants_root):
     assert ledger.list_matches().total == 1
 
 
+def test_session_id_recovered_from_awaiting_import_capture(tmp_path, monkeypatch):
+    """R11-C Repair：未显式带 session_id 时，intake 从 awaiting_import capture
+    按 log_id 反查 session provenance（Import URL 不再需要 session_id）。"""
+    import json
+
+    root = tmp_path / "captures"
+    monkeypatch.setattr(intake, "data_root", lambda: root)
+    session_dir = root / "captures" / "playwithyou" / "sess-from-capture" / "pending"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / "c1.json").write_text(
+        json.dumps(
+            {
+                "capture_id": "c1",
+                "session_id": "sess-from-capture",
+                "state": "awaiting_import",
+                "tenhou_log_url": f"https://tenhou.net/3/?log={FAKE_LOG_ID}",
+            }
+        ),
+        encoding="utf-8",
+    )
+    # 非 awaiting_import 不参与恢复
+    (session_dir / "c2.json").write_text(
+        json.dumps(
+            {
+                "capture_id": "c2",
+                "session_id": "sess-other",
+                "state": "log_captured",
+                "tenhou_log_url": f"https://tenhou.net/3/?log={FAKE_LOG_ID}",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert intake._session_id_for_log_id(FAKE_LOG_ID) == "sess-from-capture"
+    assert intake._session_id_for_log_id("20260999gm-0000-2147-00000000") is None
+
+
 def test_preview_auto_resolves_confirmed_global_alias(fake_download, participants_root):
     registry.create_account(AccountCreate(account_id="nick@01", display_name="Nick", account_type="human"))
     aliases.register_alias(

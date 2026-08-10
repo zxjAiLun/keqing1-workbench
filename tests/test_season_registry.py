@@ -327,6 +327,94 @@ def test_api_enrollment_endpoint(participants_env, configs_dir, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# R11-E2 Repair：draft 可删 / running 换组 gate / 写前验证
+# ---------------------------------------------------------------------------
+
+def _all_accounts(configs_dir, sid) -> set[str]:
+    season = sr.get_season(configs_dir, sid)
+    return {a["account_id"] for m in season["models"] for a in m["accounts"]}
+
+
+def test_draft_enrollment_can_remove_members(participants_env, configs_dir):
+    """R11-E2 Repair：draft [A,B] → [A] 时 B 必须从赛季 JSON 消失。"""
+    sid = _season_draft(configs_dir)
+    sr.set_season_enrollment(
+        configs_dir, sid,
+        ["account:keqing1", "account:70k_1号机"],
+        participants_registry=participants_env,
+    )
+    assert _all_accounts(configs_dir, sid) == {"account:keqing1", "account:70k_1号机"}
+
+    sr.set_season_enrollment(configs_dir, sid, ["account:keqing1"], participants_registry=participants_env)
+    assert _all_accounts(configs_dir, sid) == {"account:keqing1"}
+
+
+def test_running_enrollment_add_only(participants_env, configs_dir):
+    """R11-E2 Repair：running [A] → [A,B] 成功。"""
+    sid = _season_draft(configs_dir)
+    sr.set_season_status(configs_dir, sid, "running")
+    sr.set_season_enrollment(configs_dir, sid, ["account:keqing1"], participants_registry=participants_env)
+    sr.set_season_enrollment(
+        configs_dir, sid, ["account:keqing1", "account:70k_1号机"], participants_registry=participants_env
+    )
+    assert _all_accounts(configs_dir, sid) == {"account:keqing1", "account:70k_1号机"}
+
+
+def test_running_rejects_regroup_on_binding_drift(participants_env, configs_dir):
+    """R11-E2 Repair：running 中 Account 绑定漂移 → 409 且 season 文件逐字节不变。"""
+    from participants.schemas import ModelIdentityCreate
+
+    sid = _season_draft(configs_dir)
+    sr.set_season_status(configs_dir, sid, "running")
+    sr.set_season_enrollment(configs_dir, sid, ["account:70k_1号机"], participants_registry=participants_env)
+    before = (configs_dir / f"{sid}.json").read_bytes()
+
+    # Participants 把该 Account 的驱动模型改成新 identity
+    participants_env.create_model_identity(
+        ModelIdentityCreate(model_identity_id="model:new-70k", label="new70k", kind="local_model", artifact_path="new.pth")
+    )
+    from participants.schemas import AccountUpdate
+
+    participants_env.update_account("account:70k_1号机", AccountUpdate(model_identity_id="model:new-70k"))
+
+    with pytest.raises(SeasonRegistryError, match="不允许换组"):
+        sr.set_season_enrollment(configs_dir, sid, ["account:70k_1号机"], participants_registry=participants_env)
+    assert (configs_dir / f"{sid}.json").read_bytes() == before
+
+
+def test_draft_regroups_member_into_new_identity_group_once(participants_env, configs_dir):
+    """R11-E2 Repair：draft 中绑定漂移 → 重新保存后成员只在新 group 出现一次。"""
+    from participants.schemas import AccountUpdate, ModelIdentityCreate
+
+    sid = _season_draft(configs_dir)
+    sr.set_season_enrollment(configs_dir, sid, ["account:70k_1号机"], participants_registry=participants_env)
+    participants_env.create_model_identity(
+        ModelIdentityCreate(model_identity_id="model:new-70k", label="new70k", kind="local_model", artifact_path="new.pth")
+    )
+    participants_env.update_account("account:70k_1号机", AccountUpdate(model_identity_id="model:new-70k"))
+
+    sr.set_season_enrollment(configs_dir, sid, ["account:70k_1号机"], participants_registry=participants_env)
+    season = sr.get_season(configs_dir, sid)
+    memberships = [
+        (m["model_id"], a["account_id"])
+        for m in season["models"]
+        for a in m["accounts"]
+    ]
+    assert memberships == [("model:new-70k", "account:70k_1号机")]
+
+
+def test_enrollment_members_freeze_display_name(participants_env, configs_dir):
+    """R11-E2 P2：enrollment 成员冻结 display_name（历史格式）。"""
+    sid = _season_draft(configs_dir)
+    season = sr.set_season_enrollment(
+        configs_dir, sid, ["account:70k_1号机", "account:keqing1"], participants_registry=participants_env
+    )
+    members = {a["account_id"]: a.get("display_name") for m in season["models"] for a in m["accounts"]}
+    assert members["account:70k_1号机"] == "70k_1号机"
+    assert members["account:keqing1"] == "keqing1"
+
+
+# ---------------------------------------------------------------------------
 # API-level（server 端点）
 # ---------------------------------------------------------------------------
 

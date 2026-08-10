@@ -28,6 +28,7 @@ from .ladder import (
     get_season_config,
     list_season_configs,
     read_registry,
+    validate_registry_payload,
 )
 
 SEASON_STATUSES = ("draft", "running", "completed", "archived")
@@ -237,92 +238,140 @@ def _freeze_checkpoint(identity) -> str | None:
     return None
 
 
+def _account_target_key(account) -> str:
+    """Account 的赛季分组键：human → "human"；AI → 其 model_identity_id。"""
+    if account.account_type == "human":
+        return "human"
+    identity_id = account.model_identity_id
+    if not identity_id:
+        raise ValueError(f"AI 账号 {account.account_id} 未绑定模型身份，无法加入赛季")
+    return identity_id
+
+
 def _build_enrollment_groups(
     season: dict[str, Any],
     account_ids: list[str],
     accounts_by_id: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """按 Participants Account 构建赛季成员分组（models[].accounts 只是
-    season snapshot/投影，不是模型归属的 canonical source）。
+    """按 Participants Account **重建**赛季成员分组（R11-E2 Repair）。
+
+    membership 完全由 requested account_ids 决定——旧成员若不在请求中即被移除
+    （draft 可删）；每个 group 的 metadata（model_id / model_identity_id /
+    checkpoint / 其他 snapshot 字段）只在身份匹配时复用，绝不残留旧 membership。
 
     - human Account → model_id="human" 组；
     - AI Account → 按其 Account.model_identity_id 归组（无绑定 → fail closed）；
     - 旧 legacy group（无 model_identity_id）：成员推导唯一一致时自动 backfill，
       不一致 → fail closed，绝不猜；
     - 新 AI group：model_id=model_identity_id（稳定），checkpoint 冻结唯一 current
-      artifact；已有 group 的 checkpoint 绝不因 Participants 变化而漂移。
+      artifact；已有 group 的 checkpoint 绝不因 Participants 变化而漂移；
+    - 成员冻结 display_name（历史格式）。
     """
-    def _backfill(group: dict[str, Any], members: list[Any]) -> str | None:
-        """legacy group 无 model_identity_id：从成员推导，唯一一致才返回。"""
-        identities = {a.model_identity_id for a in members if a.model_identity_id}
-        if len(identities) == 1:
-            return next(iter(identities))
-        if len(identities) > 1:
-            raise ValueError(
-                f"赛季 group {group.get('model_id')} 推导出多个模型身份 "
-                f"({sorted(identities)})，无法确定归属，需人工修复注册表"
-            )
-        return None
-
     from participants import registry as participants_registry
 
     get_identity = participants_registry.get_model_identity
 
-    # 1. 拷贝既有 group 结构（保留顺序与 checkpoint 等字段）
-    groups = [dict(m) for m in season.get("models", []) if isinstance(m, dict)]
-    group_index: dict[str, dict[str, Any]] = {}
-    for group in groups:
-        group["accounts"] = [dict(a) for a in group.get("accounts", [])]
-        existing_members = [accounts_by_id[a["account_id"]] for a in group["accounts"] if a.get("account_id") in accounts_by_id]
+    # 1. 保留旧 group metadata（membership 全部清空）
+    legacy_groups: list[dict[str, Any]] = []
+    for m in season.get("models", []) if isinstance(season.get("models"), list) else []:
+        group = dict(m)
+        group["accounts"] = []
+        existing_members = [
+            accounts_by_id[a["account_id"]]
+            for a in (m.get("accounts") or []) if isinstance(a, dict) and a.get("account_id") in accounts_by_id
+        ]
         key = group.get("model_identity_id")
         if key is None:
-            # legacy group：backfill（唯一一致才允许）
-            key = _backfill(group, existing_members)
-            if key is not None:
-                group["model_identity_id"] = key
-        group_index[group.get("model_id")] = group
+            # legacy group：成员推导唯一一致才允许 backfill
+            identities = {a.model_identity_id for a in existing_members if a.model_identity_id}
+            if len(identities) > 1:
+                raise ValueError(
+                    f"赛季 group {group.get('model_id')} 推导出多个模型身份 "
+                    f"({sorted(identities)})，无法确定归属，需人工修复注册表"
+                )
+            if len(identities) == 1:
+                group["model_identity_id"] = next(iter(identities))
+        legacy_groups.append(group)
 
-    # 2. 按参与者账号重排：human → human 组；AI → 身份组
+    # 2. 按 requested account_ids 重建 membership
     for aid in account_ids:
         account = accounts_by_id[aid]
-        if account.account_type == "human":
-            model_key = "human"
-        else:
-            identity_id = account.model_identity_id
-            if not identity_id:
-                raise ValueError(f"AI 账号 {aid} 未绑定模型身份，无法加入赛季")
-            identity = get_identity(identity_id)
-            if identity is None:
-                raise ValueError(f"账号 {aid} 绑定的模型身份不存在: {identity_id}")
-            model_key = identity_id  # 新 group 用稳定 model_identity_id 作 model_id
+        target_key = _account_target_key(account)
 
-        # 已有 legacy group 若模型归属一致则复用（保持旧 model_id）
         matched = None
-        for group in groups:
+        for group in legacy_groups:
             g_identity = group.get("model_identity_id")
-            if g_identity == model_key or (g_identity is None and model_key == "human" and group.get("model_id") == "human"):
+            if g_identity == target_key or (target_key == "human" and group.get("model_id") == "human"):
                 matched = group
                 break
         if matched is None:
-            identity = None if model_key == "human" else get_identity(model_key)
+            identity = None if target_key == "human" else get_identity(target_key)
             matched = {
-                "model_id": "human" if model_key == "human" else model_key,
-                "model_identity_id": None if model_key == "human" else model_key,
+                "model_id": "human" if target_key == "human" else target_key,
+                "model_identity_id": None if target_key == "human" else target_key,
                 "accounts": [],
             }
             checkpoint = _freeze_checkpoint(identity)
             if checkpoint is not None:
                 matched["checkpoint"] = checkpoint
-            groups.append(matched)
+            legacy_groups.append(matched)
 
-        member_ids = {a["account_id"] for a in matched["accounts"]}
-        if aid not in member_ids:
-            matched["accounts"].append({"account_id": aid})
+        matched["accounts"].append(
+            {"account_id": account.account_id, "display_name": account.display_name}
+        )
 
-    # 3. 移除空组（除保留的 legacy human 组语义外的空组清理），并按 model_id 排序
-    groups = [g for g in groups if g["accounts"]]
+    # 3. 删除空组，并按 model_id 排序
+    groups = [g for g in legacy_groups if g["accounts"]]
     groups.sort(key=lambda g: str(g.get("model_id", "")))
     return groups
+
+
+def _check_running_invariants(
+    season: dict[str, Any],
+    account_ids: list[str],
+    accounts_by_id: dict[str, Any],
+) -> None:
+    """R11-E2 Repair：running 赛季 group-level diff。
+
+    - 现有成员 ID 必须仍在请求中（不可移除）；
+    - 现有成员的赛季 group 不得改变（按当前 Participants 绑定推导的目标组
+      与 season snapshot 组一致才算通过；绑定漂移 → 拒绝，绝不换组）。
+    """
+    requested = set(account_ids)
+    requested_target = {aid: _account_target_key(accounts_by_id[aid]) for aid in account_ids}
+
+    existing: dict[str, tuple[str | None, str | None]] = {}
+    for m in season.get("models", []) if isinstance(season.get("models"), list) else []:
+        group_identity = m.get("model_identity_id")
+        members = [a for a in (m.get("accounts") or []) if isinstance(a, dict) and a.get("account_id")]
+        if group_identity is None:
+            identities = {
+                accounts_by_id[a["account_id"]].model_identity_id
+                for a in members if a["account_id"] in accounts_by_id
+            }
+            if len(identities) > 1:
+                raise ValueError(
+                    f"赛季 group {m.get('model_id')} 推导出多个模型身份 "
+                    f"({sorted(identities)})，无法确定归属，需人工修复注册表"
+                )
+            if len(identities) == 1:
+                group_identity = next(iter(identities))
+        for a in members:
+            aid = a["account_id"]
+            if aid not in accounts_by_id:
+                raise ValueError(f"赛季成员账号不存在: {aid}")
+            key = group_identity if group_identity else ("human" if m.get("model_id") == "human" else None)
+            existing[aid] = (key, m.get("model_id"))
+
+    for aid, (group_key, _model_id) in existing.items():
+        if aid not in requested:
+            raise SeasonRegistryError(f"running 赛季只能增加账号，不能移除现有成员: {aid}")
+        target = requested_target[aid]
+        if group_key != target:
+            raise SeasonRegistryError(
+                f"running 赛季不允许换组：账号 {aid} 当前在 {group_key or '未分组'}，"
+                f"按 Participants 应为 {target}"
+            )
 
 
 def set_season_enrollment(
@@ -335,12 +384,13 @@ def set_season_enrollment(
     """R11-E2：按 Participants Account 编辑赛季参赛阵容。
 
     权限矩阵（backend 硬 gate，不信任前端）：
-    - draft    → 可增加 / 移除；
-    - running  → 只允许增加（不可移除 / 换组）；
+    - draft    → 可增加 / 移除（membership 完全按请求重建）；
+    - running  → 只允许增加（不可移除 / 换组，group-level diff）；
     - completed / archived → 只读（拒绝修改）。
 
-    校验：账号存在；human 只能进 human 组；AI 必须已有有效模型绑定；
-    同一 Account 只能出现一次。
+    写前验证：最终 payload 先过 ``validate_registry_payload``（重复账号/重复
+    model/schema/default 合同等），通过后才原子写——绝不先写坏 canonical JSON
+    再在 read_registry 阶段报错。
     """
     from participants import registry as default_registry
 
@@ -361,21 +411,14 @@ def set_season_enrollment(
             raise ValueError(f"账号不存在: {sorted(missing)}")
 
         if status == "running":
-            existing = {
-                acc["account_id"]
-                for m in season.get("models", []) if isinstance(m, dict)
-                for acc in m.get("accounts", []) if isinstance(acc, dict)
-            }
-            removed = existing - set(account_ids)
-            if removed:
-                raise SeasonRegistryError(
-                    f"running 赛季只能增加账号，不能移除现有成员: {sorted(removed)}"
-                )
+            _check_running_invariants(season, account_ids, accounts_by_id)
 
         groups = _build_enrollment_groups(season, account_ids, accounts_by_id)
         updated = dict(season)
         updated["models"] = groups
         updated["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+        # 写前验证：非法 payload 绝不落盘
+        validate_registry_payload(updated)
         path = _season_path(configs_dir, season_id)
         _atomic_write_json(path, updated)
         return read_registry(path)

@@ -175,6 +175,15 @@ def _load_registry_file(path: Path) -> dict[str, Any]:
     return _validate_registry(raw, path.name)
 
 
+def validate_registry_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """R11-E2 Repair：写前验证（覆盖 canonical JSON 之前）。
+
+    mutation 端必须先把最终 payload 通过注册表结构校验（schema / season_id /
+    report_dir / default / models / accounts 唯一性等），通过后才允许原子写。
+    """
+    return _validate_registry(payload, "<enrollment>")
+
+
 def read_registry(path: Path) -> dict[str, Any]:
     """读取并校验单个赛季注册表文件（供发布器等生产端复用）。"""
     return _load_registry_file(path)

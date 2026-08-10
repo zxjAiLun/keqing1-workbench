@@ -17,6 +17,7 @@ from fastapi import FastAPI, File, Form, Query, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from replay.normalize import normalize_replay_decisions
 from replay import ladder as ladder_data
+from replay.ladder import SeasonNotFoundError, SeasonRegistryError
 from replay.external_reports import write_external_teacher_reports, _action_actor, _decision_kind
 
 
@@ -1592,6 +1593,99 @@ async def list_ladder_seasons():
     except ladder_data.SeasonRegistryError as exc:
         return JSONResponse(status_code=500, content={"error": str(exc)})
     return JSONResponse(content=catalog)
+
+
+# ---------------------------------------------------------------------------
+# R11-E1：Season Registry 生命周期管理（canonical runtime registry 的写侧）
+# ---------------------------------------------------------------------------
+
+def _season_manager():
+    """懒加载 season_registry（避免模块级循环导入）。"""
+    from replay import season_registry
+
+    return season_registry
+
+
+def _manager_errors(exc: Exception) -> JSONResponse:
+    """Season manager 错误映射：404 未找到 / 409 生命周期冲突 / 500 注册表损坏。"""
+    from replay.ladder import SeasonNotFoundError, SeasonRegistryError
+
+    if isinstance(exc, SeasonNotFoundError):
+        return JSONResponse(status_code=404, content={"error": str(exc)})
+    if isinstance(exc, (ValueError, SeasonRegistryError)):
+        return JSONResponse(status_code=409, content={"error": str(exc)})
+    return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.post("/api/ladder/seasons", response_class=JSONResponse)
+async def create_ladder_season(payload: dict):
+    """创建赛季（status=draft, default=False, 空阵容；enrollment 由 E2 编辑）。"""
+    sr = _season_manager()
+    try:
+        season = sr.create_season(
+            _LADDER_SEASONS_DIR,
+            season_id=str(payload.get("season_id") or ""),
+            title=payload.get("title"),
+            scoring=payload.get("scoring"),
+        )
+    except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
+        return _manager_errors(exc)
+    return JSONResponse(content=season)
+
+
+@app.post("/api/ladder/seasons/{season_id}/start", response_class=JSONResponse)
+async def start_ladder_season(season_id: str):
+    """开始赛季：draft → running。"""
+    sr = _season_manager()
+    try:
+        season = sr.set_season_status(_LADDER_SEASONS_DIR, season_id, "running")
+    except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
+        return _manager_errors(exc)
+    return JSONResponse(content=season)
+
+
+@app.post("/api/ladder/seasons/{season_id}/complete", response_class=JSONResponse)
+async def complete_ladder_season(season_id: str):
+    """结束赛季：running → completed（当前 default 自动摘除 default）。"""
+    sr = _season_manager()
+    try:
+        season = sr.set_season_status(_LADDER_SEASONS_DIR, season_id, "completed")
+    except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
+        return _manager_errors(exc)
+    return JSONResponse(content=season)
+
+
+@app.post("/api/ladder/seasons/{season_id}/archive", response_class=JSONResponse)
+async def archive_ladder_season(season_id: str):
+    """归档赛季：completed → archived（running 也可直接归档，同时摘除 default）。"""
+    sr = _season_manager()
+    try:
+        season = sr.set_season_status(_LADDER_SEASONS_DIR, season_id, "archived")
+    except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
+        return _manager_errors(exc)
+    return JSONResponse(content=season)
+
+
+@app.post("/api/ladder/seasons/{season_id}/set-default", response_class=JSONResponse)
+async def set_default_ladder_season(season_id: str):
+    """设为当前赛季：只允许 running；自动摘除其他赛季的 default。"""
+    sr = _season_manager()
+    try:
+        season = sr.set_default_season(_LADDER_SEASONS_DIR, season_id)
+    except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
+        return _manager_errors(exc)
+    return JSONResponse(content=season)
+
+
+@app.get("/api/ladder/seasons/{season_id}/config", response_class=JSONResponse)
+async def get_ladder_season_config(season_id: str):
+    """读取单个赛季注册表配置（manager 详情视图）。"""
+    sr = _season_manager()
+    try:
+        season = sr.get_season(_LADDER_SEASONS_DIR, season_id)
+    except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
+        return _manager_errors(exc)
+    return JSONResponse(content=season)
 
 
 @app.get("/api/ladder/seasons/{season_id}", response_class=JSONResponse)

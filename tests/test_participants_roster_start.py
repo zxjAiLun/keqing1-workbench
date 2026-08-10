@@ -562,34 +562,24 @@ def test_launcher_names_are_canonical(pw_env, tmp_path, monkeypatch):
 
 
 def test_model_only_launchers_no_account(pw_env):
-    """Play-with-you simplification：launchers 只呼出模型，session alias 不绑账号。"""
+    """R11-B：launchers 只呼出模型（model_id），session alias 不绑账号。
+
+    model_id → resolve_bot_spec → 冻结绝对 checkpoint 路径（frozen roster），
+    launcher 实际收到同一路径；不再依赖 Participants ModelIdentity/Artifact。
+    """
     from participants import aliases
 
-    # 建两个身份/产物
-    from participants.schemas import ModelIdentityCreate
+    from gateway.api.playwithyou import PlayWithYouLauncherRequest, StartPlayWithYouRequest
 
-    registry = __import__("participants.registry", fromlist=["create_model_identity"])
-    for name in ("v3.pth", "ext.pth"):
-        ck = pw_env / "checkpoints" / name
-        ck.parent.mkdir(parents=True, exist_ok=True)
-        ck.write_text("", encoding="utf-8")
-    registry.create_model_identity(
-        ModelIdentityCreate(model_identity_id="v3", label="V3", kind="local_model", artifact_path=str(pw_env / "checkpoints" / "v3.pth"))
-    )
-    registry.create_model_identity(
-        ModelIdentityCreate(model_identity_id="ext", label="External", kind="external_agent", artifact_path=str(pw_env / "checkpoints" / "ext.pth"))
-    )
-
-    from gateway.api.playwithyou import ParticipantBindingRequest, StartPlayWithYouRequest
-
+    # 用仓库真实模型目录里的两个具名 checkpoint（70k / ext_mortal）
     req = StartPlayWithYouRequest(
         launchers=[
-            ParticipantBindingRequest(model_identity_id="v3", model_artifact_id=registry.get_model_identity("v3").artifacts[0].model_artifact_id),
-            ParticipantBindingRequest(model_identity_id="ext", model_artifact_id=registry.get_model_identity("ext").artifacts[0].model_artifact_id),
+            PlayWithYouLauncherRequest(model_id="70k"),
+            PlayWithYouLauncherRequest(model_id="ext_mortal"),
         ]
     )
     status = pw.start_playwithyou(req)
-    # session alias：NoName-1/NoName-2 → 模型事实，account_id=None
+    # session alias：NoName-1/NoName-2 存在，account_id=None（模型事实走 frozen roster）
     by_name = {
         a.external_id: a
         for a in aliases.list_aliases()
@@ -597,15 +587,38 @@ def test_model_only_launchers_no_account(pw_env):
     }
     assert set(by_name) == {"NoName-1", "NoName-2"}
     assert by_name["NoName-1"].account_id is None
-    assert by_name["NoName-1"].model_identity_id == "v3"
-    assert by_name["NoName-2"].model_identity_id == "ext"
-    # frozen roster 也在 status 里（含 checkpoint）
+    # frozen roster：model_id + 冻结的绝对 checkpoint 路径
     assert status.frozen_roster is not None
     launched = [e for e in status.frozen_roster if e.get("launcher_slot") is not None]
     assert len(launched) == 2
-    assert launched[0]["account_id"] is None
+    assert launched[0]["model_id"] == "70k"
+    assert launched[1]["model_id"] == "ext_mortal"
+    assert launched[0].get("account_id") is None
+    # pw_env fixture 把 resolve_bot_spec 冻结为 tmp_path/checkpoints/70k.pth：
+    # launcher spec 与 frozen 路径必须同源。
+    assert launched[0]["resolved_checkpoint_path"] == str((pw_env / "checkpoints" / "70k.pth").resolve())
     pw.SESSIONS.clear()
     pw._HISTORY.clear()
+
+
+def test_model_only_launchers_reject_unknown_model(pw_env):
+    """R11-B：未知 model_id 必须在 start 前拒绝（不落到 launcher）。"""
+    from gateway.api.playwithyou import PlayWithYouLauncherRequest, StartPlayWithYouRequest
+
+    from fastapi import HTTPException
+
+    req = StartPlayWithYouRequest(launchers=[PlayWithYouLauncherRequest(model_id="does-not-exist")])
+    with pytest.raises(HTTPException, match="未知模型"):
+        pw.start_playwithyou(req)
+
+
+def test_playwithyou_models_catalog():
+    """R11-B：catalog 只暴露具名 Mortal checkpoints（70k / ext_mortal），不读 Participants。"""
+    from gateway.api.playwithyou import PLAYWITHYOU_MODEL_CATALOG, list_playwithyou_models
+
+    assert {m["model_id"] for m in PLAYWITHYOU_MODEL_CATALOG} == {"70k", "ext_mortal"}
+    payload = list_playwithyou_models()
+    assert payload["models"] == PLAYWITHYOU_MODEL_CATALOG
 
 
 def test_accountless_launcher_unique_observer_keys(tmp_path, monkeypatch):

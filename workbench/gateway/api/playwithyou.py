@@ -62,6 +62,15 @@ NETWORK_TO_SPEC: Dict[str, str] = {
     "ext_mortal": "ext_mortal",
 }
 
+# R11-B：Play-with-you 运行时模型目录。只暴露具名 Mortal checkpoints
+# （70k / ext_mortal）；不读 Participants registry，后续从 keqing-data
+# authoritative 扩展时再扩充此目录。
+PLAYWITHYOU_MODEL_CATALOG: list[dict] = [
+    {"model_id": "70k", "label": "70k"},
+    {"model_id": "ext_mortal", "label": "ext_mortal"},
+]
+_PLAYWITHYOU_MODEL_IDS = {entry["model_id"] for entry in PLAYWITHYOU_MODEL_CATALOG}
+
 # Hard cap on remembered log lines per session (bound memory; GUI shows a tail).
 MAX_LOG_LINES = 4000
 PWY_LOG_DIR = data_path("logs", "playwithyou")
@@ -235,7 +244,7 @@ def _validate_roster_bindings(roster_bindings: List[dict], specs: List[str]) -> 
     for entry in roster_bindings:
         slot = entry.get("launcher_slot")
         if slot is None:
-            if not entry.get("account_id") and not entry.get("resolution_required"):
+            if not entry.get("account_id") and not entry.get("resolution_required") and not entry.get("model_id"):
                 raise ValueError("未识别的外部参与者必须设置 resolution_required=true")
             continue
         if slot in launched_slots:
@@ -244,6 +253,14 @@ def _validate_roster_bindings(roster_bindings: List[dict], specs: List[str]) -> 
         account_id = str(entry.get("account_id") or "").strip()
         identity_id = entry.get("model_identity_id")
         artifact_id = entry.get("model_artifact_id")
+        model_id = str(entry.get("model_id") or "").strip()
+        if model_id:
+            # R11-B：model-only launcher——model_id 必须在运行时模型目录中。
+            if model_id not in _PLAYWITHYOU_MODEL_IDS:
+                raise ValueError(
+                    f"未知模型: {model_id!r}（可选: {sorted(_PLAYWITHYOU_MODEL_IDS)}）"
+                )
+            continue
         if not (identity_id and artifact_id):
             if not account_id:
                 # model-only launcher 必须显式选模型
@@ -377,6 +394,18 @@ def _freeze_launcher_models(roster_bindings: List[dict], specs: List[str]) -> tu
         account_id = str(entry.get("account_id") or "").strip()
         req_identity = entry.get("model_identity_id")
         req_artifact = entry.get("model_artifact_id")
+        model_id = str(entry.get("model_id") or "").strip()
+        if model_id:
+            # R11-B：model-only launcher——checkpoint 已由 start 阶段 resolve_bot_spec
+            # 冻结为绝对路径（launcher spec 与 frozen 路径同源）。
+            frozen.append(
+                {
+                    **entry,
+                    "model_id": model_id,
+                    "resolved_checkpoint_path": str(Path(spec).resolve()),
+                }
+            )
+            continue
         if not account_id:
             # Play-with-you simplification：account-less launcher——所选 artifact 即 checkpoint
             if not (req_identity and req_artifact):
@@ -694,14 +723,22 @@ class StartPlayWithYouRequest(BaseModel):
     # R10-E：预期四人阵容（与 launcher 数量分离）。提供时采用通用捕获流程，
     # 不要求恰好 1 人类 + 3 bot。
     roster: List["ParticipantBindingRequest"] = []
-    # Play-with-you simplification：只呼出模型（1-4 个），不预绑账号/坐席。
-    # 提供时优先于 roster；每个 entry 只需 model_identity_id + model_artifact_id。
-    launchers: List["ParticipantBindingRequest"] = []
+    # R11-B：Play-with-you 只呼出模型（1-4 个）。model_id 来自运行时模型目录
+    # （GET /models），不预绑账号/坐席；后台按 model_id → resolve_bot_spec 冻结
+    # 绝对 checkpoint 路径。提供时优先于 roster/quantity。
+    launchers: List["PlayWithYouLauncherRequest"] = []
+
+
+class PlayWithYouLauncherRequest(BaseModel):
+    # R11-B：运行时模型目录中的 model_id（如 "70k" / "ext_mortal"）。
+    # 独立于 ParticipantBindingRequest——R10 legacy 的 identity/artifact 语义
+    # 不混入 model-only 呼出路径。
+    model_id: str
 
 
 class ParticipantBindingRequest(BaseModel):
-    # Play-with-you simplification：account 可留空 = 只呼出模型（不预绑账号），
-    # 账号/坐席由赛后 Tenhou intake 决定。
+    # R10 legacy roster/account-bound：参与者的账号/身份/产物预绑定。
+    # R11-B 的 model-only 呼出请用 PlayWithYouLauncherRequest，不要在此混入 model_id。
     account_id: Optional[str] = None
     controller_type: Optional[str] = None
     model_identity_id: Optional[str] = None
@@ -746,6 +783,19 @@ class PlayWithYouStatus(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+@router.get("/models", response_model=dict)
+def list_playwithyou_models() -> dict:
+    """R11-B：Play-with-you 运行时模型目录。
+
+    只暴露具名 Mortal checkpoints（70k / ext_mortal），不读 Participants
+    ModelIdentity/Artifact。前端据此渲染"模型下拉"。
+    """
+    return {
+        "schema": "keqing.playwithyou.models.v1",
+        "models": PLAYWITHYOU_MODEL_CATALOG,
+    }
+
+
 @router.post("/start", response_model=PlayWithYouStatus)
 def start_playwithyou(req: StartPlayWithYouRequest) -> PlayWithYouStatus:
     if not LAUNCHER.exists():
@@ -788,23 +838,35 @@ def start_playwithyou(req: StartPlayWithYouRequest) -> PlayWithYouStatus:
     # Resolve launcher specs. R10-E roster 模式：从预期四人阵容的 launcher_slot 推导，
     # 与 quantity 解耦（Nick human_ui + 2 本地 bot + 外部 Mortal → quantity=2 合法）。
     roster = list(req.roster)
-    if req.launchers:
-        # Play-with-you simplification：launchers（1-4 个 model-only）优先于 roster。
-        if not (1 <= len(req.launchers) <= 4):
-            raise HTTPException(status_code=400, detail="一次呼出 1-4 个模型")
-        roster = [
-            ParticipantBindingRequest(
-                model_identity_id=ln.model_identity_id,
-                model_artifact_id=ln.model_artifact_id,
-                launcher_slot=index,
-            )
-            for index, ln in enumerate(req.launchers)
-        ]
+    launchers_mode = bool(req.launchers)
     roster_bindings: List[dict] = []
     launcher_specs: List[str] = []
     try:
-        if roster:
-            if len(roster) != 4 and not req.launchers:
+        if req.launchers:
+            # R11-B：Play-with-you 只呼出模型（1-4 个）。model_id → resolve_bot_spec
+            # → 绝对 checkpoint 路径，直接作为 launcher spec（冻结 A、运行 B 不可能发生）。
+            if not (1 <= len(req.launchers) <= 4):
+                raise ValueError("一次呼出 1-4 个模型")
+            from inference.bot_registry import resolve_bot_spec
+
+            for index, ln in enumerate(req.launchers):
+                model_id = str(ln.model_id or "").strip()
+                if model_id not in _PLAYWITHYOU_MODEL_IDS:
+                    raise ValueError(
+                        f"未知模型: {model_id!r}（可选: {sorted(_PLAYWITHYOU_MODEL_IDS)}）"
+                    )
+                _kind, resolved = resolve_bot_spec(model_id, PROJECT_ROOT)
+                if resolved is None:
+                    raise ValueError(f"模型 {model_id} 无法解析 checkpoint")
+                roster_bindings.append(
+                    {
+                        "model_id": model_id,
+                        "launcher_slot": index,
+                    }
+                )
+                launcher_specs.append(str(resolved))
+        elif roster:
+            if len(roster) != 4:
                 raise ValueError("roster 必须恰好 4 位预期参与者")
             slot_specs: List[tuple[int, str]] = []
             for entry in roster:
@@ -823,7 +885,7 @@ def start_playwithyou(req: StartPlayWithYouRequest) -> PlayWithYouStatus:
                             entry.model_artifact_id,
                         )
                     else:
-                        # Play-with-you simplification：只呼出模型，不预绑账号
+                        # account-less R10：只呼出模型，不预绑账号
                         spec = _artifact_spec_for_launcher(
                             entry.model_identity_id, entry.model_artifact_id
                         )
@@ -866,7 +928,7 @@ def start_playwithyou(req: StartPlayWithYouRequest) -> PlayWithYouStatus:
 
     # R9-3 正式天梯捕获 / R10-E 通用 roster 捕获：启动前完成校验并冻结 binding。
     capture_dir: Optional[Path] = None
-    if roster:
+    if roster or launchers_mode:
         # P2：roster 与旧正式天梯绑定互斥，不能静默忽略 season。
         if req.ladder_capture is not None and req.ladder_capture.enabled:
             raise HTTPException(
@@ -1040,8 +1102,8 @@ def start_playwithyou(req: StartPlayWithYouRequest) -> PlayWithYouStatus:
     if req.ladder_capture is not None and req.ladder_capture.enabled:
         session.capture_dir = capture_dir
         session.binding = binding
-    if roster:
-        # P2：roster 模式把冻结阵容放进 session，status 可回传（UI 不再猜本地草稿）
+    if roster or launchers_mode:
+        # P2：roster/launchers 模式把冻结阵容放进 session，status 可回传（UI 不再猜本地草稿）
         session.frozen_roster = roster_bindings
     with _LOCK:
         SESSIONS[session_id] = session

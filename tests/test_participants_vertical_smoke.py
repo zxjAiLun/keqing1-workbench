@@ -192,7 +192,7 @@ def test_r10_vertical_smoke(env):
     assert match.external_match_id == LOG_ID
     assert match.data_completeness == "full_replay"
     assert len(match.seats) == 4
-    with pytest.raises(ValueError, match="已导入"):
+    with pytest.raises(intake.DuplicateMatchError, match="已经导入"):
         intake.resolve_and_create_match(log_id=LOG_ID, resolutions=resolutions, session_id=session_id)
     _ad = intake.artifact_dir(LOG_ID)
 

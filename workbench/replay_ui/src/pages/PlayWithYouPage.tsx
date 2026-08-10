@@ -9,13 +9,13 @@ import {
   startPlayWithYou,
   stopPlayWithYou,
   getPlayWithYouStatus,
+  listPlayWithYouModels,
   type SpeedId,
   type DeviceId,
   type BotInfo,
   type PlayWithYouStatus,
+  type RuntimeModelInfo,
 } from "../api/playwithyouApi";
-import { participantsApi } from "../api/participantsApi";
-import type { ModelIdentity } from "../types/participants";
 import { useNavigate } from "react-router-dom";
 import { routes } from "../routes";
 
@@ -81,9 +81,9 @@ function Segmented<T extends string>({
   );
 }
 
+// R11-B：每行只选一个模型（model_id 来自运行时模型目录）
 type LauncherRow = {
-  model_identity_id: string;
-  model_artifact_id: string;
+  model_id: string;
 };
 
 export function PlayWithYouPage() {
@@ -96,11 +96,11 @@ export function PlayWithYouPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Play-with-you simplification：只选择要呼出的模型（1-4 个）。
+  // R11-B：只选择要呼出的模型（1-4 个）。
   const [launchers, setLaunchers] = useState<LauncherRow[]>([
-    { model_identity_id: "", model_artifact_id: "" },
+    { model_id: "" },
   ]);
-  const [identities, setIdentities] = useState<ModelIdentity[]>([]);
+  const [models, setModels] = useState<RuntimeModelInfo[]>([]);
 
   const logRef = useRef<HTMLDivElement | null>(null);
   const pollingRef = useRef<number | null>(null);
@@ -135,7 +135,7 @@ export function PlayWithYouPage() {
   };
 
   const addLauncher = () => {
-    setLaunchers((prev) => [...prev, { model_identity_id: "", model_artifact_id: "" }]);
+    setLaunchers((prev) => [...prev, { model_id: "" }]);
   };
 
   const removeLauncher = (index: number) => {
@@ -146,9 +146,7 @@ export function PlayWithYouPage() {
     setLoading(true);
     setError(null);
     try {
-      const filled = launchers.filter(
-        (l) => l.model_identity_id && l.model_artifact_id,
-      );
+      const filled = launchers.filter((l) => l.model_id);
       if (filled.length === 0) {
         throw new Error("请至少选择一个要呼出的模型");
       }
@@ -157,8 +155,7 @@ export function PlayWithYouPage() {
         speed,
         device,
         launchers: filled.map((l) => ({
-          model_identity_id: l.model_identity_id,
-          model_artifact_id: l.model_artifact_id,
+          model_id: l.model_id,
         })),
       });
       setStatus(s);
@@ -187,9 +184,8 @@ export function PlayWithYouPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    participantsApi
-      .listModels(controller.signal)
-      .then((resp) => setIdentities(resp.identities))
+    listPlayWithYouModels()
+      .then((resp) => setModels(resp.models))
       .catch(() => {});
     return () => controller.abort();
   }, []);
@@ -244,7 +240,7 @@ export function PlayWithYouPage() {
             className="btn-primary"
             style={{ height: 34, padding: "0 16px", fontSize: 13, background: loading ? "var(--text-muted)" : ACCENT }}
           >
-            {loading ? "呼出中..." : `呼出 ${launchers.filter((l) => l.model_identity_id && l.model_artifact_id).length} 个 Bot`}
+            {loading ? "呼出中..." : `呼出 ${launchers.filter((l) => l.model_id).length} 个 Bot`}
           </button>
         )}
       </div>
@@ -278,73 +274,49 @@ export function PlayWithYouPage() {
           </div>
         </div>
 
-        {/* 呼出模型列表 */}
+        {/* R11-B：呼出模型列表（一个模型下拉；账号/坐席由赛后导入决定） */}
         <label style={labelStyle}>呼出模型（实际坐席由天凤牌谱决定，不是这里的顺序）</label>
         <div style={{ display: "grid", gap: 8 }}>
-          {launchers.map((row, index) => {
-            const relevantIdentities = identities;
-            const chosenIdentity = relevantIdentities.find(
-              (m) => m.model_identity_id === row.model_identity_id,
-            );
-            const artifacts = chosenIdentity?.artifacts ?? [];
-            return (
-              <div
-                key={index}
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                  border: "1px solid var(--border)",
-                  borderRadius: 8,
-                  padding: "8px 10px",
-                  background: "var(--surface-subtle)",
-                }}
+          {launchers.map((row, index) => (
+            <div
+              key={index}
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                flexWrap: "wrap",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                padding: "8px 10px",
+                background: "var(--surface-subtle)",
+              }}
+            >
+              <span style={{ width: 24, fontWeight: 800, color: "var(--text-muted)" }}>#{index + 1}</span>
+              <select
+                value={row.model_id}
+                disabled={isRunning}
+                onChange={(e) => updateLauncher(index, { model_id: e.target.value })}
+                style={{ ...inputStyle, flex: 1, minWidth: 200 }}
               >
-                <span style={{ width: 24, fontWeight: 800, color: "var(--text-muted)" }}>#{index + 1}</span>
-                <select
-                  value={row.model_identity_id}
-                  disabled={isRunning}
-                  onChange={(e) =>
-                    updateLauncher(index, { model_identity_id: e.target.value, model_artifact_id: "" })
-                  }
-                  style={{ ...inputStyle, flex: 1, minWidth: 150 }}
-                >
-                  <option value="">选择模型身份…</option>
-                  {relevantIdentities.map((m) => (
-                    <option key={m.model_identity_id} value={m.model_identity_id}>
-                      {m.label}{m.kind === "external_agent" ? "（外部）" : ""}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={row.model_artifact_id}
-                  disabled={isRunning || artifacts.length === 0}
-                  onChange={(e) => updateLauncher(index, { model_artifact_id: e.target.value })}
-                  style={{ ...inputStyle, flex: 1, minWidth: 150 }}
-                >
-                  <option value="">
-                    {artifacts.length === 0 ? "该身份无产物" : "选择模型产物…"}
+                <option value="">选择模型…</option>
+                {models.map((m) => (
+                  <option key={m.model_id} value={m.model_id}>
+                    {m.label}
                   </option>
-                  {artifacts.map((art) => (
-                    <option key={art.model_artifact_id} value={art.model_artifact_id}>
-                      {art.label}{art.is_current ? "（当前）" : ""} · {shortSpec(art.artifact_path ?? "")}
-                    </option>
-                  ))}
-                </select>
-                {launchers.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeLauncher(index)}
-                    disabled={isRunning}
-                    style={ghostSmallBtn}
-                  >
-                    移除
-                  </button>
-                )}
-              </div>
-            );
-          })}
+                ))}
+              </select>
+              {launchers.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => removeLauncher(index)}
+                  disabled={isRunning}
+                  style={ghostSmallBtn}
+                >
+                  移除
+                </button>
+              )}
+            </div>
+          ))}
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
           {launchers.length < 4 && (
@@ -472,28 +444,28 @@ export function PlayWithYouPage() {
               {(status.frozen_roster ?? []).length > 0
                 ? status.frozen_roster!.map((entry, index) => {
                     if (entry.launcher_slot === null || entry.launcher_slot === undefined) return null;
-                    const identity = identities.find((m) => m.model_identity_id === entry.model_identity_id);
-                    const artifact = identity?.artifacts.find((a) => a.model_artifact_id === entry.model_artifact_id);
+                    const model = models.find((m) => m.model_id === entry.model_id);
                     return (
                       <div key={index} style={{ padding: "2px 0" }}>
                         <b>{entry.expected_raw_name}</b>
-                        {identity && (
+                        {entry.model_id && (
                           <span style={{ color: "var(--text-muted)" }}>
-                            {" "}→ {identity.label}
-                            {artifact ? ` / ${artifact.label}` : ""}
+                            {" "}→ {model?.label ?? entry.model_id}
                           </span>
                         )}
                       </div>
                     );
                   })
                 : launchers.map((row, index) => {
-                    const identity = identities.find((m) => m.model_identity_id === row.model_identity_id);
+                    const model = models.find((m) => m.model_id === row.model_id);
                     return (
                       <div key={index} style={{ padding: "2px 0" }}>
-                        {index === 0 && launchers.filter((l) => l.model_identity_id && l.model_artifact_id).length === 1
+                        {index === 0 && launchers.filter((l) => l.model_id).length === 1
                           ? "NoName"
                           : `NoName-${index + 1}`}
-                        {identity && <span style={{ color: "var(--text-muted)" }}> → {identity.label}</span>}
+                        {row.model_id && (
+                          <span style={{ color: "var(--text-muted)" }}> → {model?.label ?? row.model_id}</span>
+                        )}
                       </div>
                     );
                   })}

@@ -18,7 +18,7 @@ export interface LadderCaptureRequest {
 }
 
 export interface ParticipantBindingRequest {
-  // Play-with-you simplification：account/controller 可选（launchers 只带模型）
+  // R10 legacy roster/account-bound：参与者预绑定（R11-B 的 model-only 呼出不走这里）
   account_id?: string | null;
   controller_type?: string | null;
   model_identity_id?: string | null;
@@ -26,6 +26,16 @@ export interface ParticipantBindingRequest {
   launcher_slot?: number | null; // 本系统实际呼出的 slot；null = 不启动
   expected_raw_name?: string | null; // NoName-1 等
   resolution_required?: boolean;
+}
+
+// R11-B：Play-with-you 只呼出模型（model_id 来自运行时模型目录）
+export interface PlayWithYouLauncherRequest {
+  model_id: string;
+}
+
+export interface RuntimeModelInfo {
+  model_id: string;
+  label: string;
 }
 
 export interface StartPlayWithYouRequest {
@@ -41,7 +51,7 @@ export interface StartPlayWithYouRequest {
   custom_paths?: Record<number, string>; // slot -> absolute .pth path
   ladder_capture?: LadderCaptureRequest;
   roster?: ParticipantBindingRequest[]; // R10-E 通用四人阵容（唯一启动模式）
-  launchers?: ParticipantBindingRequest[]; // Play-with-you simplification：只呼出模型（1-4 个），不预绑账号
+  launchers?: PlayWithYouLauncherRequest[]; // R11-B：只呼出模型（1-4 个），不预绑账号
 }
 
 export interface BotInfo {
@@ -67,15 +77,29 @@ export interface PlayWithYouStatus {
   log_tail: string[];
   started_at: number | null;
   ladder_capture?: LadderCaptureView | null;
-  // R10 UX Repair 2：roster 模式冻结阵容（后端为名字真相源）
+  // R11-B：model-only 冻结阵容（model_id + resolved_checkpoint_path；无账号绑定）
   frozen_roster?: Array<{
-    account_id: string;
+    account_id?: string | null;
+    model_id?: string | null;
+    resolved_checkpoint_path?: string | null;
     controller_type?: string | null;
     model_identity_id?: string | null;
     model_artifact_id?: string | null;
     launcher_slot?: number | null;
     expected_raw_name?: string | null;
   }> | null;
+}
+
+// R11-B：运行时模型目录
+export interface PlayWithYouModelsResponse {
+  schema: string;
+  models: RuntimeModelInfo[];
+}
+
+export async function listPlayWithYouModels(): Promise<PlayWithYouModelsResponse> {
+  const res = await fetchWithTimeout(`${BASE}/models`);
+  if (!res.ok) throw new Error(`models ${res.statusText}`);
+  return res.json();
 }
 
 export interface LadderCaptureEntry {

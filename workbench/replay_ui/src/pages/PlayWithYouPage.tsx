@@ -382,50 +382,46 @@ export function PlayWithYouPage() {
             </div>
           )}
 
-          {/* P1-C：session_id 展示 + 赛后导入链接（session alias 依赖它解析 NoName→模型） */}
-          {status.session_id && (
+          {/* R11-C：自动赛后导入引导（session_id 只是内部关联键，不再对用户展示）。
+              有 awaiting_import 链接 = 真实对局完成；否则仅在会话已结束时给手工粘贴入口。 */}
+          {status.session_id && (status.tenhou_log_url || !status.running) && (
             <div
               style={{
                 marginBottom: 10,
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                flexWrap: "wrap",
-                fontSize: 12,
-                padding: "8px 10px",
+                padding: "10px 12px",
                 borderRadius: 6,
-                border: "1px solid rgba(142,68,173,0.3)",
-                background: "rgba(142,68,173,0.05)",
+                border: "1px solid rgba(39,174,96,0.4)",
+                background: "rgba(39,174,96,0.06)",
                 color: "var(--text-secondary)",
               }}
             >
-              <span>
-                Session: <b style={{ color: "var(--text-primary)" }}>{status.session_id}</b>
-              </span>
-              <button
-                type="button"
-                onClick={() => void navigator.clipboard?.writeText(status.session_id ?? "")}
-                style={ghostSmallBtn}
-              >
-                复制
-              </button>
-              <span style={{ color: "var(--text-muted)" }}>对局结束后用它自动识别 NoName-N → 模型</span>
-              <button
-                type="button"
-                onClick={() => {
-                  const params = new URLSearchParams();
-                  if (status.session_id) params.set("session_id", status.session_id);
-                  navigate(`${routes.matchImport}?${params.toString()}`);
-                }}
-                style={{ ...ghostSmallBtn, borderColor: ACCENT, color: ACCENT, fontWeight: 700 }}
-              >
-                赛后导入 →
-              </button>
+              <div style={{ fontWeight: 800, color: "var(--text-primary)", fontSize: 13, marginBottom: 4 }}>
+                {status.tenhou_log_url ? "本局已完成" : "本局已结束"}
+              </div>
+              <div style={{ fontSize: 12, marginBottom: 8 }}>
+                {status.tenhou_log_url
+                  ? "已自动获取本局牌谱链接，确认结果并导入账号/正式计分。"
+                  : "未自动拿到牌谱链接（可能天凤未输出 log），去导入页粘贴链接即可；本局会话信息已自动带上。"}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const params = new URLSearchParams();
+                    if (status.tenhou_log_url) params.set("url", status.tenhou_log_url);
+                    if (status.session_id) params.set("session_id", status.session_id);
+                    navigate(`${routes.matchImport}?${params.toString()}`);
+                  }}
+                  style={{ ...ghostSmallBtn, borderColor: "#27ae60", color: "#27ae60", fontWeight: 700 }}
+                >
+                  {status.tenhou_log_url ? "确认结果 → 导入牌谱" : "打开导入页（粘贴链接）"}
+                </button>
+              </div>
             </div>
           )}
 
           {/* 本次启动的模型（不是账号事实；账号在赛后导入决定） */}
-          {isRunning && (
+          {status.frozen_roster && status.frozen_roster.length > 0 && (
             <div
               style={{
                 marginTop: 4,

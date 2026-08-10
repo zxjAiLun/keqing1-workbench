@@ -776,6 +776,9 @@ class PlayWithYouStatus(BaseModel):
     ladder_capture: Optional[LadderCaptureView] = None
     # P2（UX Repair 2）：roster 模式冻结阵容（account/controller/model/expected_name）
     frozen_roster: Optional[List[Dict[str, Any]]] = None
+    # R11-C：对局结束后该 session 的 awaiting_import capture 的 canonical 天凤链接。
+    # 前端据此自动引导"确认结果 → 导入"，不再要求用户手动复制 session_id。
+    tenhou_log_url: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1125,21 +1128,36 @@ def start_playwithyou(req: StartPlayWithYouRequest) -> PlayWithYouStatus:
     )
 
 
+def _session_log_url(session_id: str) -> Optional[str]:
+    """R11-C：返回该 session 的 awaiting_import capture 的 canonical 天凤链接。
+
+    对局结束（任一 observer 捕获到 end_game + log_id）即进入 awaiting_import；
+    没拿到链接时返回 None，前端引导用户手工粘贴。
+    """
+    for entry in _discover_captures():
+        if entry.get("session_id") == session_id and entry.get("state") == "awaiting_import":
+            return entry.get("tenhou_log_url")
+    return None
+
+
 @router.get("/status", response_model=PlayWithYouStatus)
 def playwithyou_status() -> PlayWithYouStatus:
     session = _current_session()
-    if session is not None and session.running:
+    if session is not None:
+        # R11-C：无论运行中/已结束都回传 session_id + 冻结阵容 + 赛后链接，
+        # 前端据此自动进入导入引导（session_id 只是内部关联键）。
         return PlayWithYouStatus(
             session_id=session.session_id,
-            running=True,
+            running=session.running,
             lobby_id=session.lobby_id,
             speed=session.speed,
             device=session.device,
-            bots=[{"name": n, "spec": s} for n, s in zip(session.names, session.specs)],
+            bots=[{"name": n, "spec": s} for n, s in zip(session.names, session.specs)] if session.running else [],
             log_tail=session.tail(200),
             started_at=session.started_at,
             ladder_capture=_binding_view(session),
             frozen_roster=session.frozen_roster,
+            tenhou_log_url=_session_log_url(session.session_id),
         )
     # No in-memory session, but a launcher may still be alive as an orphan
     # (e.g. the backend process was restarted and lost its session record).

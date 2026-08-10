@@ -8,6 +8,7 @@ These guard the fix that makes Stop reliable even after a backend restart:
 * ``/status`` surfaces an orphaned launcher so the GUI keeps showing the Stop
   button even when the backend lost its session record.
 """
+import json
 import sys
 from pathlib import Path
 from unittest import mock
@@ -108,6 +109,89 @@ def test_status_surfaces_orphan_launcher(monkeypatch):
 
     assert status.running is True
     assert "遗留" in status.log_tail[0]
+
+
+def test_status_reports_finished_session_with_log_url(monkeypatch):
+    """R11-C：对局结束后 /status 仍回传 session_id + tenhou_log_url（awaiting_import），
+    前端据此自动进入导入引导；session_id 只作内部关联键，不再要求用户复制。"""
+    import time
+
+    class FakeProc:
+        stdout: list[str] = []
+
+        def poll(self):
+            return 0  # launcher 已退出 → 对局结束
+
+    session = pw.PWYSession(
+        session_id="sess-r11c",
+        proc=FakeProc(),
+        command=["python", "launch_tenhou_bots.py"],
+        lobby_id="2147",
+        specs=["70k"],
+        names=["NoName"],
+        speed="normal",
+        device="cpu",
+        started_at=time.time(),
+    )
+    session.frozen_roster = [
+        {
+            "model_id": "70k",
+            "launcher_slot": 0,
+            "expected_raw_name": "NoName",
+            "resolved_checkpoint_path": "E:\\checkpoints\\70k.pth",
+        }
+    ]
+    monkeypatch.setattr(pw, "_current_session", lambda: session)
+    monkeypatch.setattr(
+        pw,
+        "_session_log_url",
+        lambda sid: "https://tenhou.net/3/?log=20260810gm-0001-2147-abc12345",
+    )
+
+    status = pw.playwithyou_status()
+
+    assert status.running is False
+    assert status.session_id == "sess-r11c"
+    assert status.tenhou_log_url == "https://tenhou.net/3/?log=20260810gm-0001-2147-abc12345"
+    assert status.frozen_roster is not None
+    assert status.frozen_roster[0]["model_id"] == "70k"
+
+
+def test_session_log_url_only_returns_awaiting_import(monkeypatch, tmp_path):
+    """R11-C：_session_log_url 只认 awaiting_import 状态（pending 目录）；其他状态不返回。"""
+    from gateway.playwithyou_capture import capture_dir_for_session
+
+    root = tmp_path / "captures"
+    capture_dir = capture_dir_for_session(root, "sess-1")
+    pending = capture_dir / "pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    (pending / "c1.json").write_text(
+        json.dumps(
+            {
+                "capture_id": "c1",
+                "session_id": "sess-1",
+                "state": "awaiting_import",
+                "tenhou_log_url": "https://tenhou.net/3/?log=abc",
+            }
+        ),
+        encoding="utf-8",
+    )
+    # 非 awaiting_import 状态（如 pending_confirmation）不提供链接
+    (pending / "c2.json").write_text(
+        json.dumps(
+            {
+                "capture_id": "c2",
+                "session_id": "sess-1",
+                "state": "pending_confirmation",
+                "tenhou_log_url": "https://tenhou.net/3/?log=def",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pw, "_capture_root", lambda: root / "captures" / "playwithyou")
+
+    assert pw._session_log_url("sess-1") == "https://tenhou.net/3/?log=abc"
+    assert pw._session_log_url("sess-other") is None
 
 
 def test_start_rejects_owned_orphan_without_killing_it(monkeypatch):

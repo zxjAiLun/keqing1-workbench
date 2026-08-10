@@ -14,6 +14,7 @@ export const routes = {
   ladderAccount: (accountId: string) => `/ladder/accounts/${encodeURIComponent(accountId)}`,
   ladderModel: (modelId: string) => `/ladder/models/${encodeURIComponent(modelId)}`,
   tenhou: '/tenhou',
+  seasonManager: '/seasons',
   diagnosticsCasebook: '/diagnostics/casebook',
   participants: '/participants',
   matches: '/matches',

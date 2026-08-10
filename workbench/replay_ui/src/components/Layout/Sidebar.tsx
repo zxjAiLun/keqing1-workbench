@@ -41,7 +41,10 @@ const NAV_SECTIONS: Array<{ label: string; items: NavItem[] }> = [
   },
   {
     label: '竞技',
-    items: [{ path: routes.ladder, icon: ListTree, label: '天梯榜' }],
+    items: [
+      { path: routes.ladder, icon: ListTree, label: '天梯榜' },
+      { path: routes.seasonManager, icon: Settings, label: '赛季管理' },
+    ],
   },
   {
     label: '在线',

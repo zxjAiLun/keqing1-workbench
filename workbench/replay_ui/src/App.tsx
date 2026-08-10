@@ -14,6 +14,7 @@ import { MortalDecisionReviewPage } from './pages/MortalDecisionReviewPage';
 import { LadderPage } from './pages/LadderPage';
 import { LadderAccountPage } from './pages/LadderAccountPage';
 import { LadderModelPage } from './pages/LadderModelPage';
+import { SeasonManagerPage } from './pages/SeasonManagerPage';
 import { ParticipantsPage } from './pages/ParticipantsPage';
 import { MatchesPage } from './pages/MatchesPage';
 import { MatchEntryPage } from './pages/MatchEntryPage';
@@ -63,6 +64,7 @@ export default function App() {
             <Route path={routes.tenhou} element={<PlayWithYouPage />} />
             <Route path={routes.diagnosticsCasebook} element={<SelfplayAnomaliesPage />} />
             <Route path={routes.ladder} element={<LadderPage />} />
+            <Route path={routes.seasonManager} element={<SeasonManagerPage />} />
             <Route path={LADDER_ACCOUNT_PATTERN} element={<LadderAccountPage />} />
             <Route path={LADDER_MODEL_PATTERN} element={<LadderModelPage />} />
             <Route path={routes.participants} element={<ParticipantsPage />} />

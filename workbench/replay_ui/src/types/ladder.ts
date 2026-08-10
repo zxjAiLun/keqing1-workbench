@@ -13,6 +13,25 @@ export interface LadderSeasonReadiness {
 
 export type LadderDefaultSource = 'registry' | 'single_season' | null;
 
+export interface LadderSeasonConfig {
+  schema: string;
+  season_id: string;
+  title?: string;
+  status: 'draft' | 'running' | 'completed' | 'archived';
+  default?: boolean;
+  report_dir?: string;
+  scoring?: Record<string, unknown>;
+  ingest?: Record<string, unknown>;
+  models: Array<{
+    model_id: string;
+    model_identity_id?: string | null;
+    checkpoint?: string | null;
+    accounts: Array<{ account_id: string; display_name?: string | null }>;
+  }>;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface LadderSeasonsResponse {
   schema: string;
   default_season_id: string | null;

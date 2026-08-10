@@ -4,17 +4,20 @@ import type {
   LadderAccountDetail,
   LadderModelDetail,
   LadderResponse,
+  LadderSeasonConfig,
   LadderSeasonsResponse,
 } from '../types/ladder';
 
 const API_BASE = '/api';
 
-async function api<T>(path: string, signal?: AbortSignal): Promise<T> {
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     cache: 'no-store',
-    signal,
+    ...init,
     headers: {
       Accept: 'application/json',
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...init?.headers,
     },
   });
   if (!res.ok) {
@@ -27,17 +30,41 @@ async function api<T>(path: string, signal?: AbortSignal): Promise<T> {
 export const ladderApi = {
   /** 已注册的评测赛季（含默认赛季与每赛季 readiness） */
   listSeasons: (signal?: AbortSignal): Promise<LadderSeasonsResponse> =>
-    api('/ladder/seasons', signal),
+    api('/ladder/seasons', { signal }),
 
   /** 赛季天梯榜：账号排名 + 模型展示性聚合 */
   getLadder: (seasonId: string, sort = 'pt', signal?: AbortSignal): Promise<LadderResponse> =>
-    api(`/ladder/seasons/${encodeURIComponent(seasonId)}?sort=${encodeURIComponent(sort)}`, signal),
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}?sort=${encodeURIComponent(sort)}`, { signal }),
 
   /** 账号详情：聚合指标 + 曲线 + 最近对局 */
   getAccount: (seasonId: string, accountId: string, recentGames = 50, signal?: AbortSignal): Promise<LadderAccountDetail> =>
-    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/accounts/${encodeURIComponent(accountId)}?recent_games=${recentGames}`, signal),
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/accounts/${encodeURIComponent(accountId)}?recent_games=${recentGames}`, { signal }),
 
   /** 模型详情：账号横向对比 + 可选联赛聚合 */
   getModel: (seasonId: string, modelId: string, signal?: AbortSignal): Promise<LadderModelDetail> =>
-    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/models/${encodeURIComponent(modelId)}`, signal),
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/models/${encodeURIComponent(modelId)}`, { signal }),
+
+  // ---- R11-E Season Manager（canonical runtime registry 写侧） ----
+  getSeasonConfig: (seasonId: string): Promise<LadderSeasonConfig> =>
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/config`),
+  createSeason: (payload: { season_id: string; title?: string }): Promise<LadderSeasonConfig> =>
+    api('/ladder/seasons', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  startSeason: (seasonId: string): Promise<LadderSeasonConfig> =>
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/start`, { method: 'POST' }),
+  completeSeason: (seasonId: string): Promise<LadderSeasonConfig> =>
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/complete`, { method: 'POST' }),
+  archiveSeason: (seasonId: string): Promise<LadderSeasonConfig> =>
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/archive`, { method: 'POST' }),
+  setDefaultSeason: (seasonId: string): Promise<LadderSeasonConfig> =>
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/set-default`, { method: 'POST' }),
+  setSeasonEnrollment: (seasonId: string, accountIds: string[]): Promise<LadderSeasonConfig> =>
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/enrollment`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_ids: accountIds }),
+    }),
 };

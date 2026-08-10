@@ -115,6 +115,7 @@ def create_account_locked(payload: AccountCreate) -> Account:
         display_name=payload.display_name,
         account_type=payload.account_type,
         default_controller=payload.default_controller or _default_controller_for(payload.account_type),
+        model_identity_id=payload.model_identity_id,
         avatar=payload.avatar,
         note=payload.note,
         migrated_from_replay=payload.migrated_from_replay,
@@ -152,13 +153,15 @@ def update_account(account_id: str, payload: AccountUpdate) -> Account:
             if raw.get("account_id") != account_id:
                 continue
             current = Account.model_validate(raw)
+            raw_fields = payload.model_dump(exclude_unset=True)
             updated = current.model_copy(
                 update={
                     "display_name": payload.display_name if payload.display_name is not None else current.display_name,
                     "enabled": payload.enabled if payload.enabled is not None else current.enabled,
                     "default_controller": payload.default_controller if payload.default_controller is not None else current.default_controller,
-                    "avatar": payload.avatar if "avatar" in payload.model_dump(exclude_unset=True) else current.avatar,
-                    "note": payload.note if "note" in payload.model_dump(exclude_unset=True) else current.note,
+                    "model_identity_id": raw_fields.get("model_identity_id", current.model_identity_id),
+                    "avatar": payload.avatar if "avatar" in raw_fields else current.avatar,
+                    "note": payload.note if "note" in raw_fields else current.note,
                     "updated_at": now_iso(),
                 }
             )
@@ -345,14 +348,25 @@ def update_model_identity(identity_id: str, payload: ModelIdentityUpdate) -> Mod
 
 
 def identity_belongs_to_account(identity_id: str | None, account_id: str) -> bool:
+    """R11-D 语义：Account ↔ ModelIdentity 严格双向兼容。
+
+    - ``identity_id=None``：模型证据缺省 → 不约束（普通人工导入不受影响）。
+    - account-scoped identity（``account_id`` 非空）：只兼容该账号。
+    - global identity（``account_id=None``）：**不再是 wildcard**——兼容性由
+      Account 的 ``model_identity_id`` 反向绑定决定
+      （``account.model_identity_id == identity.model_identity_id``）。
+    """
     if identity_id is None:
         return True
     identity = get_model_identity(identity_id)
     if identity is None:
         return False
-    # account_id=None 表示全局模型身份（如 70k@01..04 共用 "70k"），任意账号可绑定；
-    # 否则身份只允许绑定到指定账号。
-    return identity.account_id is None or identity.account_id == account_id
+    if identity.account_id is not None:
+        return identity.account_id == account_id
+    account = get_account(account_id)
+    if account is None:
+        return False
+    return account.model_identity_id == identity.model_identity_id
 
 
 def identity_references_account(account_id: str) -> bool:

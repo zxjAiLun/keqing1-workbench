@@ -40,6 +40,10 @@ class Account(BaseModel):
     account_type: AccountType
     enabled: bool = True
     default_controller: ControllerType
+    # R11-D：该 AI Account 由哪个逻辑模型驱动（真人/无模型为 null）。
+    # 多个 Account 可引用同一个 ModelIdentity；global identity（account_id=None）
+    # 不再视为 wildcard——兼容性由 model_identity_id 反向绑定决定。
+    model_identity_id: str | None = None
     avatar: str | None = None
     note: str | None = None
     migrated_from_replay: bool = False
@@ -52,6 +56,7 @@ class AccountCreate(BaseModel):
     display_name: str = Field(min_length=1)
     account_type: AccountType
     default_controller: ControllerType | None = None  # 缺省按 account_type 推导
+    model_identity_id: str | None = None
     avatar: str | None = None
     note: str | None = None
     migrated_from_replay: bool = False
@@ -61,6 +66,7 @@ class AccountUpdate(BaseModel):
     display_name: str | None = None
     enabled: bool | None = None
     default_controller: ControllerType | None = None
+    model_identity_id: str | None = None
     avatar: str | None = None
     note: str | None = None
 

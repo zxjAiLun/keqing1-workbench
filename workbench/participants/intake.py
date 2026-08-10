@@ -212,6 +212,20 @@ def _game_length_from_hands(hands: list[dict]) -> str:
 # Preview（不落账）
 # ---------------------------------------------------------------------------
 
+def _eligible_account_ids(identity_id: str | None) -> list[str] | None:
+    """R11-D：模型身份下可绑定的候选账号（enabled + 严格双向兼容）。
+
+    返回 None 表示无冻结模型约束；空列表表示模型存在但当前没有可绑定账号。
+    """
+    if identity_id is None:
+        return None
+    return [
+        a.account_id
+        for a in registry.list_accounts(enabled=True)
+        if registry.identity_belongs_to_account(identity_id, a.account_id)
+    ]
+
+
 def _auto_account_id(candidates: list, registry) -> str | None:
     """候选唯一且 confirmed → 自动账号。
 
@@ -297,12 +311,19 @@ def build_preview(text: str, *, session_id: str | None = None) -> dict:
         candidates = aliases.resolve_candidates(
             "tenhou", name, session_id=session_id, external_match_id=parsed["log_id"]
         )
+        # R11-D：session 冻结的模型身份 → 候选账号缩小到该模型下的 Account
+        # （enabled + model_identity_id 绑定）。模型不能替用户猜账号，但候选必须收窄。
+        frozen_identity_id = next(
+            (c.model_identity_id for c in candidates if c.model_identity_id and not c.account_id),
+            None,
+        )
         seats.append(
             {
                 "seat": seat,
                 "raw_name": name,
                 "candidates": [c.model_dump() for c in candidates],
                 "auto_account_id": _auto_account_id(candidates, registry),
+                "eligible_account_ids": _eligible_account_ids(frozen_identity_id) if frozen_identity_id else None,
             }
         )
     return {

@@ -185,9 +185,11 @@ def test_vertical_session_recovery_from_capture(tmp_path, monkeypatch, fake_down
         encoding="utf-8",
     )
 
-    # 2. 账号 + 全局模型身份（account_id=None → 任意账号可绑定）
+    # 2. 账号 + 全局模型身份（R11-D：账号必须显式绑定模型，global 不再是 wildcard）
     registry.create_account(AccountCreate(account_id="nick@01", display_name="Nick", account_type="human"))
-    registry.create_account(AccountCreate(account_id="70k-bot", display_name="70k bot", account_type="managed_bot"))
+    registry.create_account(
+        AccountCreate(account_id="70k-bot", display_name="70k bot", account_type="managed_bot", model_identity_id="model:70k")
+    )
     registry.create_model_identity(
         ModelIdentityCreate(
             model_identity_id="model:70k",
@@ -238,6 +240,39 @@ def test_vertical_session_recovery_from_capture(tmp_path, monkeypatch, fake_down
     assert match.resolution["1"]["model_identity_id"] == "model:70k"
     assert match.resolution["1"]["model_artifact_id"] == frozen_artifact_id
     assert match.resolution["1"]["account_id"] == "70k-bot"
+
+
+def test_preview_narrows_eligible_accounts_by_frozen_model(fake_download, participants_root):
+    """R11-D：session 冻结模型 → preview seat 的 eligible_account_ids 只含该模型
+    下已绑定的账号（enabled），未绑定账号不在候选；模型不能替用户猜账号。"""
+    from participants.schemas import ModelIdentityCreate
+
+    registry.create_account(
+        AccountCreate(account_id="70k@01", display_name="70k-1", account_type="managed_bot", model_identity_id="70k")
+    )
+    registry.create_account(
+        AccountCreate(account_id="70k@02", display_name="70k-2", account_type="managed_bot", model_identity_id="70k")
+    )
+    registry.create_account(AccountCreate(account_id="other@01", display_name="Other", account_type="managed_bot"))
+    registry.create_account(AccountCreate(account_id="nick@01", display_name="Nick", account_type="human"))
+    registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", artifact_path="ckpt.pth")
+    )
+    identity = registry.get_model_identity("70k")
+    aliases.register_alias(
+        ExternalAliasCreate(
+            provider="tenhou", external_id="NoName-1",
+            account_id=None, model_identity_id="70k", model_artifact_id=identity.artifacts[0].model_artifact_id,
+            scope="session", session_id="s1",
+        )
+    )
+
+    preview = intake.build_preview(f"https://tenhou.net/3/?log={FAKE_LOG_ID}", session_id="s1")
+    seat1 = preview["seats"][1]
+    assert set(seat1["eligible_account_ids"] or []) == {"70k@01", "70k@02"}
+    assert "other@01" not in (seat1["eligible_account_ids"] or [])
+    # 无冻结模型的座位不受限
+    assert preview["seats"][0]["eligible_account_ids"] is None
 
 
 def test_preview_auto_resolves_confirmed_global_alias(fake_download, participants_root):
@@ -377,7 +412,9 @@ def test_session_alias_model_info_enters_match(fake_download, participants_root)
     """P1-3：session 别名的 model_identity/artifact 进入 MatchSeat / resolution / revision / summary。"""
     from participants.schemas import ModelIdentityCreate
 
-    registry.create_account(AccountCreate(account_id="70k@01", display_name="70k", account_type="managed_bot"))
+    registry.create_account(
+        AccountCreate(account_id="70k@01", display_name="70k", account_type="managed_bot", model_identity_id="70k")
+    )
     registry.create_account(AccountCreate(account_id="nick@01", display_name="Nick", account_type="human"))
     registry.create_model_identity(
         ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", artifact_path="ckpt.pth")

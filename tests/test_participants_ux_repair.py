@@ -9,6 +9,7 @@ import pytest
 from participants import aliases, intake, ledger, registry
 from participants.schemas import (
     AccountCreate,
+    AccountUpdate,
     ExternalAliasCreate,
     MatchCreate,
     MatchSeat,
@@ -199,7 +200,9 @@ def test_external_agent_launched_allowed_with_artifact():
     from gateway.api import playwithyou as pw
 
     for aid in ("ext_mortal@01", "ext_mortal@02", "ext_mortal@03", "ext_mortal@04"):
-        registry.create_account(AccountCreate(account_id=aid, display_name=aid, account_type="external_bot"))
+        registry.create_account(
+            AccountCreate(account_id=aid, display_name=aid, account_type="external_bot", model_identity_id="ext_mortal")
+        )
     identity = registry.create_model_identity(
         ModelIdentityCreate(
             model_identity_id="ext_mortal",
@@ -285,10 +288,12 @@ def test_gate_normalizes_season_id(env):
 def test_gate_rejects_human_seat_with_bot_artifact(env):
     """P1：正式人类座位不能携带冻结 bot 模型产物——防止 bot 战绩记到 Nick 名下。
 
-    用全局 identity（account_id=None，任意账号可绑定）复现真实漏洞场景：
-    identity_belongs_to_account 会通过，必须由 eligibility gate 拒绝。
+    用全局 identity 复现真实漏洞场景：账号显式绑定模型后，
+    identity_belongs_to_account 通过，必须由 eligibility gate 拒绝。
     """
     _accounts()
+    for aid in ("70k@01", "70k@02", "70k@03"):
+        registry.update_account(aid, AccountUpdate(model_identity_id="70k-global"))
     global_70k = registry.create_model_identity(
         ModelIdentityCreate(model_identity_id="70k-global", label="70k", kind="local_model", artifact_path="checkpoints/70k.pth")
     )
@@ -300,13 +305,16 @@ def test_gate_rejects_human_seat_with_bot_artifact(env):
         MatchSeat(seat=2, account_id="70k@02", controller_type="local_model"),
         MatchSeat(seat=3, account_id="70k@03", controller_type="local_model"),
     ]
-    with pytest.raises(ValueError, match="不能携带冻结 bot 模型产物"):
+    # R11-D 严格语义下，未绑定该模型的账号（含人类）在落账前即被拒绝
+    with pytest.raises(ValueError, match="未绑定模型身份"):
         ledger.create_match(_match_create(seats), registry)
 
 
 def test_gate_accepts_bot_artifact_on_bot_account(env):
     """P1：bot artifact + 对应 bot 账号 + official ladder → ACCEPT。"""
     _accounts()
+    for aid in ("70k@01", "70k@02", "70k@03"):
+        registry.update_account(aid, AccountUpdate(model_identity_id="70k-global"))
     global_70k = registry.create_model_identity(
         ModelIdentityCreate(model_identity_id="70k-global", label="70k", kind="local_model", artifact_path="checkpoints/70k.pth")
     )

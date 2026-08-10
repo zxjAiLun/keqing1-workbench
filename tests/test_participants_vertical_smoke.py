@@ -79,7 +79,15 @@ def env(tmp_path, monkeypatch):
         ("70k@02", "managed_bot"),
         ("friend@01", "external_bot"),
     ):
-        registry.create_account(AccountCreate(account_id=account_id, display_name=account_id, account_type=account_type))
+        # R11-D：AI 账号显式绑定逻辑模型
+        registry.create_account(
+            AccountCreate(
+                account_id=account_id,
+                display_name=account_id,
+                account_type=account_type,
+                model_identity_id="70k" if account_id.startswith("70k") else None,
+            )
+        )
     aliases.register_alias(
         ExternalAliasCreate(provider="tenhou", external_id="Nick", account_id="nick@01", scope="global")
     )
@@ -136,7 +144,7 @@ def env(tmp_path, monkeypatch):
     fake_subprocess = mock.Mock()
     fake_subprocess.Popen.return_value = FakeProc()
     monkeypatch.setattr(pw, "subprocess", fake_subprocess)
-    monkeypatch.setattr(pw, "_ladder_data_root", lambda: tmp_path / "ladder")
+    monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(tmp_path / "ladder"))
     monkeypatch.setattr(pw, "_ladder_config_dir", lambda: configs)
     pw.SESSIONS.clear()
     pw._HISTORY.clear()

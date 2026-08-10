@@ -8,7 +8,7 @@ import { participantsApi } from '../api/participantsApi';
 import { ladderApi } from '../api/ladderApi';
 import { ApiError } from '../api/replayApi';
 import { routes } from '../routes';
-import type { Account, IntakePreview, ModelIdentity, SeatResolution, SeatNo } from '../types/participants';
+import type { Account, ExternalAlias, IntakePreview, ModelIdentity, SeatResolution, SeatNo } from '../types/participants';
 
 type DraftResolution = {
   seat: SeatNo;
@@ -129,6 +129,30 @@ export function TenhouImportPage() {
 
   const updateDraft = (seat: SeatNo, patch: Partial<DraftResolution>) => {
     setDrafts((prev) => prev.map((d) => (d.seat === seat ? { ...d, ...patch } : d)));
+  };
+
+  // R11-D：候选账号规则——冻结模型座位只显示该模型下可绑定的账号；
+  // 已被其他座位使用的账号禁用（后端仍保留四座唯一性校验，前端禁用只是 UX）。
+  const accountOptionsForSeat = (
+    seat: SeatNo,
+    seatInfo: { candidates: ExternalAlias[]; eligible_account_ids?: string[] | null },
+  ): Array<{ account_id: string; label: string; disabled: boolean }> => {
+    const frozenModel = seatInfo.candidates.some((c) => c.model_identity_id && !c.account_id);
+    const pool =
+      frozenModel && seatInfo.eligible_account_ids
+        ? accounts.filter((a) => seatInfo.eligible_account_ids!.includes(a.account_id))
+        : accounts;
+    const usedElsewhere = new Map<string, string>();
+    drafts.forEach((d) => {
+      if (d.seat !== seat && d.account_id) usedElsewhere.set(d.account_id, SEAT_WINDS[d.seat]);
+    });
+    return pool.map((a) => ({
+      account_id: a.account_id,
+      label: usedElsewhere.has(a.account_id)
+        ? `${a.display_name}（已用于${usedElsewhere.get(a.account_id)}家）`
+        : `${a.display_name}（${a.account_id}）`,
+      disabled: usedElsewhere.has(a.account_id),
+    }));
   };
 
   const confirmImport = async () => {
@@ -318,6 +342,7 @@ export function TenhouImportPage() {
                           <option value="create" disabled={frozenModel}>新建账号</option>
                         </select>
                         {draft.action === 'assign' ? (
+                          <>
                           <select
                             value={draft.account_id}
                             onChange={(e) => {
@@ -333,10 +358,24 @@ export function TenhouImportPage() {
                             style={{ ...selectStyle, flex: 1 }}
                           >
                             <option value="">选择账号…</option>
-                            {accounts.map((a) => (
-                              <option key={a.account_id} value={a.account_id}>{a.display_name}（{a.account_id}）</option>
+                            {accountOptionsForSeat(draft.seat, seatInfo).map((opt) => (
+                              <option key={opt.account_id} value={opt.account_id} disabled={opt.disabled}>
+                                {opt.label}
+                              </option>
                             ))}
                           </select>
+                          {/* R11-D：候选唯一 → 预选但可改；无候选 → 需要先绑定 */}
+                          {frozenModel && seatInfo.eligible_account_ids?.length === 1 && (
+                            <span style={{ fontSize: 11, color: '#27ae60' }}>
+                              候选唯一，已预选（可更改）
+                            </span>
+                          )}
+                          {frozenModel && seatInfo.eligible_account_ids?.length === 0 && (
+                            <span style={{ fontSize: 11, color: '#e74c3c' }}>
+                              该模型下没有可绑定账号，需先在 Participants 绑定
+                            </span>
+                          )}
+                          </>
                         ) : (
                           <>
                             <input

@@ -303,6 +303,8 @@ export interface IntakePreviewSeat {
   raw_name: string;
   candidates: ExternalAlias[];
   auto_account_id?: string | null;
+  // R11-D：冻结模型身份下可绑定的候选账号（enabled）；无冻结模型时为 null
+  eligible_account_ids?: string[] | null;
 }
 
 export interface IntakePreview {

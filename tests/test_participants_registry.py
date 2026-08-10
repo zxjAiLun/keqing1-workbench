@@ -107,6 +107,38 @@ def test_identity_belongs_to_account_helpers():
     assert not registry.artifact_belongs_to_identity("model-70k", "nope")
 
 
+def test_global_identity_requires_account_model_binding():
+    """R11-D：global identity（account_id=None）不再是 wildcard。
+
+    - 账号显式绑定该模型 → 兼容；
+    - 未绑定/真人/其他模型账号 → 不兼容；
+    - 未指定 identity_id → 不约束（普通人工导入不受影响）。
+    """
+    registry.create_account(
+        AccountCreate(account_id="70k@01", display_name="70k-1", account_type="managed_bot", model_identity_id="70k-global")
+    )
+    registry.create_account(
+        AccountCreate(account_id="70k@02", display_name="70k-2", account_type="managed_bot", model_identity_id="70k-global")
+    )
+    registry.create_account(AccountCreate(account_id="keqing1", display_name="Nick", account_type="human"))
+    registry.create_account(
+        AccountCreate(account_id="mortal41b", display_name="Mortal4.1b", account_type="external_bot", model_identity_id="mortal4.1b")
+    )
+    registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="70k-global", label="70k", kind="local_model", artifact_path="ckpt.pth")
+    )
+
+    # 绑定该模型的账号 → 兼容
+    assert registry.identity_belongs_to_account("70k-global", "70k@01")
+    assert registry.identity_belongs_to_account("70k-global", "70k@02")
+    # 未绑定（真人）→ 不兼容
+    assert not registry.identity_belongs_to_account("70k-global", "keqing1")
+    # 绑定其他模型 → 不兼容
+    assert not registry.identity_belongs_to_account("70k-global", "mortal41b")
+    # identity_id=None → 不约束
+    assert registry.identity_belongs_to_account(None, "keqing1")
+
+
 # ---------------------------------------------------------------------------
 # P1-2：stale lock 回收 / P1-4：引用完整性
 # ---------------------------------------------------------------------------

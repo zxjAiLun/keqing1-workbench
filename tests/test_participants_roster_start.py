@@ -68,8 +68,14 @@ def pw_env(tmp_path, monkeypatch):
         ("70k@02", "managed_bot"),
         ("mortal@01", "external_bot"),
     ):
+        # R11-D：AI 账号显式绑定逻辑模型（global identity 不再是 wildcard）
         registry.create_account(
-            AccountCreate(account_id=account_id, display_name=account_id, account_type=account_type)
+            AccountCreate(
+                account_id=account_id,
+                display_name=account_id,
+                account_type=account_type,
+                model_identity_id="70k" if account_id.startswith("70k") else None,
+            )
         )
     registry.create_model_identity(
         ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", artifact_path=str(checkpoint))
@@ -428,7 +434,14 @@ def test_frozen_checkpoint_does_not_drift(tmp_path, monkeypatch):
         ("nick@01", "human"), ("70k@01", "managed_bot"),
         ("70k@02", "managed_bot"), ("mortal@01", "external_bot"),
     ):
-        registry.create_account(AccountCreate(account_id=aid, display_name=aid, account_type=atype))
+        registry.create_account(
+            AccountCreate(
+                account_id=aid,
+                display_name=aid,
+                account_type=atype,
+                model_identity_id="70k" if aid.startswith("70k") else None,
+            )
+        )
     registry.create_model_identity(
         ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", artifact_path=str(checkpoint_a))
     )
@@ -520,7 +533,9 @@ def test_launcher_names_are_canonical(pw_env, tmp_path, monkeypatch):
     from participants.schemas import AccountCreate
 
     registry = __import__("participants.registry", fromlist=["create_account"])
-    registry.create_account(AccountCreate(account_id="70k@03", display_name="70k@03", account_type="managed_bot"))
+    registry.create_account(
+        AccountCreate(account_id="70k@03", display_name="70k@03", account_type="managed_bot", model_identity_id="70k")
+    )
 
     from gateway.api.playwithyou import ParticipantBindingRequest, StartPlayWithYouRequest
 

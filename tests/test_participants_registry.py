@@ -10,6 +10,7 @@ from participants.schemas import (
     AccountUpdate,
     ModelArtifactCreate,
     ModelIdentityCreate,
+    ModelIdentityUpdate,
 )
 
 
@@ -107,6 +108,46 @@ def test_identity_belongs_to_account_helpers():
     assert not registry.artifact_belongs_to_identity("model-70k", "nope")
 
 
+def test_account_model_binding_reference_integrity():
+    """R11-D Repair：Account.model_identity_id 必须指向已存在身份（fail closed）；
+    account-scoped 身份只能被其绑定账号引用。"""
+    registry.create_account(AccountCreate(account_id="70k@01", display_name="70k-1", account_type="managed_bot"))
+    registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", account_id="70k@01", artifact_path="ckpt.pth")
+    )
+    # 不存在身份 → 拒绝
+    with pytest.raises(ValueError, match="模型身份不存在"):
+        registry.create_account(
+            AccountCreate(account_id="ghost@01", display_name="ghost", account_type="managed_bot", model_identity_id="model:typo")
+        )
+    # account-scoped 身份被其他账号引用 → 拒绝
+    with pytest.raises(ValueError, match="不能引用账号专属身份"):
+        registry.create_account(
+            AccountCreate(account_id="70k@02", display_name="70k-2", account_type="managed_bot", model_identity_id="70k")
+        )
+    # update 同样 fail closed
+    with pytest.raises(ValueError, match="模型身份不存在"):
+        registry.update_account("70k@01", AccountUpdate(model_identity_id="model:typo"))
+    # 自身账号引用 account-scoped 身份 → 允许
+    updated = registry.update_account("70k@01", AccountUpdate(model_identity_id="70k"))
+    assert updated.model_identity_id == "70k"
+
+
+def test_global_identity_conversion_guard():
+    """R11-D Repair：被多个 Account 反向引用的 global 身份不能转成 account-scoped。"""
+    registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="70k-global", label="70k", kind="local_model", artifact_path="ckpt.pth")
+    )
+    registry.create_account(
+        AccountCreate(account_id="70k@01", display_name="70k-1", account_type="managed_bot", model_identity_id="70k-global")
+    )
+    registry.create_account(
+        AccountCreate(account_id="70k@02", display_name="70k-2", account_type="managed_bot", model_identity_id="70k-global")
+    )
+    with pytest.raises(ValueError, match="不能转成账号专属身份"):
+        registry.update_model_identity("70k-global", ModelIdentityUpdate(account_id="70k@01"))
+
+
 def test_global_identity_requires_account_model_binding():
     """R11-D：global identity（account_id=None）不再是 wildcard。
 
@@ -114,6 +155,9 @@ def test_global_identity_requires_account_model_binding():
     - 未绑定/真人/其他模型账号 → 不兼容；
     - 未指定 identity_id → 不约束（普通人工导入不受影响）。
     """
+    registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="70k-global", label="70k", kind="local_model", artifact_path="ckpt.pth")
+    )
     registry.create_account(
         AccountCreate(account_id="70k@01", display_name="70k-1", account_type="managed_bot", model_identity_id="70k-global")
     )
@@ -121,11 +165,11 @@ def test_global_identity_requires_account_model_binding():
         AccountCreate(account_id="70k@02", display_name="70k-2", account_type="managed_bot", model_identity_id="70k-global")
     )
     registry.create_account(AccountCreate(account_id="keqing1", display_name="Nick", account_type="human"))
+    registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="mortal4.1b", label="Mortal4.1b", kind="external_agent")
+    )
     registry.create_account(
         AccountCreate(account_id="mortal41b", display_name="Mortal4.1b", account_type="external_bot", model_identity_id="mortal4.1b")
-    )
-    registry.create_model_identity(
-        ModelIdentityCreate(model_identity_id="70k-global", label="70k", kind="local_model", artifact_path="ckpt.pth")
     )
 
     # 绑定该模型的账号 → 兼容

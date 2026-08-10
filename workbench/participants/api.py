@@ -81,7 +81,13 @@ def api_get_account(account_id: str) -> dict:
     account = registry.get_account(account_id)
     if account is None:
         raise _error(404, f"account not found: {account_id}")
-    identities = [m.model_dump() for m in registry.list_models() if m.account_id == account_id]
+    # R11-D：模型投影按新关系——账号专属身份（legacy）或账号反向引用的 global 身份
+    identities = [
+        m.model_dump()
+        for m in registry.list_models()
+        if m.account_id == account_id
+        or (account.model_identity_id and m.model_identity_id == account.model_identity_id)
+    ]
     return {"account": account.model_dump(), "identities": identities}
 
 

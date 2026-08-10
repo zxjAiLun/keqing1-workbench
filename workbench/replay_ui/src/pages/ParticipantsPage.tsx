@@ -123,6 +123,7 @@ export function ParticipantsPage() {
       const updated = await participantsApi.updateAccount(editing.account_id, {
         display_name: payload.display_name,
         default_controller: payload.default_controller ?? undefined,
+        model_identity_id: payload.model_identity_id ?? null,
         note: payload.note ?? null,
       });
       setAccounts((prev) => prev.map((a) => (a.account_id === updated.account_id ? updated : a)));
@@ -313,6 +314,7 @@ export function ParticipantsPage() {
       {(creating || editing) && (
         <AccountFormModal
           account={editing}
+          identities={identities}
           onClose={() => { setCreating(false); setEditing(null); }}
           onSave={handleSaveAccount}
         />

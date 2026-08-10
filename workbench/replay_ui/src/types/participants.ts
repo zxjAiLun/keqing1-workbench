@@ -15,6 +15,8 @@ export interface Account {
   account_type: AccountType;
   enabled: boolean;
   default_controller: ControllerType;
+  // R11-D：该 AI 账号由哪个逻辑模型驱动（真人/无模型为 null）
+  model_identity_id?: string | null;
   avatar?: string | null;
   note?: string | null;
   migrated_from_replay?: boolean;
@@ -103,6 +105,7 @@ export interface AccountCreate {
   display_name: string;
   account_type: AccountType;
   default_controller?: ControllerType | null;
+  model_identity_id?: string | null;
   avatar?: string | null;
   note?: string | null;
 }
@@ -111,6 +114,7 @@ export interface AccountUpdate {
   display_name?: string | null;
   enabled?: boolean | null;
   default_controller?: ControllerType | null;
+  model_identity_id?: string | null;
   avatar?: string | null;
   note?: string | null;
 }

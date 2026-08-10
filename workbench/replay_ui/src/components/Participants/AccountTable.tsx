@@ -15,8 +15,13 @@ export function AccountTable({
   onToggleEnabled: (account: Account) => void;
   onDelete: (account: Account) => void;
 }) {
-  const identityCount = (accountId: string) =>
-    identities.filter((m) => m.account_id === accountId || m.account_id == null).length;
+  // R11-D：账号行显示"驱动模型"——按 Account.model_identity_id 直接反查身份标签。
+  // 不再用 global→every account 的旧 count（global identity 不是 wildcard）。
+  const drivingModelLabel = (account: Account) => {
+    if (!account.model_identity_id) return '—';
+    const identity = identities.find((m) => m.model_identity_id === account.model_identity_id);
+    return identity?.label ?? account.model_identity_id;
+  };
 
   return (
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -26,8 +31,8 @@ export function AccountTable({
           <th style={thStyle}>ID</th>
           <th style={thStyle}>类型</th>
           <th style={thStyle}>控制器</th>
+          <th style={thStyle}>驱动模型</th>
           <th style={thStyle}>状态</th>
-          <th style={thStyle}>模型</th>
           <th style={thStyle}>操作</th>
         </tr>
       </thead>
@@ -38,8 +43,8 @@ export function AccountTable({
             <td style={{ ...tdStyle, color: 'var(--text-muted)' }}>{account.account_id}</td>
             <td style={tdStyle}>{ACCOUNT_TYPE_LABELS[account.account_type]}</td>
             <td style={tdStyle}>{CONTROLLER_LABELS[account.default_controller]}</td>
+            <td style={tdStyle}>{drivingModelLabel(account)}</td>
             <td style={tdStyle}>{account.enabled ? '启用' : '停用'}</td>
-            <td style={tdStyle}>{identityCount(account.account_id)}</td>
             <td style={{ ...tdStyle, display: 'flex', gap: 6 }}>
               <button style={linkBtn} onClick={() => onEdit(account)}>编辑</button>
               <button style={linkBtn} onClick={() => onToggleEnabled(account)}>

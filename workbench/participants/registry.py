@@ -103,9 +103,28 @@ def create_account(payload: AccountCreate) -> Account:
         return create_account_locked(payload)
 
 
+def _validate_model_binding(model_identity_id: str | None, account_id: str) -> None:
+    """R11-D Repair：Account.model_identity_id 引用完整性（fail closed）。
+
+    - 绑定必须指向已存在的 ModelIdentity；
+    - account-scoped identity（account_id 非空）只能被其绑定账号引用；
+    - global identity（account_id=None）可被任意 Account 反向引用。
+    """
+    if model_identity_id is None:
+        return
+    identity = get_model_identity(model_identity_id)
+    if identity is None:
+        raise ValueError(f"模型身份不存在: {model_identity_id}")
+    if identity.account_id is not None and identity.account_id != account_id:
+        raise ValueError(
+            f"账号 {account_id} 不能引用账号专属身份 {model_identity_id}（属于 {identity.account_id}）"
+        )
+
+
 def create_account_locked(payload: AccountCreate) -> Account:
     """锁内创建账号：调用方已持有 data_lock 时使用（intake 事务 / 恢复路径）。"""
     account_id = payload.account_id or _slugify(payload.display_name)
+    _validate_model_binding(payload.model_identity_id, account_id)
     now = now_iso()
     store = _read_accounts()
     if any(raw.get("account_id") == account_id for raw in store["accounts"]):
@@ -152,8 +171,11 @@ def update_account(account_id: str, payload: AccountUpdate) -> Account:
         for idx, raw in enumerate(store["accounts"]):
             if raw.get("account_id") != account_id:
                 continue
-            current = Account.model_validate(raw)
             raw_fields = payload.model_dump(exclude_unset=True)
+            new_binding = raw_fields.get("model_identity_id", None)
+            if "model_identity_id" in raw_fields:
+                _validate_model_binding(new_binding, account_id)
+            current = Account.model_validate(raw)
             updated = current.model_copy(
                 update={
                     "display_name": payload.display_name if payload.display_name is not None else current.display_name,
@@ -339,7 +361,22 @@ def update_model_identity(identity_id: str, payload: ModelIdentityUpdate) -> Mod
         for idx, raw in enumerate(store["identities"]):
             if raw.get("model_identity_id") != identity_id:
                 continue
-            dump = payload.model_dump(exclude_unset=True)
+            # R11-D Repair：global identity 已被多个 Account 反向引用时，禁止
+            # 转成 account-scoped——否则其他绑定账号会瞬间失效。
+            raw_fields = payload.model_dump(exclude_unset=True)
+            new_account_id = raw_fields.get("account_id", None)
+            if "account_id" in raw_fields and new_account_id is not None and raw.get("account_id") is None:
+                referencing = [
+                    acc["account_id"]
+                    for acc in _read_accounts()["accounts"]
+                    if acc.get("model_identity_id") == identity_id
+                ]
+                if referencing:
+                    raise ValueError(
+                        f"模型身份 {identity_id} 已被账号 {sorted(referencing)} 反向引用，"
+                        "不能转成账号专属身份"
+                    )
+            dump = raw_fields
             raw.update(dump)
             store["identities"][idx] = raw
             write_json(_models_path(), MODELS_SCHEMA, store)

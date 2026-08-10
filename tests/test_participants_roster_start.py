@@ -62,6 +62,10 @@ def pw_env(tmp_path, monkeypatch):
     from participants import registry
     from participants.schemas import AccountCreate, ModelIdentityCreate
 
+    # R11-D：身份先建，账号再绑定（引用完整性 fail-closed）
+    registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", artifact_path=str(checkpoint))
+    )
     for account_id, account_type in (
         ("nick@01", "human"),
         ("70k@01", "managed_bot"),
@@ -77,9 +81,6 @@ def pw_env(tmp_path, monkeypatch):
                 model_identity_id="70k" if account_id.startswith("70k") else None,
             )
         )
-    registry.create_model_identity(
-        ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", artifact_path=str(checkpoint))
-    )
     return tmp_path
 
 
@@ -430,6 +431,9 @@ def test_frozen_checkpoint_does_not_drift(tmp_path, monkeypatch):
     pw.SESSIONS.clear()
     pw._HISTORY.clear()
 
+    registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", artifact_path=str(checkpoint_a))
+    )
     for aid, atype in (
         ("nick@01", "human"), ("70k@01", "managed_bot"),
         ("70k@02", "managed_bot"), ("mortal@01", "external_bot"),
@@ -442,9 +446,6 @@ def test_frozen_checkpoint_does_not_drift(tmp_path, monkeypatch):
                 model_identity_id="70k" if aid.startswith("70k") else None,
             )
         )
-    registry.create_model_identity(
-        ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", artifact_path=str(checkpoint_a))
-    )
 
     # 冻结期间（2 次 launcher 解析）返回 A；之后（子进程重新解析时）变 B，模拟漂移
     calls = {"n": 0}

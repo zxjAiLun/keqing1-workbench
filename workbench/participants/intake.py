@@ -230,8 +230,9 @@ def _auto_account_id(candidates: list, registry) -> str | None:
     """候选唯一且 confirmed → 自动账号。
 
     - 候选绑定账号 → 直接用；
-    - Play-with-you simplification：session alias 只带模型（无账号）→ 若该
-      模型身份只有唯一可绑定账号则自动建议；否则 None（人工选择）。
+    - Play-with-you simplification：session alias 只带模型（无账号）→ 与
+      ``eligible_account_ids`` 共用同一个 enabled 候选算法：唯一则自动建议
+      （R11-D Repair：绝不使用含 disabled 的旧算法，防止两个字段互相矛盾）。
     """
     if len(candidates) != 1 or candidates[0].confidence != "confirmed":
         return None
@@ -240,12 +241,8 @@ def _auto_account_id(candidates: list, registry) -> str | None:
     identity_id = candidates[0].model_identity_id
     if not identity_id:
         return None
-    eligible = [
-        a.account_id
-        for a in registry.list_accounts()
-        if registry.identity_belongs_to_account(identity_id, a.account_id)
-    ]
-    return eligible[0] if len(eligible) == 1 else None
+    eligible = _eligible_account_ids(identity_id)
+    return eligible[0] if eligible is not None and len(eligible) == 1 else None
 
 
 def _session_id_for_log_id(log_id: str) -> str | None:

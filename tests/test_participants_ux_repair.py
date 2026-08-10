@@ -199,10 +199,6 @@ def test_external_agent_launched_allowed_with_artifact():
     """ext_mortal：external_agent + launched + artifact → 启动校验通过。"""
     from gateway.api import playwithyou as pw
 
-    for aid in ("ext_mortal@01", "ext_mortal@02", "ext_mortal@03", "ext_mortal@04"):
-        registry.create_account(
-            AccountCreate(account_id=aid, display_name=aid, account_type="external_bot", model_identity_id="ext_mortal")
-        )
     identity = registry.create_model_identity(
         ModelIdentityCreate(
             model_identity_id="ext_mortal",
@@ -211,6 +207,10 @@ def test_external_agent_launched_allowed_with_artifact():
             artifact_path="artifacts/external_mortal_20240308_best_min.pth",
         )
     )
+    for aid in ("ext_mortal@01", "ext_mortal@02", "ext_mortal@03", "ext_mortal@04"):
+        registry.create_account(
+            AccountCreate(account_id=aid, display_name=aid, account_type="external_bot", model_identity_id="ext_mortal")
+        )
     art = identity.artifacts[0]
     bindings = [
         {"account_id": "ext_mortal@01", "controller_type": "external_agent", "model_identity_id": identity.model_identity_id, "model_artifact_id": art.model_artifact_id, "launcher_slot": 0, "expected_raw_name": "NoName-1"},
@@ -292,11 +292,11 @@ def test_gate_rejects_human_seat_with_bot_artifact(env):
     identity_belongs_to_account 通过，必须由 eligibility gate 拒绝。
     """
     _accounts()
-    for aid in ("70k@01", "70k@02", "70k@03"):
-        registry.update_account(aid, AccountUpdate(model_identity_id="70k-global"))
     global_70k = registry.create_model_identity(
         ModelIdentityCreate(model_identity_id="70k-global", label="70k", kind="local_model", artifact_path="checkpoints/70k.pth")
     )
+    for aid in ("70k@01", "70k@02", "70k@03"):
+        registry.update_account(aid, AccountUpdate(model_identity_id="70k-global"))
     art_70k = global_70k.artifacts[0]
     seats = [
         # nick@01 是 human，却携带 70k artifact → REJECT
@@ -313,11 +313,11 @@ def test_gate_rejects_human_seat_with_bot_artifact(env):
 def test_gate_accepts_bot_artifact_on_bot_account(env):
     """P1：bot artifact + 对应 bot 账号 + official ladder → ACCEPT。"""
     _accounts()
-    for aid in ("70k@01", "70k@02", "70k@03"):
-        registry.update_account(aid, AccountUpdate(model_identity_id="70k-global"))
     global_70k = registry.create_model_identity(
         ModelIdentityCreate(model_identity_id="70k-global", label="70k", kind="local_model", artifact_path="checkpoints/70k.pth")
     )
+    for aid in ("70k@01", "70k@02", "70k@03"):
+        registry.update_account(aid, AccountUpdate(model_identity_id="70k-global"))
     art_70k = global_70k.artifacts[0]
     seats = [
         MatchSeat(seat=0, account_id="nick@01", controller_type="human_ui"),

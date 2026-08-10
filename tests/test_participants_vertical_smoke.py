@@ -73,6 +73,13 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(tmp_path / "ladder-data"))
     monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: FAKE_TENHOU6)
 
+    # R11-D：身份先建，账号再绑定（引用完整性 fail-closed）
+    checkpoint = tmp_path / "checkpoints" / "70k.pth"
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.write_text("", encoding="utf-8")
+    registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", artifact_path=str(checkpoint))
+    )
     for account_id, account_type in (
         ("nick@01", "human"),
         ("70k@01", "managed_bot"),
@@ -134,13 +141,7 @@ def env(tmp_path, monkeypatch):
         pw, "_resolve_spec",
         lambda network, custom_paths, slot: "70k" if network == "mortal" else None,
     )
-    checkpoint = tmp_path / "checkpoints" / "70k.pth"
-    checkpoint.parent.mkdir(parents=True, exist_ok=True)
-    checkpoint.write_text("", encoding="utf-8")
     monkeypatch.setattr("inference.bot_registry.resolve_bot_spec", lambda spec, root: ("checkpoint", str(checkpoint)))
-    registry.create_model_identity(
-        ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", artifact_path=str(checkpoint))
-    )
     fake_subprocess = mock.Mock()
     fake_subprocess.Popen.return_value = FakeProc()
     monkeypatch.setattr(pw, "subprocess", fake_subprocess)

@@ -4,6 +4,7 @@ import { useMemo, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ladderApi } from '../api/ladderApi';
 import { LadderSeasonNotice } from '../components/Ladder/LadderSeasonNotice';
+import { LadderSeasonContextBanner } from '../components/Ladder/LadderSeasonContextBanner';
 import { LadderSnapshotStatus } from '../components/Ladder/LadderSnapshotStatus';
 import { PageHeader, PageShell, SectionTitle } from '../components/Layout/PageScaffold';
 import { TrendChart } from '../components/Ladder/TrendChart';
@@ -57,6 +58,13 @@ export function LadderAccountPage() {
 
   return (
     <PageShell width={1180}>
+      {/* R11-F Repair：season-context banner（历史/非当前/无正式赛季）三页统一 */}
+      <LadderSeasonContextBanner
+        activeSeasonId={activeSeasonId}
+        activeSeason={activeSeason}
+        defaultSeasonId={catalog.defaultSeasonId}
+        defaultSeason={seasons.find((s) => s.season_id === catalog.defaultSeasonId)}
+      />
       <PageHeader
         eyebrow="Account Profile"
         title={account?.display_name ?? '账号详情'}

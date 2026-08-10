@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { ladderApi } from '../api/ladderApi';
 import { LadderSnapshotStatus } from '../components/Ladder/LadderSnapshotStatus';
 import { LadderSeasonNotice } from '../components/Ladder/LadderSeasonNotice';
+import { LadderSeasonContextBanner } from '../components/Ladder/LadderSeasonContextBanner';
 import { PageHeader, PageShell } from '../components/Layout/PageScaffold';
 import { useLadderSeasonCatalog } from '../hooks/useLadderSeasonCatalog';
 import { useVisibleLiveQuery } from '../hooks/useVisibleLiveQuery';
@@ -63,8 +64,8 @@ export function LadderPage() {
   // 未就绪时抑制裸 409 alert（结构化 Notice 已展示原因）；真正 404/500 仍显示
   const visibleError = catalog.error ?? (seasonProblem ? null : ladderQuery.error);
   const catalogLoaded = !catalog.loading;
-  // R11-F：completed/archived 是历史赛季，明显标识，不能看起来像当前正式榜
-  const historical = Boolean(activeSeason && (activeSeason.status === 'completed' || activeSeason.status === 'archived'));
+  // R11-F：completed/archived 是历史赛季，选择器里明显标识（banner 由
+  // LadderSeasonContextBanner 统一处理）
   const isHistoricalSeason = (season: { status?: string }) =>
     season.status === 'completed' || season.status === 'archived';
 
@@ -127,20 +128,15 @@ export function LadderPage() {
         )}
       />
 
-      {historical && (
-        <div
-          style={{
-            fontSize: 12,
-            padding: '6px 12px',
-            borderRadius: 6,
-            marginBottom: 10,
-            border: '1px solid #95a5a6',
-            background: 'rgba(149,165,166,0.08)',
-            color: 'var(--text-secondary)',
-          }}
-        >
-          ⏳ 历史赛季（{activeSeason?.status === 'completed' ? '已结束' : '已归档'}）——仅供回顾，不是当前正式榜。
-        </div>
+      {/* R11-F Repair：统一的 season-context banner——显式 ?season= 查看非 default
+          赛季（含 running）时，明确它不是当前正式榜；default=null 也持续提示。 */}
+      {catalogLoaded && activeSeasonId && (
+        <LadderSeasonContextBanner
+          activeSeasonId={activeSeasonId}
+          activeSeason={activeSeason}
+          defaultSeasonId={catalog.defaultSeasonId}
+          defaultSeason={seasons.find((s) => s.season_id === catalog.defaultSeasonId)}
+        />
       )}
 
       {visibleError && <div role="alert" style={{ color: 'var(--error)', fontSize: 13, marginBottom: 10 }}>{visibleError}</div>}

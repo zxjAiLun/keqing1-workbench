@@ -28,6 +28,11 @@ export function AccountFormModal({
   const [error, setError] = useState<string | null>(null);
 
   const isHuman = accountType === 'human';
+  // R11-D Repair 2：新建只列 global identity；编辑列 global + scoped-to-self。
+  // account-scoped 身份属于其他账号的不能出现在选择器里。
+  const availableIdentities = identities.filter(
+    (m) => !m.account_id || (account ? m.account_id === account.account_id : false),
+  );
 
   const submit = async () => {
     if (!displayName.trim()) return;
@@ -58,9 +63,16 @@ export function AccountFormModal({
         </label>
         <label style={labelStyle}>
           账号类型
-          <select value={accountType} onChange={(e) => setAccountType(e.target.value as AccountType)} style={inputStyle}>
-            {ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{ACCOUNT_TYPE_LABELS[t]}</option>)}
-          </select>
+          {/* R11-D Repair 2：编辑时类型只读（不可变），避免"改类型"静默清掉模型绑定 */}
+          {account ? (
+            <div style={{ fontSize: 13, padding: '6px 2px', color: 'var(--text-primary)' }}>
+              {ACCOUNT_TYPE_LABELS[account.account_type]}（不可修改）
+            </div>
+          ) : (
+            <select value={accountType} onChange={(e) => setAccountType(e.target.value as AccountType)} style={inputStyle}>
+              {ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{ACCOUNT_TYPE_LABELS[t]}</option>)}
+            </select>
+          )}
         </label>
         <label style={labelStyle}>
           默认控制器
@@ -77,10 +89,10 @@ export function AccountFormModal({
               value={modelId}
               onChange={(e) => setModelId(e.target.value)}
               style={inputStyle}
-              disabled={identities.length === 0}
+              disabled={availableIdentities.length === 0}
             >
               <option value="">—（未绑定）</option>
-              {identities.map((m) => (
+              {availableIdentities.map((m) => (
                 <option key={m.model_identity_id} value={m.model_identity_id}>
                   {m.label}（{m.model_identity_id}）
                 </option>

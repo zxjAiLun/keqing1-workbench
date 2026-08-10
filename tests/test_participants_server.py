@@ -146,6 +146,46 @@ def test_list_matches_pagination_validation(four_account_ids):
     assert resp.total == 0
 
 
+def test_api_patch_account_binding_conflict_is_409(four_account_ids):
+    """R11-D Repair 2：PATCH account 的绑定引用完整性错误 → 409（不是 500）。"""
+    from participants.schemas import AccountUpdate
+
+    with pytest.raises(HTTPException) as exc:
+        api.api_update_account("nick@01", AccountUpdate(model_identity_id="model:does-not-exist"))
+    assert exc.value.status_code == 409
+    # 真人绑定模型 → 409
+    with pytest.raises(HTTPException) as exc2:
+        api.api_update_account("nick@01", AccountUpdate(model_identity_id="model-70k"))
+    assert exc2.value.status_code == 409
+    assert "真人账号不能绑定驱动模型" in str(exc2.value.detail)
+
+
+def test_api_create_human_with_model_binding_is_409():
+    """R11-D Repair 2：human 账号带 model_identity_id → 409（类型不变量）。"""
+    with pytest.raises(HTTPException) as exc:
+        api.api_create_account(
+            AccountCreate(account_id="human-bot", display_name="HB", account_type="human", model_identity_id="model-70k")
+        )
+    assert exc.value.status_code == 409
+    assert "真人账号不能绑定驱动模型" in str(exc.value.detail)
+
+
+def test_api_patch_model_destructive_conversion_is_409(four_account_ids):
+    """R11-D Repair 2：被引用 global identity 转 account-scoped → 409（不是 500）。"""
+    from participants.schemas import ModelIdentityCreate, ModelIdentityUpdate
+
+    api.api_create_model(
+        ModelIdentityCreate(model_identity_id="70k-global", label="70k", kind="local_model", artifact_path="ckpt.pth")
+    )
+    api.api_create_account(
+        AccountCreate(account_id="bot1", display_name="bot1", account_type="managed_bot", model_identity_id="70k-global")
+    )
+    with pytest.raises(HTTPException) as exc:
+        api.api_update_model("70k-global", ModelIdentityUpdate(account_id="bot1"))
+    assert exc.value.status_code == 409
+    assert "不能转成账号专属身份" in str(exc.value.detail)
+
+
 def test_alias_api_endpoints(four_account_ids):
     from participants.schemas import ExternalAliasCreate
 

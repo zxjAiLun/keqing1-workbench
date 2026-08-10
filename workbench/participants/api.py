@@ -97,6 +97,9 @@ def api_update_account(account_id: str, payload: AccountUpdate) -> Account:
         return registry.update_account(account_id, payload)
     except KeyError as exc:
         raise _error(404, str(exc)) from exc
+    except ValueError as exc:
+        # R11-D Repair 2：绑定引用完整性 / human 不变量 → 业务冲突 409，不落 500
+        raise _error(409, str(exc)) from exc
 
 
 @router.delete("/accounts/{account_id}", response_model=dict)
@@ -168,6 +171,9 @@ def api_update_model(model_identity_id: str, payload: ModelIdentityUpdate) -> Mo
         return registry.update_model_identity(model_identity_id, payload)
     except KeyError as exc:
         raise _error(404, str(exc)) from exc
+    except ValueError as exc:
+        # R11-D Repair 2：global→account-scoped 破坏性转换等 → 409，不落 500
+        raise _error(409, str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

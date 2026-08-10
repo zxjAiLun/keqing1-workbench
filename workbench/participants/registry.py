@@ -103,13 +103,18 @@ def create_account(payload: AccountCreate) -> Account:
         return create_account_locked(payload)
 
 
-def _validate_model_binding(model_identity_id: str | None, account_id: str) -> None:
-    """R11-D Repair：Account.model_identity_id 引用完整性（fail closed）。
+def _validate_model_binding(model_identity_id: str | None, account_id: str, account_type: str) -> None:
+    """R11-D Repair 2：Account.model_identity_id 引用完整性 + 类型不变量（fail closed）。
 
+    - 真人（human）账号禁止绑定驱动模型（model_identity_id 必须为 null）；
     - 绑定必须指向已存在的 ModelIdentity；
     - account-scoped identity（account_id 非空）只能被其绑定账号引用；
-    - global identity（account_id=None）可被任意 Account 反向引用。
+    - global identity（account_id=None）可被任意非真人 Account 反向引用。
     """
+    if account_type == "human":
+        if model_identity_id is not None:
+            raise ValueError("真人账号不能绑定驱动模型（model_identity_id 必须为空）")
+        return
     if model_identity_id is None:
         return
     identity = get_model_identity(model_identity_id)
@@ -124,7 +129,7 @@ def _validate_model_binding(model_identity_id: str | None, account_id: str) -> N
 def create_account_locked(payload: AccountCreate) -> Account:
     """锁内创建账号：调用方已持有 data_lock 时使用（intake 事务 / 恢复路径）。"""
     account_id = payload.account_id or _slugify(payload.display_name)
-    _validate_model_binding(payload.model_identity_id, account_id)
+    _validate_model_binding(payload.model_identity_id, account_id, payload.account_type)
     now = now_iso()
     store = _read_accounts()
     if any(raw.get("account_id") == account_id for raw in store["accounts"]):
@@ -174,7 +179,8 @@ def update_account(account_id: str, payload: AccountUpdate) -> Account:
             raw_fields = payload.model_dump(exclude_unset=True)
             new_binding = raw_fields.get("model_identity_id", None)
             if "model_identity_id" in raw_fields:
-                _validate_model_binding(new_binding, account_id)
+                # account_type 不可变（编辑 UI 只读），以存储值为准
+                _validate_model_binding(new_binding, account_id, Account.model_validate(raw).account_type)
             current = Account.model_validate(raw)
             updated = current.model_copy(
                 update={

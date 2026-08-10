@@ -133,6 +133,20 @@ def test_account_model_binding_reference_integrity():
     assert updated.model_identity_id == "70k"
 
 
+def test_human_account_cannot_bind_model():
+    """R11-D Repair 2：human 账号禁止 model_identity_id（create/update 都守）。"""
+    registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", artifact_path="ckpt.pth")
+    )
+    with pytest.raises(ValueError, match="真人账号不能绑定驱动模型"):
+        registry.create_account(
+            AccountCreate(account_id="nick@01", display_name="Nick", account_type="human", model_identity_id="70k")
+        )
+    registry.create_account(AccountCreate(account_id="nick@01", display_name="Nick", account_type="human"))
+    with pytest.raises(ValueError, match="真人账号不能绑定驱动模型"):
+        registry.update_account("nick@01", AccountUpdate(model_identity_id="70k"))
+
+
 def test_global_identity_conversion_guard():
     """R11-D Repair：被多个 Account 反向引用的 global 身份不能转成 account-scoped。"""
     registry.create_model_identity(

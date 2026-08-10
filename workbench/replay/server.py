@@ -1688,6 +1688,24 @@ async def get_ladder_season_config(season_id: str):
     return JSONResponse(content=season)
 
 
+@app.put("/api/ladder/seasons/{season_id}/enrollment", response_class=JSONResponse)
+async def set_ladder_season_enrollment(season_id: str, payload: dict):
+    """编辑赛季参赛阵容（R11-E2）。
+
+    输入是 Participants Account ID 列表；backend 按权限矩阵校验并重新分组
+    （draft 可增删 / running 只增 / completed+archived 只读）。
+    """
+    sr = _season_manager()
+    account_ids = payload.get("account_ids") or []
+    if not isinstance(account_ids, list):
+        return _manager_errors(ValueError("account_ids 必须是数组"))
+    try:
+        season = sr.set_season_enrollment(_LADDER_SEASONS_DIR, season_id, account_ids)
+    except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
+        return _manager_errors(exc)
+    return JSONResponse(content=season)
+
+
 @app.get("/api/ladder/seasons/{season_id}", response_class=JSONResponse)
 async def get_ladder(season_id: str, sort: str = "pt"):
     """赛季天梯榜：账号排名 + 模型展示性聚合。"""

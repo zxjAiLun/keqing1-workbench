@@ -161,6 +161,172 @@ def test_missing_season_raises(configs_dir):
 
 
 # ---------------------------------------------------------------------------
+# R11-E2：enrollment
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def participants_env(tmp_path, monkeypatch):
+    """隔离的 Participants registry（KEQING_PARTICIPANT_DATA_ROOT）。"""
+    root = tmp_path / "participants"
+    monkeypatch.setenv("KEQING_PARTICIPANT_DATA_ROOT", str(root))
+    from participants import registry
+    from participants.schemas import AccountCreate, ModelIdentityCreate
+
+    registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="model:mortal-70k", label="70k", kind="local_model", artifact_path="ckpt.pth")
+    )
+    registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="model:mortal41b", label="Mortal 4.1b", kind="external_agent")
+    )
+    registry.create_account(AccountCreate(account_id="account:keqing1", display_name="keqing1", account_type="human"))
+    registry.create_account(
+        AccountCreate(account_id="account:70k_1号机", display_name="70k_1号机", account_type="managed_bot", model_identity_id="model:mortal-70k")
+    )
+    registry.create_account(
+        AccountCreate(account_id="account:70k_2号机", display_name="70k_2号机", account_type="managed_bot", model_identity_id="model:mortal-70k")
+    )
+    registry.create_account(
+        AccountCreate(account_id="account:mortal41b", display_name="mortal4.1b", account_type="external_bot", model_identity_id="model:mortal41b")
+    )
+    return registry
+
+
+def _season_draft(configs_dir, season_id="v3"):
+    sr.create_season(configs_dir, season_id=season_id)
+    return season_id
+
+
+def test_enrollment_groups_accounts_by_participants(participants_env, configs_dir):
+    """R11-E2：参赛阵容从 Participants Account 分组——human→human，AI→身份组。"""
+    sid = _season_draft(configs_dir)
+    season = sr.set_season_enrollment(
+        configs_dir,
+        sid,
+        ["account:keqing1", "account:70k_1号机", "account:70k_2号机", "account:mortal41b"],
+        participants_registry=participants_env,
+    )
+    by_model = {m["model_id"]: {a["account_id"] for a in m["accounts"]} for m in season["models"]}
+    assert by_model["human"] == {"account:keqing1"}
+    assert by_model["model:mortal-70k"] == {"account:70k_1号机", "account:70k_2号机"}
+    assert by_model["model:mortal41b"] == {"account:mortal41b"}
+    # 新 AI group 冻结唯一 current artifact 为 checkpoint
+    g70k = next(m for m in season["models"] if m["model_id"] == "model:mortal-70k")
+    assert g70k["checkpoint"] == "ckpt.pth"
+    assert g70k["model_identity_id"] == "model:mortal-70k"
+
+
+def test_enrollment_rejects_unknown_and_duplicate_accounts(participants_env, configs_dir):
+    sid = _season_draft(configs_dir)
+    with pytest.raises(ValueError, match="账号不存在"):
+        sr.set_season_enrollment(configs_dir, sid, ["account:ghost"], participants_registry=participants_env)
+    with pytest.raises(ValueError, match="不能重复"):
+        sr.set_season_enrollment(
+            configs_dir, sid, ["account:keqing1", "account:keqing1"], participants_registry=participants_env
+        )
+
+
+def test_enrollment_rejects_ai_account_without_model_binding(participants_env, configs_dir):
+    from participants.schemas import AccountCreate
+
+    participants_env.create_account(AccountCreate(account_id="account:unbound", display_name="unbound", account_type="managed_bot"))
+    sid = _season_draft(configs_dir)
+    with pytest.raises(ValueError, match="未绑定模型身份"):
+        sr.set_season_enrollment(configs_dir, sid, ["account:unbound"], participants_registry=participants_env)
+
+
+def test_enrollment_running_is_add_only(participants_env, configs_dir):
+    sid = _season_draft(configs_dir)
+    sr.set_season_status(configs_dir, sid, "running")
+    sr.set_season_enrollment(configs_dir, sid, ["account:keqing1"], participants_registry=participants_env)
+    # 增加新账号 → 允许
+    sr.set_season_enrollment(
+        configs_dir, sid, ["account:keqing1", "account:70k_1号机"], participants_registry=participants_env
+    )
+    # 移除现有成员 → 拒绝
+    with pytest.raises(SeasonRegistryError, match="只能增加账号"):
+        sr.set_season_enrollment(configs_dir, sid, ["account:keqing1"], participants_registry=participants_env)
+
+
+def test_enrollment_completed_is_read_only(participants_env, configs_dir):
+    sid = _season_draft(configs_dir)
+    sr.set_season_status(configs_dir, sid, "running")
+    sr.set_season_status(configs_dir, sid, "completed")
+    with pytest.raises(SeasonRegistryError, match="不可修改参赛阵容"):
+        sr.set_season_enrollment(configs_dir, sid, ["account:keqing1"], participants_registry=participants_env)
+
+
+def test_enrollment_legacy_group_backfill_unique_consistent(participants_env, configs_dir):
+    """R11-E2：legacy group（无 model_identity_id）成员推导唯一一致时自动 backfill。"""
+    from pathlib import Path as _P
+
+    import json as _json
+
+    sid = "legacy"
+    sr.create_season(configs_dir, season_id=sid)
+    path = configs_dir / "legacy.json"
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    cfg["models"] = [
+        {
+            "model_id": "70k",
+            "checkpoint": "artifacts/old.pth",
+            "accounts": [{"account_id": "account:70k_1号机"}],
+        }
+    ]
+    path.write_text(_json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+
+    season = sr.set_season_enrollment(
+        configs_dir, sid, ["account:70k_1号机", "account:70k_2号机"], participants_registry=participants_env
+    )
+    g70k = next(m for m in season["models"] if m["model_id"] == "70k")
+    assert g70k["model_identity_id"] == "model:mortal-70k"
+    assert g70k["checkpoint"] == "artifacts/old.pth"  # 已有 checkpoint 不漂移
+    assert {a["account_id"] for a in g70k["accounts"]} == {"account:70k_1号机", "account:70k_2号机"}
+
+
+def test_enrollment_legacy_group_ambiguous_backfill_fails_closed(participants_env, configs_dir):
+    """R11-E2：legacy group 内推导出多个 identity → fail closed，绝不猜。"""
+    import json as _json
+
+    sid = "ambig"
+    sr.create_season(configs_dir, season_id=sid)
+    path = configs_dir / "ambig.json"
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    cfg["models"] = [
+        {
+            "model_id": "mixed",
+            "accounts": [
+                {"account_id": "account:70k_1号机"},
+                {"account_id": "account:mortal41b"},
+            ],
+        }
+    ]
+    path.write_text(_json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="推导出多个模型身份"):
+        sr.set_season_enrollment(
+            configs_dir, sid, ["account:70k_1号机", "account:mortal41b"], participants_registry=participants_env
+        )
+
+
+def test_api_enrollment_endpoint(participants_env, configs_dir, monkeypatch):
+    """R11-E2：PUT /enrollment 端点（draft 可改；completed → 409）。"""
+    from replay import server
+
+    monkeypatch.setattr(server, "_LADDER_SEASONS_DIR", configs_dir)
+    sid = _season_draft(configs_dir)
+    resp = _run(server.set_ladder_season_enrollment(sid, {"account_ids": ["account:keqing1"]}))
+    assert resp.status_code == 200
+    body = _body(resp)
+    assert body["models"][0]["model_id"] == "human"
+    # 未知账号 → 409
+    resp = _run(server.set_ladder_season_enrollment(sid, {"account_ids": ["account:ghost"]}))
+    assert resp.status_code == 409
+    # 不存在的赛季 → 404
+    resp = _run(server.set_ladder_season_enrollment("ghost", {"account_ids": []}))
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # API-level（server 端点）
 # ---------------------------------------------------------------------------
 

@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from project_data import data_path
+from project_data import data_path, ladder_capture_root
 
 logger = logging.getLogger(__name__)
 
@@ -1239,7 +1239,9 @@ def stop_playwithyou() -> PlayWithYouStatus:
 # ---------------------------------------------------------------------------
 
 def _capture_root() -> Path:
-    return _ladder_data_root() / "captures" / "playwithyou"
+    # R11-C Repair 2：与 participants/intake 的 reader 共用同一 canonical helper，
+    # 两端不得各自拼接 capture 路径。
+    return ladder_capture_root()
 
 
 def _discover_captures() -> List[dict]:

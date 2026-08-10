@@ -486,8 +486,11 @@ def test_frozen_checkpoint_does_not_drift(tmp_path, monkeypatch):
 
 def test_discover_captures_exposes_roster_and_evidence(tmp_path, monkeypatch):
     """P2：_discover_captures 的 API 返回必须包含 roster 与 evidence_warning。"""
-    monkeypatch.setattr(pw, "_ladder_data_root", lambda: tmp_path / "ladder")
-    capture_dir = tmp_path / "ladder" / "captures" / "playwithyou" / "s1" / "pending"
+    # R11-C Repair 2：capture root 走 canonical helper（KEQING_LADDER_DATA_ROOT）
+    monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(tmp_path / "ladder"))
+    from project_data import ladder_capture_root
+
+    capture_dir = ladder_capture_root() / "s1" / "pending"
     capture_dir.mkdir(parents=True)
     payload = {
         "capture_id": "s1:tenhou:abc",

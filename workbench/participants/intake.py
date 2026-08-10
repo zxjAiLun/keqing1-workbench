@@ -237,12 +237,17 @@ def _auto_account_id(candidates: list, registry) -> str | None:
 def _session_id_for_log_id(log_id: str) -> str | None:
     """R11-C Repair：从 awaiting_import capture 反查 session 归属。
 
-    Play-with-you 对局结束后的 capture（``<data_root>/captures/playwithyou/
-    <session>/pending/*.json``，state=awaiting_import）带有 canonical 天凤链接；
-    解析出其 log_id 与该局一致即返回对应 session_id。这样 Import 只需要
+    Play-with-you 对局结束后的 capture（``ladder_capture_root()/<session>/
+    pending/*.json``，state=awaiting_import）带有 canonical 天凤链接；解析出其
+    log_id 与该局一致即返回对应 session_id。这样 Import 只需要
     ``?url=<tenhou-url>``，地址栏与表单都不再暴露 session_id。
+
+    capture 根与 writer（gateway 侧）共用 ``project_data.ladder_capture_root()``，
+    两端不得各自拼接路径。
     """
-    root = data_root() / "captures" / "playwithyou"
+    from project_data import ladder_capture_root
+
+    root = ladder_capture_root()
     if not root.is_dir():
         return None
     for session_dir in root.iterdir():
@@ -640,6 +645,11 @@ def resolve_and_create_match(
        锁内解析账号/别名/seat → 写 intake pending → 依次提交
        （账号 → 别名 → revision → match → artifact promote）→ 删 pending。
     """
+    # R11-C Repair 2：Confirm 与 Preview 必须复用同一个 provenance。前端可能
+    # 只带 ?url=（刷新/分享后无 SPA state），这里按 log_id 恢复 session_id，
+    # 使 _resolve_seat 能重新校验 session alias（NoName-N → frozen model）。
+    if not session_id:
+        session_id = _session_id_for_log_id(log_id)
     preview = build_preview(f"https://tenhou.net/3/?log={log_id}", session_id=session_id)
     tenhou6 = download_tenhou6(log_id)
     events = tenhou6_events(tenhou6)

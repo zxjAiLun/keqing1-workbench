@@ -29,3 +29,16 @@ def data_root() -> Path:
 def data_path(*parts: str) -> Path:
     """Build a path below :func:`data_root` without creating it."""
     return data_root().joinpath(*parts)
+
+
+def ladder_capture_root() -> Path:
+    """Play-with-you ladder capture root。
+
+    Writer（launcher collector 写 capture JSON）与 reader（participants intake 按
+    log_id 反查 session provenance）必须共用同一个路径合同，防止两端数据根漂移
+    （capture 一直落在 ``KEQING_DATA_ROOT/ladder/captures/playwithyou``）。
+    ``KEQING_LADDER_DATA_ROOT`` 为部署 override。
+    """
+    raw = os.environ.get("KEQING_LADDER_DATA_ROOT", "").strip()
+    root = Path(raw) if raw else data_path("ladder")
+    return root / "captures" / "playwithyou"

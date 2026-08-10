@@ -116,12 +116,17 @@ def test_resolve_and_create_match(fake_download, participants_root):
 
 def test_session_id_recovered_from_awaiting_import_capture(tmp_path, monkeypatch):
     """R11-C Repair：未显式带 session_id 时，intake 从 awaiting_import capture
-    按 log_id 反查 session provenance（Import URL 不再需要 session_id）。"""
+    按 log_id 反查 session provenance（Import URL 不再需要 session_id）。
+
+    用真实 canonical capture root（KEQING_LADDER_DATA_ROOT → ladder_capture_root()），
+    与生产 writer 的路径合同一致。
+    """
     import json
 
-    root = tmp_path / "captures"
-    monkeypatch.setattr(intake, "data_root", lambda: root)
-    session_dir = root / "captures" / "playwithyou" / "sess-from-capture" / "pending"
+    monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(tmp_path / "ladder"))
+    from project_data import ladder_capture_root
+
+    session_dir = ladder_capture_root() / "sess-from-capture" / "pending"
     session_dir.mkdir(parents=True, exist_ok=True)
     (session_dir / "c1.json").write_text(
         json.dumps(
@@ -149,6 +154,90 @@ def test_session_id_recovered_from_awaiting_import_capture(tmp_path, monkeypatch
 
     assert intake._session_id_for_log_id(FAKE_LOG_ID) == "sess-from-capture"
     assert intake._session_id_for_log_id("20260999gm-0000-2147-00000000") is None
+
+
+def test_vertical_session_recovery_from_capture(tmp_path, monkeypatch, fake_download, participants_root):
+    """R11-C Repair 2 vertical：只带 ?url=（无 session_id）时，Preview 与 Confirm
+    都从 awaiting_import capture 恢复同一 provenance。
+
+    一次覆盖两个 P1：capture 路径合同正确（ladder_capture_root）+ recovered
+    session 贯穿到 confirm（_resolve_seat 能重新校验 session alias）。
+    """
+    import json
+
+    from participants.schemas import ModelIdentityCreate
+
+    # 1. writer 合同：capture 落在 ladder_capture_root()（KEQING_LADDER_DATA_ROOT）
+    monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(tmp_path / "ladder"))
+    from project_data import ladder_capture_root
+
+    capture_dir = ladder_capture_root() / "sess-v" / "pending"
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    (capture_dir / "c1.json").write_text(
+        json.dumps(
+            {
+                "capture_id": "c1",
+                "session_id": "sess-v",
+                "state": "awaiting_import",
+                "tenhou_log_url": f"https://tenhou.net/3/?log={FAKE_LOG_ID}",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # 2. 账号 + 全局模型身份（account_id=None → 任意账号可绑定）
+    registry.create_account(AccountCreate(account_id="nick@01", display_name="Nick", account_type="human"))
+    registry.create_account(AccountCreate(account_id="70k-bot", display_name="70k bot", account_type="managed_bot"))
+    registry.create_model_identity(
+        ModelIdentityCreate(
+            model_identity_id="model:70k",
+            label="70k",
+            kind="local_model",
+            artifact_path="artifacts/mortal_training/checkpoints/mortal_default_70k_promoted_candidate.pth",
+        )
+    )
+
+    # 3. session alias：NoName-1 → frozen 70k 模型（account-less）
+    identity = registry.get_model_identity("model:70k")
+    frozen_artifact_id = identity.artifacts[0].model_artifact_id
+    session_alias = aliases.register_alias(
+        ExternalAliasCreate(
+            provider="tenhou",
+            external_id="NoName-1",
+            account_id=None,
+            model_identity_id="model:70k",
+            model_artifact_id=frozen_artifact_id,
+            scope="session",
+            session_id="sess-v",
+        )
+    )
+
+    # 4. Preview 无 session_id → 自动恢复 provenance，出现 frozen model candidate
+    preview = intake.build_preview(f"https://tenhou.net/3/?log={FAKE_LOG_ID}")
+    assert any(
+        c.get("model_identity_id") == "model:70k" and not c.get("account_id")
+        for c in preview["seats"][1]["candidates"]
+    )
+
+    # 5. Confirm 无 session_id → 复用恢复出的 session：落账成功且座位保留模型证据
+    resolutions = [
+        {"seat": 0, "action": "assign", "account_id": "nick@01", "alias_scope": "none"},
+        {
+            "seat": 1,
+            "action": "assign",
+            "account_id": "70k-bot",
+            "alias_id": session_alias.alias_id,
+            "alias_scope": "match",
+        },
+        {"seat": 2, "action": "create", "display_name": "Bot B", "account_type": "managed_bot", "alias_scope": "none"},
+        {"seat": 3, "action": "create", "display_name": "Friend", "account_type": "human", "alias_scope": "none"},
+    ]
+    result = intake.resolve_and_create_match(log_id=FAKE_LOG_ID, resolutions=resolutions)
+    match = ledger.get_match(result["match_id"])
+    assert match is not None
+    assert match.resolution["1"]["model_identity_id"] == "model:70k"
+    assert match.resolution["1"]["model_artifact_id"] == frozen_artifact_id
+    assert match.resolution["1"]["account_id"] == "70k-bot"
 
 
 def test_preview_auto_resolves_confirmed_global_alias(fake_download, participants_root):

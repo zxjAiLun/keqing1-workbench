@@ -6,6 +6,7 @@
 // - 未就绪不显示红色"应用崩溃"式 alert（那是 404/500 等真正请求错误才用）；
 // - 一旦实体 payload 成功，主体优先显示，本 notice 不再遮挡。
 import type { CSSProperties } from 'react';
+import { Link } from 'react-router-dom';
 import type { LadderSeason } from '../../types/ladder';
 
 interface LadderSeasonNoticeProps {
@@ -18,12 +19,19 @@ interface LadderSeasonNoticeProps {
 export function LadderSeasonNotice({ seasons, activeSeason, defaultSeasonId }: LadderSeasonNoticeProps) {
   const readiness = activeSeason?.readiness;
 
-  // 无默认且存在多个赛季：要求用户选择
-  if (!defaultSeasonId && seasons.length > 1) {
+  // R11-F：没有显式 default 就是"暂无当前正式赛季"——绝不自动猜第一个 running，
+  // 明确引导去赛季管理。
+  if (!defaultSeasonId) {
     return (
       <div className="card" style={cardStyle}>
-        <div style={titleStyle}>尚未配置默认赛季</div>
-        <div style={bodyStyle}>请选择一个赛季继续。</div>
+        <div style={titleStyle}>暂无当前正式赛季</div>
+        <div style={bodyStyle}>
+          {seasons.length > 0
+            ? '请在赛季管理中对 running 赛季执行「设为当前」。'
+            : '请先在赛季管理中创建并开始一个正式赛季。'}
+          {' '}
+          <Link to="/seasons" style={linkStyle}>前往赛季管理 →</Link>
+        </div>
       </div>
     );
   }
@@ -32,8 +40,11 @@ export function LadderSeasonNotice({ seasons, activeSeason, defaultSeasonId }: L
   if (seasons.length === 0) {
     return (
       <div className="card" style={cardStyle}>
+        <div style={titleStyle}>暂无已注册赛季</div>
         <div style={bodyStyle}>
-          暂无已注册赛季。往 <code>configs/ladder/seasons/</code> 添加赛季注册表并生成 platform account 报告后，这里会出现天梯数据。
+          请在赛季管理中创建赛季并设置参赛阵容。
+          {' '}
+          <Link to="/seasons" style={linkStyle}>前往赛季管理 →</Link>
         </div>
       </div>
     );
@@ -73,6 +84,12 @@ const cardStyle: CSSProperties = {
   color: 'var(--text-secondary)',
   fontSize: 13,
   marginBottom: 12,
+};
+
+const linkStyle: CSSProperties = {
+  color: 'var(--accent)',
+  fontWeight: 700,
+  fontSize: 12,
 };
 
 const titleStyle: CSSProperties = {

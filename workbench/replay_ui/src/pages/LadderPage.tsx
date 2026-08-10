@@ -22,6 +22,8 @@ const SORT_OPTIONS = [
 export function LadderPage() {
   const navigate = useNavigate();
   const [sort, setSort] = useState('rank');
+  // R11-F：正式榜以账号为主体；模型汇总为二级分析视图
+  const [tab, setTab] = useState<'accounts' | 'models'>('accounts');
 
   const catalog = useLadderSeasonCatalog();
   const { seasons, activeSeasonId, loading: catalogLoading } = catalog;
@@ -61,6 +63,10 @@ export function LadderPage() {
   // 未就绪时抑制裸 409 alert（结构化 Notice 已展示原因）；真正 404/500 仍显示
   const visibleError = catalog.error ?? (seasonProblem ? null : ladderQuery.error);
   const catalogLoaded = !catalog.loading;
+  // R11-F：completed/archived 是历史赛季，明显标识，不能看起来像当前正式榜
+  const historical = Boolean(activeSeason && (activeSeason.status === 'completed' || activeSeason.status === 'archived'));
+  const isHistoricalSeason = (season: { status?: string }) =>
+    season.status === 'completed' || season.status === 'archived';
 
   return (
     <PageShell width={1240}>
@@ -82,12 +88,29 @@ export function LadderPage() {
                 {seasons.map((season) => (
                   <option key={season.season_id} value={season.season_id}>
                     {season.title || season.season_id}
-                    {season.is_default ? '（默认）' : ''}
+                    {season.is_default ? '（当前）' : ''}
+                    {isHistoricalSeason(season) ? ' · 历史赛季' : ''}
                     {season.data_ready === false ? ' · 未就绪' : ''}
                   </option>
                 ))}
               </select>
             )}
+            {/* R11-F：账号排名（正式） / 模型汇总（二级分析） */}
+            <div style={{ display: 'flex', gap: 4 }}>
+              {([
+                ['accounts', '账号排名'],
+                ['models', '模型汇总'],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setTab(value)}
+                  style={sortButtonStyle(tab === value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <div style={{ display: 'flex', gap: 4 }}>
               {SORT_OPTIONS.map((option) => (
                 <button
@@ -103,6 +126,22 @@ export function LadderPage() {
           </div>
         )}
       />
+
+      {historical && (
+        <div
+          style={{
+            fontSize: 12,
+            padding: '6px 12px',
+            borderRadius: 6,
+            marginBottom: 10,
+            border: '1px solid #95a5a6',
+            background: 'rgba(149,165,166,0.08)',
+            color: 'var(--text-secondary)',
+          }}
+        >
+          ⏳ 历史赛季（{activeSeason?.status === 'completed' ? '已结束' : '已归档'}）——仅供回顾，不是当前正式榜。
+        </div>
+      )}
 
       {visibleError && <div role="alert" style={{ color: 'var(--error)', fontSize: 13, marginBottom: 10 }}>{visibleError}</div>}
       {(!visibleError && catalogLoading) || (loading && activeSeasonId) ? (
@@ -129,104 +168,118 @@ export function LadderPage() {
 
       {!loading && ladder && (
         <>
-          {/* 模型展示性聚合（正式排名仍以账号为主体） */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10, marginBottom: 12 }}>
-            {ladder.models.map((model) => (
-              <button
-                key={model.model_id}
-                type="button"
-                onClick={() => openModel(model)}
-                style={modelCardStyle}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>{model.model_id}</span>
-                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{model.accounts} 账号 · {model.games} 场</span>
-                </div>
-                <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
-                  {model.avg_pt !== null && (
-                    <span>均PT <b style={modelValueStyle}>{fmtPt(model.avg_pt)}</b></span>
-                  )}
-                  <span>最高 <b style={modelValueStyle}>{model.highest_rank_name || model.highest_rank_id || '—'}</b></span>
-                  <span>中位 <b style={modelValueStyle}>{model.median_rank_name || '—'}</b></span>
-                  <span>均R <b style={modelValueStyle}>{fmtRating(model.avg_rating)}</b></span>
-                  <span>均顺位 <b style={modelValueStyle}>{fmtRank(model.avg_rank)}</b></span>
-                </div>
-                {model.rank_distribution && Object.keys(model.rank_distribution).length > 0 && (
-                  <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
-                    {Object.entries(model.rank_distribution).map(([name, count]) => (
-                      <span key={name} style={{ fontSize: 10, color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 5px' }}>
-                        {name} ×{count}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </button>
-            ))}
-          </div>
-
-          {/* 账号天梯 */}
-          <div style={{ border: '1px solid var(--border)', borderRadius: 7, overflowX: 'auto', background: 'var(--card-bg)' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 1060 }}>
-              <thead>
-                <tr style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', textAlign: 'left' }}>
-                  <th style={thStyle}>排名</th>
-                  <th style={thStyle}>账号</th>
-                  <th style={thStyle}>模型</th>
-                  <th style={thStyle}>段位</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>PT</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>升段进度</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Rating</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>场数</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>平均顺位</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>一位率</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>四位率</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>和率</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>放铳率</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>副露率</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>立直率</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ladder.accounts.map((row) => (
-                  <tr
-                    key={row.account_id}
-                    onClick={() => openAccount(row)}
-                    style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
-                    title={`查看 ${row.display_name} 账号详情`}
+          {/* 模型汇总（二级分析视图；不出现 #1/#2 正式名次） */}
+          {tab === 'models' && (
+            <>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+                模型汇总（二级聚合——同一模型多个账号各自独立排名，此处只做分析，不是正式名次）
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10, marginBottom: 12 }}>
+                {ladder.models.map((model) => (
+                  <button
+                    key={model.model_id}
+                    type="button"
+                    onClick={() => openModel(model)}
+                    style={modelCardStyle}
                   >
-                    <td style={{ ...tdStyle, fontWeight: 800, color: 'var(--text-muted)' }}>{row.rank_position}</td>
-                    <td style={{ ...tdStyle, fontWeight: 800, color: 'var(--accent)' }}>{row.display_name}</td>
-                    <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{row.model_id}</td>
-                    <td style={{ ...tdStyle, fontWeight: 800 }}>
-                      {row.rank_name || '七段'}
-                      {row.tenhou_reached ? ' 👑' : ''}
-                    </td>
-                    <td style={{ ...tdStyle, ...numStyle, fontWeight: 800 }}>
-                      {row.pt_target !== null ? fmtPt(row.pt_current) : '—'}
-                    </td>
-                    <td style={{ ...tdStyle, ...numStyle }}>
-                      {row.pt_target !== null && row.pt_target > 0 ? (
-                        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-                          {fmtPt(row.pt_current)}/{fmtPt(row.pt_target)}
-                        </span>
-                      ) : (
-                        <span style={{ color: 'var(--success)' }}>天凤位</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>{model.model_id}</span>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{model.accounts} 账号 · {model.games} 场</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
+                      {model.avg_pt !== null && (
+                        <span>均PT <b style={modelValueStyle}>{fmtPt(model.avg_pt)}</b></span>
                       )}
-                    </td>
-                    <td style={{ ...tdStyle, ...numStyle }}>{fmtRating(row.rating)}</td>
-                    <td style={{ ...tdStyle, ...numStyle }}>{row.games}</td>
-                    <td style={{ ...tdStyle, ...numStyle }}>{fmtRank(row.avg_rank)}</td>
-                    <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.rank_1_rate)}</td>
-                    <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.rank_4_rate)}</td>
-                    <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.agari_rate)}</td>
-                    <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.houjuu_rate)}</td>
-                    <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.fuuro_rate)}</td>
-                    <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.riichi_rate)}</td>
-                  </tr>
+                      <span>最高 <b style={modelValueStyle}>{model.highest_rank_name || model.highest_rank_id || '—'}</b></span>
+                      <span>中位 <b style={modelValueStyle}>{model.median_rank_name || '—'}</b></span>
+                      <span>均R <b style={modelValueStyle}>{fmtRating(model.avg_rating)}</b></span>
+                      <span>均顺位 <b style={modelValueStyle}>{fmtRank(model.avg_rank)}</b></span>
+                    </div>
+                    {model.rank_distribution && Object.keys(model.rank_distribution).length > 0 && (
+                      <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                        {Object.entries(model.rank_distribution).map(([name, count]) => (
+                          <span key={name} style={{ fontSize: 10, color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 5px' }}>
+                            {name} ×{count}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </button>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </div>
+            </>
+          )}
+
+          {/* 账号天梯（正式排名主体） */}
+          {tab === 'accounts' && (
+            <>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+                账号排名（正式）——每个 Account 独立排名；同模型账号不合并。
+              </div>
+              <div style={{ border: '1px solid var(--border)', borderRadius: 7, overflowX: 'auto', background: 'var(--card-bg)' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 1060 }}>
+                  <thead>
+                    <tr style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', textAlign: 'left' }}>
+                      <th style={thStyle}>排名</th>
+                      <th style={thStyle}>账号</th>
+                      <th style={thStyle}>模型</th>
+                      <th style={thStyle}>段位</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>PT</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>升段进度</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>Rating</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>场数</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>平均顺位</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>一位率</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>四位率</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>和率</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>放铳率</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>副露率</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>立直率</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ladder.accounts.map((row) => (
+                      <tr
+                        key={row.account_id}
+                        onClick={() => openAccount(row)}
+                        style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                        title={`查看 ${row.display_name} 账号详情`}
+                      >
+                        <td style={{ ...tdStyle, fontWeight: 800, color: 'var(--text-muted)' }}>{row.rank_position}</td>
+                        <td style={{ ...tdStyle, fontWeight: 800, color: 'var(--accent)' }}>{row.display_name}</td>
+                        <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{row.model_id}</td>
+                        <td style={{ ...tdStyle, fontWeight: 800 }}>
+                          {row.rank_name || '七段'}
+                          {row.tenhou_reached ? ' 👑' : ''}
+                        </td>
+                        <td style={{ ...tdStyle, ...numStyle, fontWeight: 800 }}>
+                          {row.pt_target !== null ? fmtPt(row.pt_current) : '—'}
+                        </td>
+                        <td style={{ ...tdStyle, ...numStyle }}>
+                          {row.pt_target !== null && row.pt_target > 0 ? (
+                            <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                              {fmtPt(row.pt_current)}/{fmtPt(row.pt_target)}
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--success)' }}>天凤位</span>
+                          )}
+                        </td>
+                        <td style={{ ...tdStyle, ...numStyle }}>{fmtRating(row.rating)}</td>
+                        <td style={{ ...tdStyle, ...numStyle }}>{row.games}</td>
+                        <td style={{ ...tdStyle, ...numStyle }}>{fmtRank(row.avg_rank)}</td>
+                        <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.rank_1_rate)}</td>
+                        <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.rank_4_rate)}</td>
+                        <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.agari_rate)}</td>
+                        <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.houjuu_rate)}</td>
+                        <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.fuuro_rate)}</td>
+                        <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.riichi_rate)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
 
           {ladder.season.scoring && (
             <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>

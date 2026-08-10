@@ -88,6 +88,10 @@ export function LadderModelPage() {
 
       {!loading && detail && model && (
         <>
+          {/* R11-F2：模型聚合是分析视图；正式排名以账号为主体 */}
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+            模型聚合为分析视图——正式排名始终以 Account 为主体；同一模型下的每个账号独立计分。
+          </div>
           {/* 模型汇总（展示性聚合，不另算 Rating；跨段位不平均 PT） */}
           {model.summary && (
             <section className="card" style={{ padding: 14, marginBottom: 12 }}>

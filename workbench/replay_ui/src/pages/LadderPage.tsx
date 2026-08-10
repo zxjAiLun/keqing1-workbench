@@ -173,6 +173,7 @@ export function LadderPage() {
             <>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
                 模型汇总（二级聚合——同一模型多个账号各自独立排名，此处只做分析，不是正式名次）
+                <span style={{ marginLeft: 6 }}>点击模型卡片查看账号明细 →</span>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10, marginBottom: 12 }}>
                 {ladder.models.map((model) => (

@@ -54,8 +54,50 @@ def test_create_season_rejects_duplicate_and_empty(configs_dir):
     sr.create_season(configs_dir, season_id="season-x")
     with pytest.raises(ValueError, match="赛季已存在"):
         sr.create_season(configs_dir, season_id="season-x")
-    with pytest.raises(ValueError, match="season_id 不能为空"):
+    with pytest.raises(ValueError, match="season_id"):
         sr.create_season(configs_dir, season_id="  ")
+
+
+def test_season_id_rejects_path_traversal_and_bad_chars(configs_dir):
+    """R11-E1 Repair：season_id 必须落在 registry 目录内的普通 JSON 文件。"""
+    for bad in ("../evil", "a/b", "a\\b", "a b", ".hidden", "..", "", "a.b"):
+        with pytest.raises(ValueError, match="season_id"):
+            sr.create_season(configs_dir, season_id=bad)
+    # containment 兜底：_season_path 对非法 id 同样拒绝
+    with pytest.raises(ValueError, match="season_id"):
+        sr._season_path(configs_dir, "../evil")
+    # 合法 id 仍可创建，且文件确实落在 registry 目录内
+    season = sr.create_season(configs_dir, season_id="season-2026_08")
+    assert (configs_dir / "season-2026_08.json").exists()
+
+
+def test_concurrent_set_default_keeps_single_default(configs_dir):
+    """R11-E1 Repair：并发 set_default 不产生双 default（registry mutation 锁）。"""
+    import threading
+
+    for sid in ("s1", "s2"):
+        sr.create_season(configs_dir, season_id=sid)
+        sr.set_season_status(configs_dir, sid, "running")
+
+    results: list[Exception | None] = [None, None]
+
+    def _set(idx: int, sid: str):
+        try:
+            sr.set_default_season(configs_dir, sid)
+        except Exception as exc:  # noqa: BLE001
+            results[idx] = exc
+
+    threads = [
+        threading.Thread(target=_set, args=(0, "s1")),
+        threading.Thread(target=_set, args=(1, "s2")),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert all(r is None for r in results)
+    defaults = [s for s in sr.list_season_configs(configs_dir) if s.get("default") is True]
+    assert len(defaults) == 1
 
 
 # ---------------------------------------------------------------------------

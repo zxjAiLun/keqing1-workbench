@@ -212,23 +212,30 @@ def _explicit_defaults(seasons: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def validate_default_season_contract(seasons: list[dict[str, Any]]) -> None:
-    """校验全局最多一个显式 default。
+    """校验 default 合同（R11-E1 升级版）。
 
-    2 个及以上显式 default 视为整个配置无效（SeasonRegistryError）。
+    - 全局最多一个显式 default；
+    - explicit default 必须 ``status == "running"``
+      （draft/completed/archived 带 default=true 视为注册表损坏）。
     """
     defaults = _explicit_defaults(seasons)
     if len(defaults) > 1:
         ids = ", ".join(str(season.get("season_id")) for season in defaults)
         raise SeasonRegistryError(f"season default 重复（最多一个）: {ids}")
+    if len(defaults) == 1:
+        season = defaults[0]
+        if str(season.get("status") or "") != "running":
+            raise SeasonRegistryError(
+                f"赛季 {season.get('season_id')} 标记为 default 但状态不是 running"
+            )
 
 
 def resolve_default_season(seasons: list[dict[str, Any]]) -> tuple[str | None, str | None]:
     """解析默认赛季，返回 ``(default_season_id, default_source)``。
 
-    - 0 个显式 default：
-        只有一个赛季 → 自动作为默认，source="single_season"
-        多个赛季 → 没有默认，不得猜测（source=None）
-    - 1 个显式 default：该赛季为默认（即使数据未就绪），source="registry"
+    - 1 个显式 default（且已通过 validate_default_season_contract 校验 running）：
+      该赛季为默认，source="registry"
+    - 0 个显式 default：**没有当前赛季，不得猜测**（R11-E1：取消 single_season 自动默认）
     - 2 个及以上显式 default：调用前应已通过 validate_default_season_contract 拒绝。
 
     默认赛季是运维选择，不按字典序 / 最新 updated_at / data-ready / status 推断。
@@ -238,8 +245,6 @@ def resolve_default_season(seasons: list[dict[str, Any]]) -> tuple[str | None, s
         return str(defaults[0].get("season_id")), "registry"
     if len(defaults) > 1:
         raise SeasonRegistryError("season default 重复（最多一个）")
-    if len(seasons) == 1:
-        return str(seasons[0].get("season_id")), "single_season"
     return None, None
 
 

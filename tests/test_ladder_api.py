@@ -512,13 +512,26 @@ def _write_two_seasons(tmp_path: Path, *, a: dict, b: dict, report_accounts=None
     return {"root": tmp_path, "configs": configs_dir}
 
 
-def test_single_season_without_default_auto_selected(tmp_path: Path):
+def test_single_season_without_default_has_no_current(tmp_path: Path):
+    """R11-E1：取消 single_season 自动默认——没有显式 default 就没有当前赛季。"""
     configs_dir = tmp_path / "configs" / "ladder" / "seasons"
     configs_dir.mkdir(parents=True)
     (configs_dir / "only.json").write_text(json.dumps(_season(season_id="only")), encoding="utf-8")
     catalog = ladder.list_seasons_catalog(tmp_path, configs_dir)
-    assert catalog["default_season_id"] == "only"
-    assert catalog["default_source"] == "single_season"
+    assert catalog["default_season_id"] is None
+    assert catalog["default_source"] is None
+
+
+def test_default_must_be_running_else_registry_damaged(tmp_path: Path):
+    """R11-E1：explicit default 必须 running——completed+default=true 视为注册表损坏。"""
+    configs_dir = tmp_path / "configs" / "ladder" / "seasons"
+    configs_dir.mkdir(parents=True)
+    (configs_dir / "old.json").write_text(
+        json.dumps(_season(season_id="old", status="completed", default=True)),
+        encoding="utf-8",
+    )
+    with pytest.raises(ladder.SeasonRegistryError, match="default 但状态不是 running"):
+        ladder.list_seasons_catalog(tmp_path, configs_dir)
 
 
 def test_multiple_seasons_without_default_returns_null(tmp_path: Path):
@@ -531,7 +544,7 @@ def test_multiple_seasons_without_default_returns_null(tmp_path: Path):
 def test_single_explicit_default(tmp_path: Path):
     env = _write_two_seasons(
         tmp_path,
-        a=_season(season_id="aaa", default=True),
+        a=_season(season_id="aaa", status="running", default=True),
         b=_season(season_id="zzz"),
     )
     catalog = ladder.list_seasons_catalog(tmp_path, env["configs"])
@@ -546,7 +559,7 @@ def test_default_ignores_lexicographic_order(tmp_path: Path):
     env = _write_two_seasons(
         tmp_path,
         a=_season(season_id="aaa-history"),
-        b=_season(season_id="zzz-live", default=True),
+        b=_season(season_id="zzz-live", status="running", default=True),
     )
     catalog = ladder.list_seasons_catalog(tmp_path, env["configs"])
     # default 是运维选择，不按字典序
@@ -562,7 +575,7 @@ def test_default_may_be_not_ready(tmp_path: Path):
         b=_season(season_id="zzz"),
     )
     (tmp_path / "configs" / "ladder" / "seasons" / "aaa.json").write_text(
-        json.dumps(_season(season_id="aaa", default=True, report_dir="artifacts/missing")), encoding="utf-8")
+        json.dumps(_season(season_id="aaa", status="running", default=True, report_dir="artifacts/missing")), encoding="utf-8")
     catalog = ladder.list_seasons_catalog(tmp_path, env["configs"])
     assert catalog["default_season_id"] == "aaa"
     by_id = {entry["season_id"]: entry for entry in catalog["seasons"]}
@@ -573,8 +586,8 @@ def test_default_may_be_not_ready(tmp_path: Path):
 def test_two_explicit_defaults_rejected(tmp_path: Path):
     configs_dir = tmp_path / "configs" / "ladder" / "seasons"
     configs_dir.mkdir(parents=True)
-    (configs_dir / "aaa.json").write_text(json.dumps(_season(season_id="aaa", default=True)), encoding="utf-8")
-    (configs_dir / "zzz.json").write_text(json.dumps(_season(season_id="zzz", default=True)), encoding="utf-8")
+    (configs_dir / "aaa.json").write_text(json.dumps(_season(season_id="aaa", status="running", default=True)), encoding="utf-8")
+    (configs_dir / "zzz.json").write_text(json.dumps(_season(season_id="zzz", status="running", default=True)), encoding="utf-8")
     with pytest.raises(ladder.SeasonRegistryError, match="default 重复"):
         ladder.list_seasons_catalog(tmp_path, configs_dir)
 
@@ -592,8 +605,8 @@ def test_duplicate_default_fails_all_entity_loaders(tmp_path: Path):
     """重复 default 必须让 catalog 与实体端点全部失败（统一入口校验）。"""
     configs_dir = tmp_path / "configs" / "ladder" / "seasons"
     configs_dir.mkdir(parents=True)
-    (configs_dir / "aaa.json").write_text(json.dumps(_season(season_id="aaa", default=True)), encoding="utf-8")
-    (configs_dir / "zzz.json").write_text(json.dumps(_season(season_id="zzz", default=True)), encoding="utf-8")
+    (configs_dir / "aaa.json").write_text(json.dumps(_season(season_id="aaa", status="running", default=True)), encoding="utf-8")
+    (configs_dir / "zzz.json").write_text(json.dumps(_season(season_id="zzz", status="running", default=True)), encoding="utf-8")
     with pytest.raises(ladder.SeasonRegistryError, match="default 重复"):
         ladder.list_seasons_catalog(tmp_path, configs_dir)
     with pytest.raises(ladder.SeasonRegistryError, match="default 重复"):

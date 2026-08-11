@@ -1690,13 +1690,11 @@ async def get_ladder_season_config(season_id: str):
 
 @app.delete("/api/ladder/seasons/{season_id}", response_class=JSONResponse)
 async def delete_ladder_season(season_id: str):
-    """删除赛季（R11 post-release）：running/current 禁止；有 Match 引用拒绝。"""
+    """删除赛季（R11 post-release）：服务级事务——data_lock + registry lock 内
+    重新校验 running/default 并重新 count Match 引用（防 TOCTOU）。"""
     sr = _season_manager()
     try:
-        from participants import ledger as participants_ledger
-
-        referenced = participants_ledger.count_matches_for_season(season_id)
-        result = sr.delete_season(_LADDER_SEASONS_DIR, season_id, referenced_match_count=referenced)
+        result = sr.delete_season(_LADDER_SEASONS_DIR, season_id)
     except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
         return _manager_errors(exc)
     return JSONResponse(content=result)

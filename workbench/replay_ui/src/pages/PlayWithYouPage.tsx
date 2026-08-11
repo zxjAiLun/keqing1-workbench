@@ -96,9 +96,10 @@ export function PlayWithYouPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // PWY UX Repair：固定三槽，默认 AI #1 = 70k（catalog 加载后校正），其余不呼出。
-  const [slots, setSlots] = useState<string[]>(["70k", "", ""]);
+  // PWY UX Repair：固定三槽；catalog 加载完成后再决定 AI #1 默认值（70k 或首个）。
+  const [slots, setSlots] = useState<string[]>(["", "", ""]);
   const [models, setModels] = useState<RuntimeModelInfo[]>([]);
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
 
   const logRef = useRef<HTMLDivElement | null>(null);
   const pollingRef = useRef<number | null>(null);
@@ -174,14 +175,13 @@ export function PlayWithYouPage() {
     listPlayWithYouModels()
       .then((resp) => {
         setModels(resp.models);
-        // 运行时模型目录驱动的安全默认：AI #1 若不在目录中 → 70k（存在时），
-        // 否则 catalog 第一个；AI #2/#3 维持"不呼出"。
+        setCatalogLoaded(true);
+        // 运行时模型目录驱动的安全默认：AI #1 = 70k（存在时），否则 catalog 第一个；
+        // AI #2/#3 维持"不呼出"；已选但已不在目录的槽位回退为不呼出。
         setSlots((prev) => {
-          const first = resp.models.some((m) => m.model_id === prev[0])
-            ? prev[0]
-            : resp.models.find((m) => m.model_id === "70k")?.model_id
-              ?? resp.models[0]?.model_id
-              ?? "";
+          const first = resp.models.find((m) => m.model_id === "70k")?.model_id
+            ?? resp.models[0]?.model_id
+            ?? "";
           return [
             first,
             resp.models.some((m) => m.model_id === prev[1]) ? prev[1] : "",
@@ -239,9 +239,9 @@ export function PlayWithYouPage() {
         ) : (
           <button
             onClick={start}
-            disabled={loading}
+            disabled={loading || !catalogLoaded}
             className="btn-primary"
-            style={{ height: 34, padding: "0 16px", fontSize: 13, background: loading ? "var(--text-muted)" : ACCENT }}
+            style={{ height: 34, padding: "0 16px", fontSize: 13, background: loading || !catalogLoaded ? "var(--text-muted)" : ACCENT }}
           >
             {loading ? "呼出中..." : "呼出"}
           </button>

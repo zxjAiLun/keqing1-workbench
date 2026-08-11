@@ -145,32 +145,93 @@ def test_reopen_does_not_claim_current_and_audits(configs_dir):
 
 
 # ---------------------------------------------------------------------------
-# R11 post-release：删除赛季
+# R11 post-release：删除赛季（服务级事务，防 TOCTOU）
 # ---------------------------------------------------------------------------
 
 def test_delete_season_running_and_current_refused(configs_dir):
     sr.create_season(configs_dir, season_id="s1")
     sr.set_season_status(configs_dir, "s1", "running")
     with pytest.raises(SeasonRegistryError, match="running 赛季不可删除"):
-        sr.delete_season(configs_dir, "s1", referenced_match_count=0)
+        sr.delete_season(configs_dir, "s1")
     sr.set_default_season(configs_dir, "s1")
     with pytest.raises(SeasonRegistryError, match="当前正式赛季不可删除"):
-        sr.delete_season(configs_dir, "s1", referenced_match_count=0)
+        sr.delete_season(configs_dir, "s1")
 
 
-def test_delete_season_refused_when_matches_reference(configs_dir):
+def test_delete_after_reopen_refused(configs_dir):
+    """TOCTOU 语义：删除前被 reopen 成 running 的赛季不可删（锁内重读）。"""
     sr.create_season(configs_dir, season_id="s1")
     sr.set_season_status(configs_dir, "s1", "running")
     sr.set_season_status(configs_dir, "s1", "completed")
-    with pytest.raises(SeasonRegistryError, match="2 场历史对局引用"):
-        sr.delete_season(configs_dir, "s1", referenced_match_count=2)
+    sr.set_season_status(configs_dir, "s1", "running")  # reopen
+    with pytest.raises(SeasonRegistryError, match="running 赛季不可删除"):
+        sr.delete_season(configs_dir, "s1")
     assert (configs_dir / "s1.json").exists()
+
+
+def test_delete_refused_when_ledger_references(configs_dir, tmp_path, monkeypatch):
+    """锁内重新 count：真实 Match Ledger 引用 → 拒绝硬删除（不产生 dangling Match）。"""
+    from participants import ledger, registry
+    from participants.schemas import AccountCreate, MatchCreate, MatchSeat
+
+    monkeypatch.setenv("KEQING_PARTICIPANT_DATA_ROOT", str(tmp_path / "participants"))
+    monkeypatch.setenv("KEQING_LADDER_CONFIG_DIR", str(configs_dir))
+    sr.create_season(configs_dir, season_id="s1")
+    for i in range(4):
+        registry.create_account(AccountCreate(account_id=f"p{i}", display_name=f"p{i}", account_type="human"))
+    sr.set_season_enrollment(configs_dir, "s1", [f"p{i}" for i in range(4)], participants_registry=registry)
+    sr.set_season_status(configs_dir, "s1", "running")
+    ledger.create_match(
+        MatchCreate(
+            occurred_at="2026-08-11T12:00:00+08:00",
+            game_length="hanchan",
+            season_id="s1",
+            rating_eligible=True,
+            source="manual",
+            seats=[MatchSeat(seat=i, account_id=f"p{i}", controller_type="human_ui") for i in range(4)],
+            final_scores=[30000, 25000, 20000, 25000],
+        ),
+        registry,
+    )
+    sr.set_season_status(configs_dir, "s1", "completed")
+    with pytest.raises(SeasonRegistryError, match="1 场历史对局引用"):
+        sr.delete_season(configs_dir, "s1")
+    assert (configs_dir / "s1.json").exists()
+
+
+def test_delete_waits_for_ledger_lock(configs_dir, tmp_path, monkeypatch):
+    """固定锁序：delete 必须取得 ledger data_lock 后才读/删——
+    data_lock 被占时阻塞，释放后完成（与进行中的 intake 互斥）。"""
+    import threading
+    import time as _time
+
+    from participants.paths import data_lock
+
+    monkeypatch.setenv("KEQING_PARTICIPANT_DATA_ROOT", str(tmp_path / "participants"))
+    sr.create_season(configs_dir, season_id="s1")
+    results: list = []
+
+    def _delete():
+        try:
+            results.append(sr.delete_season(configs_dir, "s1"))
+        except Exception as exc:  # noqa: BLE001
+            results.append(exc)
+
+    with data_lock():
+        t = threading.Thread(target=_delete)
+        t.start()
+        _time.sleep(0.4)
+        assert results == [], "delete must block while ledger lock is held"
+    t.join(timeout=10)
+    assert len(results) == 1
+    assert results[0]["deleted"] is True
+    assert not (configs_dir / "s1.json").exists()
 
 
 def test_delete_season_draft_without_reference_cleans_owned_state(configs_dir, tmp_path):
     sr.create_season(configs_dir, season_id="s1")
     assert (configs_dir / "s1.json").exists()
-    result = sr.delete_season(configs_dir, "s1", referenced_match_count=0)
+    result = sr.delete_season(configs_dir, "s1")
     assert result["deleted"] is True
     assert not (configs_dir / "s1.json").exists()
 
@@ -200,7 +261,7 @@ def test_delete_season_cleans_dirty_lock_and_owned_snapshots(configs_dir, tmp_pa
     external.mkdir(parents=True)
     (external / "keep.txt").write_text("keep", encoding="utf-8")
 
-    sr.delete_season(configs_dir, "s1", referenced_match_count=0, participants_data_root=participants_root)
+    sr.delete_season(configs_dir, "s1", participants_data_root=participants_root)
     assert not (configs_dir / "s1.json").exists()
     assert not dirty.exists()
     assert not lock.exists()

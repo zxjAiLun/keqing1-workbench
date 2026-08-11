@@ -236,47 +236,66 @@ def delete_season(
     configs_dir: Path,
     season_id: str,
     *,
-    referenced_match_count: int,
     participants_data_root: Path | None = None,
 ) -> dict[str, Any]:
-    """R11 post-release：删除赛季（Season Manager）。
+    """R11 post-release：删除赛季——服务级事务（防 TOCTOU）。
 
-    合同：
-    - running / 当前 default 赛季：禁止删除；
-    - 其他状态（draft/completed/archived）：允许删除，但若 Match Ledger 有任何
-      对局引用该 season_id → 拒绝硬删除（绝不连 Match 一起删）；
-    - 无引用时：删除 season registry JSON + Workbench 认领的派生数据
-      （dirty marker / projection lock / ``ladder/seasons/<id>`` 快照目录——
-      该目录必须是 Workbench 布局内的固定路径，绝不按 registry report_dir
-      递归删除任意路径）。
+    顺序取得固定锁（ledger ``data_lock`` → registry lock），**在锁内**：
+    1. 重新读取 season；
+    2. 重新校验 default==false 且 status != running
+       （防止"删除前刚被 reopen 成 running"的竞态）；
+    3. 重新 count Match Ledger 引用（不信任调用方传入的旧数字；
+       data_lock 已排除进行中的 intake，不会产生 dangling Match）；
+    4. reference > 0 → 拒绝；
+    5. 删除 season registry JSON + Workbench 认领的派生数据
+       （dirty marker / projection lock / ``ladder/seasons/<id>`` 快照目录——
+       该目录必须是 Workbench 布局内的固定路径，绝不按 registry report_dir
+       递归删除任意路径）；清理失败记录 warning，不静默。
     """
-    season = get_season_config(configs_dir, season_id)
-    status = str(season.get("status") or "draft")
-    if season.get("default") is True:
-        raise SeasonRegistryError("当前正式赛季不可删除（请先设其他赛季为当前）")
-    if status == "running":
-        raise SeasonRegistryError("running 赛季不可删除（请先结束/归档）")
-    if referenced_match_count > 0:
-        raise SeasonRegistryError(
-            f"该赛季仍被 {referenced_match_count} 场历史对局引用，拒绝删除"
-        )
+    from participants import ledger as participants_ledger
+    from participants.paths import data_lock as participants_data_lock
 
-    # 1. season registry JSON
-    path = _season_path(configs_dir, season_id)
-    path.unlink(missing_ok=True)
+    warnings: list[str] = []
+    with participants_data_lock(), _registry_lock(configs_dir):
+        season = get_season_config(configs_dir, season_id)
+        status = str(season.get("status") or "draft")
+        if season.get("default") is True:
+            raise SeasonRegistryError("当前正式赛季不可删除（请先设其他赛季为当前）")
+        if status == "running":
+            raise SeasonRegistryError("running 赛季不可删除（请先结束/归档）")
+        referenced = participants_ledger.count_matches_for_season_locked(season_id)
+        if referenced > 0:
+            raise SeasonRegistryError(
+                f"该赛季仍被 {referenced} 场历史对局引用，拒绝删除"
+            )
 
-    # 2. Workbench 认领的派生数据（仅固定布局内路径）
-    from project_data import data_path as _data_path
+        path = _season_path(configs_dir, season_id)
+        path.unlink(missing_ok=True)
 
-    dirty = (participants_data_root or _data_path("participants")) / f"ladder_dirty_{season_id}.json"
-    dirty.unlink(missing_ok=True)
-    lock = (participants_data_root or _data_path("participants")) / "projection_locks" / f"{season_id}.lock"
-    lock.unlink(missing_ok=True)
-    owned_snapshots = _data_path("ladder") / "seasons" / season_id
-    if owned_snapshots.is_dir():
-        shutil.rmtree(owned_snapshots, ignore_errors=True)
+        from project_data import data_path as _data_path
 
-    return {"season_id": season_id, "deleted": True}
+        participants_root = participants_data_root or _data_path("participants")
+        dirty = participants_root / f"ladder_dirty_{season_id}.json"
+        try:
+            dirty.unlink(missing_ok=True)
+        except OSError as exc:
+            warnings.append(f"dirty marker 清理失败: {exc}")
+        lock = participants_root / "projection_locks" / f"{season_id}.lock"
+        try:
+            lock.unlink(missing_ok=True)
+        except OSError as exc:
+            warnings.append(f"projection lock 清理失败: {exc}")
+        owned_snapshots = _data_path("ladder") / "seasons" / season_id
+        if owned_snapshots.is_dir():
+            try:
+                shutil.rmtree(owned_snapshots)
+            except OSError as exc:
+                warnings.append(f"快照目录清理失败: {exc}")
+
+        result: dict[str, Any] = {"season_id": season_id, "deleted": True}
+        if warnings:
+            result["cleanup_warnings"] = warnings
+        return result
 
 
 # ---------------------------------------------------------------------------

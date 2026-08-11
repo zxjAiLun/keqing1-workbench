@@ -135,11 +135,20 @@ def list_matches(
 
 
 def count_matches_for_season(season_id: str) -> int:
-    """R11 post-release：统计引用该赛季的历史对局数（删除赛季前的引用检查）。
+    """统计引用该赛季的历史对局数（删除赛季前的引用检查）。
 
     任何 status（含 void）都算引用——历史事实仍指向该赛季。
     """
     _maybe_recover_pending()
+    return count_matches_for_season_locked(season_id)
+
+
+def count_matches_for_season_locked(season_id: str) -> int:
+    """锁内版本：调用方已持有 data_lock 时使用。
+
+    不做 pending 恢复（恢复本身要获取 data_lock，锁内调用会自锁）；
+    data_lock 已保证没有进行中的 intake 事务，因此跳过恢复是安全的。
+    """
     return sum(1 for raw in _read_match_rows() if Match.model_validate(raw).season_id == season_id)
 
 

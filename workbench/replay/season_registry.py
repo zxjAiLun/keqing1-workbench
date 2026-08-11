@@ -36,11 +36,13 @@ SEASON_STATUSES = ("draft", "running", "completed", "archived")
 # season_id 安全字符集：字母/数字开头，后续允许字母/数字/下划线/连字符，最长 64。
 SEASON_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
-# status → 允许迁移到的状态（生命周期单向）
+# status → 允许迁移到的状态（生命周期）。
+# ``completed`` 是"已结束/暂停"状态，允许管理员 reopen（completed → running）；
+# ``archived`` 永久锁定，永不 reopen。
 _STATUS_TRANSITIONS: dict[str, set[str]] = {
     "draft": {"running"},
     "running": {"completed", "archived"},
-    "completed": {"archived"},
+    "completed": {"archived", "running"},
     "archived": set(),
 }
 
@@ -161,10 +163,14 @@ def create_season(
 
 
 def set_season_status(configs_dir: Path, season_id: str, status: str) -> dict[str, Any]:
-    """迁移赛季状态（draft→running→completed→archived）。
+    """迁移赛季状态（draft→running ⇄ completed→archived）。
 
     - 非法迁移 → 409（SeasonRegistryError）；
-    - 当前 default 赛季离开 running 时自动摘除 default（需要新赛季时显式"设为当前"）。
+    - ``completed → running`` 是管理员 reopen（修正误结束）：
+      - archived 永不 reopen；
+      - reopen 不自动抢占当前赛季（default 保持 false，由用户显式"设为当前"）；
+      - 写入 ``reopened_at`` 审计字段；
+    - 当前 default 赛季离开 running 时自动摘除 default（需要新赛季时显式"设为当前"）；
     - mutation 全程持锁（防止并发基于旧状态校验通过后互相覆盖）。
     """
     status = (status or "").strip()
@@ -179,6 +185,9 @@ def set_season_status(configs_dir: Path, season_id: str, status: str) -> dict[st
 
         updated = dict(season)
         updated["status"] = status
+        if current == "completed" and status == "running":
+            # R11-E Post-release Repair：reopen 审计 + 不自动抢占当前
+            updated["reopened_at"] = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
         if status != "running" and updated.get("default") is True:
             # 不变量：default 必须 running——结束/归档当前赛季即摘除 default
             updated["default"] = False

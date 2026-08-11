@@ -105,21 +105,43 @@ def test_concurrent_set_default_keeps_single_default(configs_dir):
 # ---------------------------------------------------------------------------
 
 def test_status_transitions_are_forward_only(configs_dir):
+    """R11-E Post-release Repair：completed 允许 reopen（completed→running）；
+    archived 永久锁定；非法迁移（倒退/跳级）全部拒绝。"""
     sr.create_season(configs_dir, season_id="s1")
     sr.set_season_status(configs_dir, "s1", "running")
     sr.set_season_status(configs_dir, "s1", "completed")
     sr.set_season_status(configs_dir, "s1", "archived")
     assert sr.get_season(configs_dir, "s1")["status"] == "archived"
+    # archived 永不 reopen
+    with pytest.raises(SeasonRegistryError, match="状态迁移非法"):
+        sr.set_season_status(configs_dir, "s1", "running")
 
-    # 倒退迁移全部拒绝
     _write_season(configs_dir, "s2")  # running
     with pytest.raises(SeasonRegistryError, match="状态迁移非法"):
         sr.set_season_status(configs_dir, "s2", "draft")
     sr.set_season_status(configs_dir, "s2", "completed")
     with pytest.raises(SeasonRegistryError, match="状态迁移非法"):
-        sr.set_season_status(configs_dir, "s2", "running")
-    with pytest.raises(SeasonRegistryError, match="状态迁移非法"):
         sr.set_season_status(configs_dir, "s2", "draft")
+    # completed → running：reopen 合法
+    sr.set_season_status(configs_dir, "s2", "running")
+    assert sr.get_season(configs_dir, "s2")["status"] == "running"
+
+
+def test_reopen_does_not_claim_current_and_audits(configs_dir):
+    """R11-E Post-release Repair：reopen 后 default 保持 false（不自动抢占当前），
+    且写入 reopened_at 审计字段。"""
+    sr.create_season(configs_dir, season_id="s1")
+    sr.set_season_status(configs_dir, "s1", "running")
+    sr.set_season_status(configs_dir, "s1", "completed")
+    assert sr.get_season(configs_dir, "s1")["default"] is False
+
+    reopened = sr.set_season_status(configs_dir, "s1", "running")
+    assert reopened["status"] == "running"
+    assert reopened["default"] is False
+    assert reopened.get("reopened_at")
+    # 显式"设为当前"才抢占
+    sr.set_default_season(configs_dir, "s1")
+    assert sr.get_season(configs_dir, "s1")["default"] is True
 
 
 def test_complete_default_season_clears_default(configs_dir):

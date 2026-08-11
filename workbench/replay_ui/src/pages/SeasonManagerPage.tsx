@@ -248,17 +248,43 @@ export function SeasonManagerPage() {
                   >
                     {isCurrent ? '已是当前赛季' : '设为当前'}
                   </button>
-                  <button style={ghostBtn} disabled={busy} onClick={() => void run(() => ladderApi.completeSeason(config.season_id))}>
+                  <button
+                    style={ghostBtn}
+                    disabled={busy}
+                    onClick={() => {
+                      // R11-E Post-release Repair：结束是破坏性操作，需要确认
+                      if (window.confirm('结束后将停止作为当前正式赛季（PT/Rating/对局数据保留）。确定结束？')) {
+                        void run(() => ladderApi.completeSeason(config.season_id));
+                      }
+                    }}
+                  >
                     结束赛季
                   </button>
                 </>
               )}
               {status === 'completed' && (
-                <button style={ghostBtn} disabled={busy} onClick={() => void run(() => ladderApi.archiveSeason(config.season_id))}>
-                  归档赛季
-                </button>
+                <>
+                  <button
+                    style={{ ...ghostBtn, borderColor: '#27ae60', color: '#27ae60' }}
+                    disabled={busy}
+                    onClick={() => void run(() => ladderApi.startSeason(config.season_id))}
+                  >
+                    重新开启
+                  </button>
+                  <button
+                    style={ghostBtn}
+                    disabled={busy}
+                    onClick={() => {
+                      if (window.confirm('归档后赛季永久锁定，不可重新开启。确定归档？')) {
+                        void run(() => ladderApi.archiveSeason(config.season_id));
+                      }
+                    }}
+                  >
+                    归档赛季
+                  </button>
+                </>
               )}
-              {status === 'archived' && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>已归档（只读）</span>}
+              {status === 'archived' && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>已归档（永久只读）</span>}
             </div>
 
             {/* 参赛阵容（只来自 Participants Accounts） */}

@@ -306,6 +306,109 @@ def test_auto_account_id_ignores_disabled_accounts(fake_download, participants_r
     assert seat1["auto_account_id"] == "70k@01"
 
 
+def test_model_only_provenance_recovers_identity_and_artifact(
+    tmp_path, monkeypatch, fake_download, participants_root
+):
+    """R11-G Repair：R11-B model-only 的 session alias 无模型字段时，从 binding.json
+    （冻结 checkpoint）唯一恢复 (identity, artifact)——Preview 收窄候选 + 自动预选，
+    Confirm 把 identity 和 artifact 都写进 MatchSeat。"""
+    import json as _json
+
+    from participants.schemas import ModelIdentityCreate
+
+    monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(tmp_path / "ladder"))
+    from project_data import ladder_capture_root
+
+    checkpoint = tmp_path / "ckpt" / "70k.pth"
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.write_text("", encoding="utf-8")
+
+    registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", artifact_path=str(checkpoint))
+    )
+    registry.create_account(
+        AccountCreate(account_id="70k@01", display_name="70k-1", account_type="managed_bot", model_identity_id="70k")
+    )
+    identity = registry.get_model_identity("70k")
+    artifact_id = identity.artifacts[0].model_artifact_id
+
+    # session alias：R11-B model-only 风格——无模型字段
+    alias = aliases.register_alias(
+        ExternalAliasCreate(
+            provider="tenhou", external_id="NoName-1", account_id=None, scope="session", session_id="sess-p"
+        )
+    )
+    # binding.json（frozen roster：checkpoint 绝对路径）
+    capture_dir = ladder_capture_root() / "sess-p"
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    (capture_dir / "binding.json").write_text(
+        _json.dumps(
+            {
+                "session_id": "sess-p",
+                "roster": [
+                    {"expected_raw_name": "NoName-1", "resolved_checkpoint_path": str(checkpoint)}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Preview：唯一 enabled 候选 → 收窄 + 自动预选
+    preview = intake.build_preview(f"https://tenhou.net/3/?log={FAKE_LOG_ID}", session_id="sess-p")
+    seat1 = preview["seats"][1]
+    assert seat1["eligible_account_ids"] == ["70k@01"]
+    assert seat1["auto_account_id"] == "70k@01"
+
+    # Confirm：identity + artifact 一起写入 MatchSeat
+    resolutions = [
+        {"seat": 0, "action": "create", "display_name": "Nick", "account_type": "human", "alias_scope": "none"},
+        {"seat": 1, "action": "assign", "account_id": "70k@01", "alias_id": alias.alias_id, "alias_scope": "none"},
+        {"seat": 2, "action": "create", "display_name": "Bot B", "account_type": "managed_bot", "alias_scope": "none"},
+        {"seat": 3, "action": "create", "display_name": "Friend", "account_type": "human", "alias_scope": "none"},
+    ]
+    result = intake.resolve_and_create_match(log_id=FAKE_LOG_ID, resolutions=resolutions, session_id="sess-p")
+    match = ledger.get_match(result["match_id"])
+    seat1_match = next(s for s in match.seats if s.seat == 1)
+    assert seat1_match.model_identity_id == "70k"
+    assert seat1_match.model_artifact_id == artifact_id
+
+
+def test_ambiguous_checkpoint_provenance_fails_closed(tmp_path, monkeypatch, fake_download, participants_root):
+    """R11-G Repair：同一 checkpoint 属于多个 ModelIdentity → 冲突，绝不 first-match。"""
+    import json as _json
+
+    from participants.schemas import ModelIdentityCreate
+
+    monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(tmp_path / "ladder"))
+    from project_data import ladder_capture_root
+
+    checkpoint = tmp_path / "ckpt" / "shared.pth"
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.write_text("", encoding="utf-8")
+
+    for mid in ("model-a", "model-b"):
+        registry.create_model_identity(
+            ModelIdentityCreate(model_identity_id=mid, label=mid, kind="local_model", artifact_path=str(checkpoint))
+        )
+    aliases.register_alias(
+        ExternalAliasCreate(provider="tenhou", external_id="NoName-1", account_id=None, scope="session", session_id="sess-x")
+    )
+    capture_dir = ladder_capture_root() / "sess-x"
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    (capture_dir / "binding.json").write_text(
+        _json.dumps(
+            {
+                "session_id": "sess-x",
+                "roster": [{"expected_raw_name": "NoName-1", "resolved_checkpoint_path": str(checkpoint)}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="对应多个 ModelArtifact"):
+        intake.build_preview(f"https://tenhou.net/3/?log={FAKE_LOG_ID}", session_id="sess-x")
+
+
 def test_preview_auto_resolves_confirmed_global_alias(fake_download, participants_root):
     registry.create_account(AccountCreate(account_id="nick@01", display_name="Nick", account_type="human"))
     aliases.register_alias(

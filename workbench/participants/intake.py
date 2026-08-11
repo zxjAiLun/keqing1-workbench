@@ -226,17 +226,21 @@ def _eligible_account_ids(identity_id: str | None) -> list[str] | None:
     ]
 
 
-def _identity_for_checkpoint(checkpoint_path: str) -> str | None:
-    """把 frozen checkpoint 路径匹配到 Participants ModelIdentity。
+def _frozen_provenance_for_checkpoint(checkpoint_path: str) -> tuple[str, str] | None:
+    """frozen checkpoint → 唯一 ``(model_identity_id, model_artifact_id)``。
 
     遍历各 identity 的 artifact，规范化 artifact_path（legacy 相对路径走
     ``resolve_model_checkpoint`` 收敛到 keqing-data authoritative 路径）后与
-    frozen checkpoint 精确比较；命中即返回 ``model_identity_id``。
+    frozen checkpoint 精确比较。
+
+    - 0 个匹配 → ``None``（provenance unresolved）；
+    - >1 个匹配 → ``ValueError``（ambiguous——绝不 first-match 猜测）。
     """
     from inference.bot_registry import resolve_model_checkpoint
     from participants.ladder_eligibility import PROJECT_ROOT
 
     target = Path(checkpoint_path).resolve()
+    matches: list[tuple[str, str]] = []
     for identity in registry.list_models():
         for artifact in identity.artifacts:
             if not artifact.artifact_path:
@@ -246,16 +250,21 @@ def _identity_for_checkpoint(checkpoint_path: str) -> str | None:
             except FileNotFoundError:
                 continue
             if resolved == target:
-                return identity.model_identity_id
-    return None
+                matches.append((identity.model_identity_id, artifact.model_artifact_id))
+    if len(matches) > 1:
+        raise ValueError(
+            f"checkpoint {checkpoint_path} 对应多个 ModelArtifact "
+            f"(identities: {sorted({m[0] for m in matches})})，无法唯一恢复 provenance"
+        )
+    return matches[0] if matches else None
 
 
-def _session_frozen_model_map(session_id: str | None) -> dict[str, str]:
-    """raw_name（NoName-N）→ model_identity_id。
+def _session_frozen_model_map(session_id: str | None) -> dict[str, tuple[str, str]]:
+    """raw_name（NoName-N）→ ``(model_identity_id, model_artifact_id)``。
 
     来自 session 的 ``binding.json``（frozen roster：model_id + 冻结的绝对
     checkpoint 路径）。R11-B 的 model-only launcher 在 session alias 中不携带
-    模型字段，赛后 provenance 的模型身份由这里恢复（R11-G Repair）。
+    模型字段，赛后 provenance 的模型身份+产物由这里恢复（R11-G Repair）。
     """
     if not session_id:
         return {}
@@ -268,31 +277,31 @@ def _session_frozen_model_map(session_id: str | None) -> dict[str, str]:
         binding = json.loads(binding_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-    result: dict[str, str] = {}
+    result: dict[str, tuple[str, str]] = {}
     for entry in binding.get("roster") or []:
         raw_name = str(entry.get("expected_raw_name") or "")
         checkpoint = str(entry.get("resolved_checkpoint_path") or "")
         if not raw_name or not checkpoint:
             continue
-        identity_id = _identity_for_checkpoint(checkpoint)
-        if identity_id:
-            result[raw_name] = identity_id
+        provenance = _frozen_provenance_for_checkpoint(checkpoint)
+        if provenance is not None:
+            result[raw_name] = provenance
     return result
 
 
-def _auto_account_id(candidates: list, registry) -> str | None:
+def _auto_account_id(candidates: list, registry, frozen_identity_id: str | None = None) -> str | None:
     """候选唯一且 confirmed → 自动账号。
 
     - 候选绑定账号 → 直接用；
-    - Play-with-you simplification：session alias 只带模型（无账号）→ 与
-      ``eligible_account_ids`` 共用同一个 enabled 候选算法：唯一则自动建议
-      （R11-D Repair：绝不使用含 disabled 的旧算法，防止两个字段互相矛盾）。
+    - session alias 只带模型（无账号）→ 与 ``eligible_account_ids`` 共用同一个
+      enabled 候选算法：唯一则自动建议（R11-G Repair：identity 可来自新恢复的
+      frozen provenance，不再只认 alias 上的模型字段）。
     """
     if len(candidates) != 1 or candidates[0].confidence != "confirmed":
         return None
     if candidates[0].account_id:
         return candidates[0].account_id
-    identity_id = candidates[0].model_identity_id
+    identity_id = candidates[0].model_identity_id or frozen_identity_id
     if not identity_id:
         return None
     eligible = _eligible_account_ids(identity_id)
@@ -359,7 +368,7 @@ def build_preview(text: str, *, session_id: str | None = None) -> dict:
 
     seats = []
     # R11-G Repair：session alias 可能不带模型字段（R11-B model-only launcher），
-    # 从 frozen roster（binding.json）按 checkpoint 恢复 raw_name → 模型身份。
+    # 从 frozen roster（binding.json）按 checkpoint 恢复 raw_name → (identity, artifact)。
     frozen_model_map = _session_frozen_model_map(session_id)
     for seat, name in enumerate(names):
         candidates = aliases.resolve_candidates(
@@ -372,13 +381,15 @@ def build_preview(text: str, *, session_id: str | None = None) -> dict:
             None,
         )
         if frozen_identity_id is None:
-            frozen_identity_id = frozen_model_map.get(name)
+            recovered = frozen_model_map.get(name)
+            if recovered is not None:
+                frozen_identity_id = recovered[0]
         seats.append(
             {
                 "seat": seat,
                 "raw_name": name,
                 "candidates": [c.model_dump() for c in candidates],
-                "auto_account_id": _auto_account_id(candidates, registry),
+                "auto_account_id": _auto_account_id(candidates, registry, frozen_identity_id),
                 "eligible_account_ids": _eligible_account_ids(frozen_identity_id) if frozen_identity_id else None,
             }
         )
@@ -553,6 +564,7 @@ def _resolve_seat(
     model_identity_id: str | None = None
     model_artifact_id: str | None = None
     account_to_create: AccountCreate | None = None
+    alias_to_register: ExternalAliasCreate | None = None
 
     alias_id = raw_res.get("alias_id")
     if alias_id:
@@ -578,9 +590,12 @@ def _resolve_seat(
         model_artifact_id = alias.model_artifact_id
         if not model_identity_id:
             # R11-G Repair：R11-B model-only launcher 的 session alias 无模型字段；
-            # 从 frozen roster（binding.json）恢复 raw_name → 模型身份，使 Confirm
-            # 与 Preview 使用同一 provenance（seat 保留模型证据 + 账号兼容校验）。
-            model_identity_id = _session_frozen_model_map(session_id).get(name)
+            # 从 frozen roster（binding.json）恢复 raw_name → (identity, artifact)，
+            # 使 Confirm 与 Preview 使用同一 provenance（Match seat 同时保留模型
+            # 身份与冻结产物证据 + 账号兼容校验）。
+            recovered = _session_frozen_model_map(session_id).get(name)
+            if recovered is not None:
+                model_identity_id, model_artifact_id = recovered
         if account_id:
             # 别名绑定了账号：权威自动解析
             account = registry.get_account(account_id)

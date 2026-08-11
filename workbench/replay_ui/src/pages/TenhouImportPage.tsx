@@ -303,11 +303,14 @@ export function TenhouImportPage() {
               <div style={{ display: 'grid', gap: 8 }}>
                 {drafts.map((draft) => {
                   const seatInfo = preview.seats.find((s) => s.seat === draft.seat)!;
-                  // P1-B：frozen-model 座位（account-less source alias）有模型证据，
-                  // 禁止"新建账号"——新建路径不携带 alias_id 会静默丢模型证据。
-                  const frozenModel = seatInfo.candidates.some(
-                    (c) => c.model_identity_id && !c.account_id,
-                  );
+                  // P1-B / R11-G Repair：frozen-model 座位 = 有 eligible_account_ids
+                  //（可能来自 binding.json 反推的 provenance）或 legacy 候选模型证据。
+                  // 二者任一成立就按 eligible 收窄下拉、禁新建账号。
+                  const frozenModel =
+                    seatInfo.eligible_account_ids != null ||
+                    seatInfo.candidates.some(
+                      (c) => c.model_identity_id && !c.account_id,
+                    );
                   return (
                     <div key={draft.seat} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', display: 'grid', gap: 8 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>

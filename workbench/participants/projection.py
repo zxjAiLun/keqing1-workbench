@@ -127,7 +127,9 @@ def run_dirty_projection() -> list[dict]:
             continue
         result = project_season(season_id)
         if result.get("state") == "error":
-            _failure_ts[season_id] = now
+            # R11-G Repair：冷却从**失败完成时刻**起算（project_season 可能耗时数
+            # 十秒；若用扫描开始时刻，慢失败后几乎立即就会再试）。
+            _failure_ts[season_id] = time.monotonic()
         results.append(result)
     return results
 

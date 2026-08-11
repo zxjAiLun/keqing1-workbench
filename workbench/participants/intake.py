@@ -284,8 +284,15 @@ def _session_frozen_model_map(session_id: str | None) -> dict[str, tuple[str, st
         if not raw_name or not checkpoint:
             continue
         provenance = _frozen_provenance_for_checkpoint(checkpoint)
-        if provenance is not None:
-            result[raw_name] = provenance
+        if provenance is None:
+            # R11-G Repair：binding.json 明确冻结了本系统呼出的 checkpoint，却
+            # 匹配不到任何 ModelArtifact（产物被删/迁移/路径失效）→ fail closed，
+            # 绝不静默降级成"无模型证据"再落账。
+            raise ValueError(
+                f"checkpoint {checkpoint} 未匹配任何 ModelArtifact，"
+                "无法恢复 frozen provenance"
+            )
+        result[raw_name] = provenance
     return result
 
 

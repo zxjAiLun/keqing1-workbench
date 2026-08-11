@@ -409,6 +409,37 @@ def test_ambiguous_checkpoint_provenance_fails_closed(tmp_path, monkeypatch, fak
         intake.build_preview(f"https://tenhou.net/3/?log={FAKE_LOG_ID}", session_id="sess-x")
 
 
+def test_missing_checkpoint_provenance_fails_closed(tmp_path, monkeypatch, fake_download, participants_root):
+    """R11-G Repair：binding.json 冻结的 checkpoint 匹配不到任何 ModelArtifact
+    （产物被删/迁移/路径失效）→ fail closed，不允许静默丢失 provenance 落账。"""
+    import json as _json
+
+    monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(tmp_path / "ladder"))
+    from project_data import ladder_capture_root
+
+    missing = tmp_path / "ckpt" / "deleted.pth"
+    missing.parent.mkdir(parents=True, exist_ok=True)
+    missing.write_text("", encoding="utf-8")
+
+    aliases.register_alias(
+        ExternalAliasCreate(provider="tenhou", external_id="NoName-1", account_id=None, scope="session", session_id="sess-y")
+    )
+    capture_dir = ladder_capture_root() / "sess-y"
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    (capture_dir / "binding.json").write_text(
+        _json.dumps(
+            {
+                "session_id": "sess-y",
+                "roster": [{"expected_raw_name": "NoName-1", "resolved_checkpoint_path": str(missing)}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="未匹配任何 ModelArtifact"):
+        intake.build_preview(f"https://tenhou.net/3/?log={FAKE_LOG_ID}", session_id="sess-y")
+
+
 def test_preview_auto_resolves_confirmed_global_alias(fake_download, participants_root):
     registry.create_account(AccountCreate(account_id="nick@01", display_name="Nick", account_type="human"))
     aliases.register_alias(

@@ -131,13 +131,23 @@ export function TenhouImportPage() {
     setDrafts((prev) => prev.map((d) => (d.seat === seat ? { ...d, ...patch } : d)));
   };
 
+  // R11-G Repair：frozen-model 座位的唯一 predicate——backend 已按 binding.json
+  // 反推 identity 时给出 eligible_account_ids（候选模型证据可能不在 alias 上）。
+  // render 与 accountOptionsForSeat 必须共用，避免"禁新建生效但下拉没收窄"。
+  const isFrozenModelSeat = (seatInfo: {
+    candidates: ExternalAlias[];
+    eligible_account_ids?: string[] | null;
+  }): boolean =>
+    seatInfo.eligible_account_ids != null ||
+    seatInfo.candidates.some((c) => c.model_identity_id && !c.account_id);
+
   // R11-D：候选账号规则——冻结模型座位只显示该模型下可绑定的账号；
   // 已被其他座位使用的账号禁用（后端仍保留四座唯一性校验，前端禁用只是 UX）。
   const accountOptionsForSeat = (
     seat: SeatNo,
     seatInfo: { candidates: ExternalAlias[]; eligible_account_ids?: string[] | null },
   ): Array<{ account_id: string; label: string; disabled: boolean }> => {
-    const frozenModel = seatInfo.candidates.some((c) => c.model_identity_id && !c.account_id);
+    const frozenModel = isFrozenModelSeat(seatInfo);
     const pool =
       frozenModel && seatInfo.eligible_account_ids
         ? accounts.filter((a) => seatInfo.eligible_account_ids!.includes(a.account_id))
@@ -303,14 +313,10 @@ export function TenhouImportPage() {
               <div style={{ display: 'grid', gap: 8 }}>
                 {drafts.map((draft) => {
                   const seatInfo = preview.seats.find((s) => s.seat === draft.seat)!;
-                  // P1-B / R11-G Repair：frozen-model 座位 = 有 eligible_account_ids
-                  //（可能来自 binding.json 反推的 provenance）或 legacy 候选模型证据。
-                  // 二者任一成立就按 eligible 收窄下拉、禁新建账号。
-                  const frozenModel =
-                    seatInfo.eligible_account_ids != null ||
-                    seatInfo.candidates.some(
-                      (c) => c.model_identity_id && !c.account_id,
-                    );
+                  // P1-B / R11-G Repair：frozen-model 座位 = eligible_account_ids
+                  // 非空（backend 从 binding.json 反推的 provenance）或 legacy
+                  // 候选模型证据；二者任一成立就按 eligible 收窄下拉、禁新建账号。
+                  const frozenModel = isFrozenModelSeat(seatInfo);
                   return (
                     <div key={draft.seat} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', display: 'grid', gap: 8 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>

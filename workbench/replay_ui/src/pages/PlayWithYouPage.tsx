@@ -81,25 +81,23 @@ function Segmented<T extends string>({
   );
 }
 
-// R11-B：每行只选一个模型（model_id 来自运行时模型目录）
-type LauncherRow = {
-  model_id: string;
-};
+// PWY UX Repair：Mortal-style 固定三槽（AI #1/#2/#3），不呼出 = ""
+const SLOT_COUNT = 3;
+const NONE_LABEL = '不呼出';
 
 export function PlayWithYouPage() {
   const navigate = useNavigate();
   const [lobbyId, setLobbyId] = useState<string>("2147");
   const [speed, setSpeed] = useState<SpeedId>("normal");
   const [device, setDevice] = useState<DeviceId>("cuda");
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [status, setStatus] = useState<PlayWithYouStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // R11-B：只选择要呼出的模型（1-4 个）。
-  const [launchers, setLaunchers] = useState<LauncherRow[]>([
-    { model_id: "" },
-  ]);
+  // PWY UX Repair：固定三槽，默认 AI #1 = 70k（catalog 加载后校正），其余不呼出。
+  const [slots, setSlots] = useState<string[]>(["70k", "", ""]);
   const [models, setModels] = useState<RuntimeModelInfo[]>([]);
 
   const logRef = useRef<HTMLDivElement | null>(null);
@@ -128,35 +126,24 @@ export function PlayWithYouPage() {
     }
   }, [stopPolling]);
 
-  const updateLauncher = (index: number, patch: Partial<LauncherRow>) => {
-    setLaunchers((prev) =>
-      prev.map((row, i) => (i === index ? { ...row, ...patch } : row)),
-    );
+  const setSlot = (index: number, modelId: string) => {
+    setSlots((prev) => prev.map((value, i) => (i === index ? modelId : value)));
   };
 
-  const addLauncher = () => {
-    setLaunchers((prev) => [...prev, { model_id: "" }]);
-  };
-
-  const removeLauncher = (index: number) => {
-    setLaunchers((prev) => prev.filter((_, i) => i !== index));
-  };
+  const filledSlots = slots.filter((modelId) => modelId);
 
   const start = async () => {
     setLoading(true);
     setError(null);
     try {
-      const filled = launchers.filter((l) => l.model_id);
-      if (filled.length === 0) {
+      if (filledSlots.length === 0) {
         throw new Error("请至少选择一个要呼出的模型");
       }
       const s = await startPlayWithYou({
         lobby_id: lobbyId,
         speed,
         device,
-        launchers: filled.map((l) => ({
-          model_id: l.model_id,
-        })),
+        launchers: filledSlots.map((model_id) => ({ model_id })),
       });
       setStatus(s);
       stopPolling();
@@ -185,7 +172,23 @@ export function PlayWithYouPage() {
   useEffect(() => {
     const controller = new AbortController();
     listPlayWithYouModels()
-      .then((resp) => setModels(resp.models))
+      .then((resp) => {
+        setModels(resp.models);
+        // 运行时模型目录驱动的安全默认：AI #1 若不在目录中 → 70k（存在时），
+        // 否则 catalog 第一个；AI #2/#3 维持"不呼出"。
+        setSlots((prev) => {
+          const first = resp.models.some((m) => m.model_id === prev[0])
+            ? prev[0]
+            : resp.models.find((m) => m.model_id === "70k")?.model_id
+              ?? resp.models[0]?.model_id
+              ?? "";
+          return [
+            first,
+            resp.models.some((m) => m.model_id === prev[1]) ? prev[1] : "",
+            resp.models.some((m) => m.model_id === prev[2]) ? prev[2] : "",
+          ];
+        });
+      })
       .catch(() => {});
     return () => controller.abort();
   }, []);
@@ -240,7 +243,7 @@ export function PlayWithYouPage() {
             className="btn-primary"
             style={{ height: 34, padding: "0 16px", fontSize: 13, background: loading ? "var(--text-muted)" : ACCENT }}
           >
-            {loading ? "呼出中..." : `呼出 ${launchers.filter((l) => l.model_id).length} 个 Bot`}
+            {loading ? "呼出中..." : "呼出"}
           </button>
         )}
       </div>
@@ -250,11 +253,11 @@ export function PlayWithYouPage() {
       )}
 
       <div className="card" style={{ padding: 14, marginBottom: 12 }}>
-        <SectionTitle title="呼出设置" description="选择要进入天凤个室的模型（1-4 个）。" />
+        <SectionTitle title="呼出设置" description="你 + 最多 3 个 AI 进入天凤个室（半庄四人麻）。" />
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 12 }}>
           <div>
-            <label style={labelStyle}>Tenhou Lobby ID</label>
+            <label style={labelStyle}>天凤个室 ID</label>
             <input
               value={lobbyId}
               onChange={(e) => setLobbyId(e.target.value)}
@@ -265,70 +268,66 @@ export function PlayWithYouPage() {
             <div style={hintStyle}>将进入 L{lobbyId || "2147"} 个室（半庄，4 人）。</div>
           </div>
           <div>
-            <label style={labelStyle}>Speed / Device</label>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              <Segmented options={SPEED_OPTIONS} value={speed} onChange={setSpeed} disabled={isRunning} />
-              <Segmented options={DEVICE_OPTIONS} value={device} onChange={setDevice} disabled={isRunning} />
-            </div>
+            <label style={labelStyle}>速度</label>
+            <Segmented options={SPEED_OPTIONS} value={speed} onChange={setSpeed} disabled={isRunning} />
             <div style={hintStyle}>Speed 在自己回合前的思考停顿，便于观战。</div>
           </div>
         </div>
 
-        {/* R11-B：呼出模型列表（一个模型下拉；账号/坐席由赛后导入决定） */}
-        <label style={labelStyle}>呼出模型（实际坐席由天凤牌谱决定，不是这里的顺序）</label>
-        <div style={{ display: "grid", gap: 8 }}>
-          {launchers.map((row, index) => (
+        {/* PWY UX Repair：Mortal 模型——固定 AI #1/#2/#3 三槽 */}
+        <label style={labelStyle}>Mortal 模型</label>
+        <div style={{ display: "grid", gap: 8, marginBottom: 8 }}>
+          {Array.from({ length: SLOT_COUNT }, (_, index) => (
             <div
               key={index}
               style={{
                 display: "flex",
                 gap: 8,
                 alignItems: "center",
-                flexWrap: "wrap",
                 border: "1px solid var(--border)",
                 borderRadius: 8,
                 padding: "8px 10px",
                 background: "var(--surface-subtle)",
               }}
             >
-              <span style={{ width: 24, fontWeight: 800, color: "var(--text-muted)" }}>#{index + 1}</span>
+              <span style={{ width: 64, fontWeight: 800, color: "var(--text-muted)" }}>AI #{index + 1}</span>
               <select
-                value={row.model_id}
+                value={slots[index]}
                 disabled={isRunning}
-                onChange={(e) => updateLauncher(index, { model_id: e.target.value })}
+                onChange={(e) => setSlot(index, e.target.value)}
                 style={{ ...inputStyle, flex: 1, minWidth: 200 }}
               >
-                <option value="">选择模型…</option>
+                <option value="">{NONE_LABEL}</option>
                 {models.map((m) => (
                   <option key={m.model_id} value={m.model_id}>
                     {m.label}
                   </option>
                 ))}
               </select>
-              {launchers.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeLauncher(index)}
-                  disabled={isRunning}
-                  style={ghostSmallBtn}
-                >
-                  移除
-                </button>
-              )}
             </div>
           ))}
         </div>
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-          {launchers.length < 4 && (
-            <button type="button" onClick={addLauncher} disabled={isRunning} style={ghostSmallBtn}>
-              + 添加一个 Bot
-            </button>
-          )}
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+            呼出数量：<b style={{ color: "var(--text-primary)" }}>{filledSlots.length}</b>
+          </span>
+          {/* 高级设置：Device 是本地 runtime 实现细节 */}
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((value) => !value)}
+            disabled={isRunning}
+            style={ghostSmallBtn}
+          >
+            {showAdvanced ? "收起高级设置" : "高级设置"}
+          </button>
         </div>
-        <div style={hintStyle}>
-          每个模型对应一个被呼出的 bot（天凤名 NoName / NoName-1 / NoName-2…）。
-          赛后 Tenhou Import 时人工/自动确认账号。
-        </div>
+        {showAdvanced && (
+          <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
+            <label style={{ ...labelStyle, marginBottom: 0 }}>运行设备</label>
+            <Segmented options={DEVICE_OPTIONS} value={device} onChange={setDevice} disabled={isRunning} />
+            <span style={hintStyle}>默认 CUDA；CPU 仅在无 GPU 时选择。</span>
+          </div>
+        )}
       </div>
 
       {/* Status / live log */}
@@ -486,16 +485,15 @@ export function PlayWithYouPage() {
                       </div>
                     );
                   })
-                : launchers.map((row, index) => {
-                    const model = models.find((m) => m.model_id === row.model_id);
+                : slots.map((modelId, index) => {
+                    if (!modelId) return null;
+                    const model = models.find((m) => m.model_id === modelId);
                     return (
                       <div key={index} style={{ padding: "2px 0" }}>
-                        {index === 0 && launchers.filter((l) => l.model_id).length === 1
+                        {index === 0 && filledSlots.length === 1
                           ? "NoName"
                           : `NoName-${index + 1}`}
-                        {row.model_id && (
-                          <span style={{ color: "var(--text-muted)" }}> → {model?.label ?? row.model_id}</span>
-                        )}
+                        <span style={{ color: "var(--text-muted)" }}> → {model?.label ?? modelId}</span>
                       </div>
                     );
                   })}

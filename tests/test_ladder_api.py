@@ -336,10 +336,14 @@ def test_report_unregistered_account_rejected(tmp_path: Path):
         ladder.load_ladder(env["root"], env["configs"], "s1")
 
 
-def test_completed_season_missing_registry_account_in_report(tmp_path: Path):
+def test_completed_season_allows_registry_accounts_missing_from_report(tmp_path: Path):
+    """R11 post-release：completed 不再要求注册表/report 账号完全相等——
+    注册过但 report 无数据的账号视作 0 场；report 中未注册账号仍严格拒绝。"""
     env = _write_custom_env(tmp_path, season=_season(), report_accounts=_three_account_rows()[:2])
-    with pytest.raises(ladder.SeasonDataError, match="未出现在 report"):
-        ladder.load_ladder(env["root"], env["configs"], "s1")
+    ladder.load_ladder(env["root"], env["configs"], "s1")  # 不再抛错
+    # report 账号仍能正常加载（缺失账号不进入榜单行）
+    loaded = ladder.load_ladder(env["root"], env["configs"], "s1")
+    assert {row["account_id"] for row in loaded["accounts"]} == {"m1@01", "m1@02"}
 
 
 def test_report_model_label_conflicts_registry(tmp_path: Path):
@@ -399,8 +403,11 @@ def test_list_seasons_marks_mismatched_report_not_ready(tmp_path: Path):
     (good_dir / "rating_curve.csv").write_text("game_index,account_id,model_label,rating,pt,rank_name,games\n", encoding="utf-8")
     bad_dir = tmp_path / "artifacts" / "bad"
     bad_dir.mkdir(parents=True)
+    bad_rows = _three_account_rows()[:2] + [
+        _account_row("ghost@01", "m1", games=1, pt=1.0, rating=1500.0, ranks=[0, 0, 0, 1], avg_rank=4.0)
+    ]
     (bad_dir / "account_summary.json").write_text(
-        json.dumps({"schema": ladder.REPORT_SCHEMA, "games": 2, "accounts": _three_account_rows()[:2]}),
+        json.dumps({"schema": ladder.REPORT_SCHEMA, "games": 2, "accounts": bad_rows}),
         encoding="utf-8",
     )
     (bad_dir / "account_ledger.jsonl").write_text("", encoding="utf-8")

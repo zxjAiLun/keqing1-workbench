@@ -109,6 +109,30 @@ export function SeasonManagerPage() {
     });
   };
 
+  // R11 post-release：删除赛季——running/current 由 backend 拒绝；此处强确认。
+  const deleteSeason = async () => {
+    if (!config) return;
+    const isHistory = status === 'completed' || status === 'archived';
+    if (isHistory) {
+      const typed = window.prompt(
+        `删除赛季 ${config.season_id} 会永久移除其注册表与天梯数据。\n请输入赛季 ID 确认删除：`,
+        '',
+      );
+      if (typed !== config.season_id) {
+        if (typed !== null) setError('确认输入与赛季 ID 不一致，已取消删除');
+        return;
+      }
+    } else if (!window.confirm(`删除赛季 ${config.season_id}？`)) {
+      return;
+    }
+    await run(async () => {
+      await ladderApi.deleteSeason(config.season_id);
+      setSelectedId('');
+      setConfig(null);
+      return config;
+    });
+  };
+
   const toggleAccount = (accountId: string) => {
     setDraftSelection((prev) => {
       const next = new Set(prev);
@@ -285,6 +309,15 @@ export function SeasonManagerPage() {
                 </>
               )}
               {status === 'archived' && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>已归档（永久只读）</span>}
+              <span style={{ flex: 1 }} />
+              <button
+                style={{ ...ghostBtn, borderColor: '#c0392b', color: '#c0392b' }}
+                disabled={busy || status === 'running' || isCurrent}
+                title={status === 'running' || isCurrent ? '运行中的当前赛季不可删除' : '删除赛季'}
+                onClick={() => void deleteSeason()}
+              >
+                删除赛季
+              </button>
             </div>
 
             {/* 参赛阵容（只来自 Participants Accounts） */}

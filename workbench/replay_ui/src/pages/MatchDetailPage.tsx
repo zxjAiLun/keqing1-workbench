@@ -129,7 +129,7 @@ export function MatchDetailPage() {
 
   const match: Match | null = data?.match ?? null;
 
-  // R10-F：触发天梯投影（ledger → 全量重放 → 快照发布）
+  // R10-F：手动同步至正式天梯（后台自动重放并发布；UI 不暴露实现细节）
   const projectSeason = async () => {
     if (!match?.season_id) return;
     setProjecting(true);
@@ -137,11 +137,11 @@ export function MatchDetailPage() {
     try {
       const result = await participantsApi.projectLadder(match.season_id);
       if (result.state === 'already_running') {
-        setError('已有投影正在运行，稍后自动刷新');
+        setError('天梯正在同步中，稍后自动刷新');
       } else if (result.state === 'needs_rebuild') {
-        setError('发布期间有新的账本写入，天梯将自动重算');
+        setError('有新对局写入，天梯将自动重新同步');
       } else if (result.state === 'error') {
-        setError(result.reason ?? '天梯投影失败');
+        setError(result.reason ?? '同步失败');
       }
       await load(new AbortController().signal);
     } catch (e) {
@@ -241,7 +241,7 @@ export function MatchDetailPage() {
                 纳入正式天梯计分（rating_eligible）
               </label>
               <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                保存修订后：若已设赛季，账本会标记 dirty 并等待投影重算。
+                保存修订后：若已纳入正式天梯，天梯会在后台自动重新同步。
               </div>
             </div>
           ) : (
@@ -251,9 +251,9 @@ export function MatchDetailPage() {
                 {match.season_id && match.rating_eligible ? ' · 纳入正式计分' : ''}
               </div>
               <div>
-                投影状态：
-                <b style={{ color: projectionColor(match.ladder_projection_state) }}>
-                  {projectionLabel(match.ladder_projection_state)}
+                同步状态：
+                <b style={{ color: syncColor(match.ladder_projection_state) }}>
+                  {syncLabel(match.ladder_projection_state, match.season_id)}
                 </b>
               </div>
               {match.season_id && (
@@ -263,10 +263,10 @@ export function MatchDetailPage() {
                     onClick={projectSeason}
                     disabled={projecting}
                   >
-                    {projecting ? '天梯重算中…' : '触发天梯投影'}
+                    {projecting ? '同步中…' : '同步至天梯'}
                   </button>
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    从 ledger 全量确定性重放并发布快照
+                    手动触发一次后台同步（数据有更新时通常会自动同步）
                   </span>
                 </div>
               )}
@@ -278,16 +278,21 @@ export function MatchDetailPage() {
   );
 }
 
-function projectionLabel(state?: string): string {
+// R11 post-release UX cleanup：同步状态用用户语言，不暴露 projection/snapshot 术语
+function syncLabel(state: string | undefined, seasonId: string | null | undefined): string {
   switch (state) {
-    case 'pending': return '天梯重算中…';
-    case 'ready': return '已更新';
-    case 'error': return '投影失败';
-    default: return '未纳入';
+    case 'ready':
+      return `已在${seasonId || ''}赛季中`;
+    case 'pending':
+      return `正在同步至${seasonId || ''}`;
+    case 'error':
+      return '同步失败';
+    default:
+      return '未加入正式天梯';
   }
 }
 
-function projectionColor(state?: string): string {
+function syncColor(state?: string): string {
   switch (state) {
     case 'pending': return '#e67e22';
     case 'ready': return '#27ae60';

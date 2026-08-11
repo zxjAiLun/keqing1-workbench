@@ -134,6 +134,15 @@ def list_matches(
     return MatchListResponse(matches=matches, total=total)
 
 
+def count_matches_for_season(season_id: str) -> int:
+    """R11 post-release：统计引用该赛季的历史对局数（删除赛季前的引用检查）。
+
+    任何 status（含 void）都算引用——历史事实仍指向该赛季。
+    """
+    _maybe_recover_pending()
+    return sum(1 for raw in _read_match_rows() if Match.model_validate(raw).season_id == season_id)
+
+
 def get_match(match_id: str) -> Match | None:
     _maybe_recover_pending()
     for raw in _read_match_rows():

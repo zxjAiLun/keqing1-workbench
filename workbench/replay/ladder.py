@@ -367,11 +367,13 @@ def _load_account_summary(report_dir: Path) -> dict[str, Any]:
 def _validate_report_accounts(season: dict[str, Any], report: dict[str, Any]) -> list[dict[str, Any]]:
     """校验 report 账号集合与注册表的一致性（注册表为权威身份表）。
 
-    - report 每个账号必须已在注册表声明；
+    - report 每个账号必须已在注册表声明（report ⊆ registry）；
     - report 内不得有重复 account_id；
     - report 的 model_label 非空时必须与注册表 model_id 一致；
-    - status == "completed" 时注册表与 report 的账号集合必须完全一致；
-    - 未完成赛季允许注册账号尚未出现在 report，但 report 不得出现未注册账号。
+    - 注册表已声明但 report 没有的账号：允许（视作该账号在赛季内 0 场 /
+      无历史 report）——completed 历史赛季同样适用（R11 post-release 修复：
+      早期注册表扩充账号后，旧 report 没有这些账号并不代表数据损坏）。
+    - report 中出现未注册/错模型账号：任何状态都拒绝。
     """
     season_id = season.get("season_id")
     rows = report.get("accounts")
@@ -421,14 +423,6 @@ def _validate_report_accounts(season: dict[str, Any], report: dict[str, Any]) ->
                 state="registry_mismatch",
             )
         validated.append(row)
-    if str(season.get("status") or "") == "completed":
-        missing = sorted(set(registry_index) - seen)
-        if missing:
-            raise SeasonDataError(
-                f"season {season_id}: completed 赛季注册账号未出现在 report 中: {missing}",
-                code="season_report_registry_mismatch",
-                state="registry_mismatch",
-            )
     return validated
 
 

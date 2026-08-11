@@ -67,4 +67,6 @@ export const ladderApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ account_ids: accountIds }),
     }),
+  deleteSeason: (seasonId: string): Promise<{ season_id: string; deleted: boolean }> =>
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}`, { method: 'DELETE' }),
 };

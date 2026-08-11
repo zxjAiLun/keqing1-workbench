@@ -18,6 +18,7 @@ import contextlib
 import json
 import os
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -229,6 +230,53 @@ def set_default_season(configs_dir: Path, season_id: str) -> dict[str, Any]:
 
 def get_season(configs_dir: Path, season_id: str) -> dict[str, Any]:
     return get_season_config(configs_dir, season_id)
+
+
+def delete_season(
+    configs_dir: Path,
+    season_id: str,
+    *,
+    referenced_match_count: int,
+    participants_data_root: Path | None = None,
+) -> dict[str, Any]:
+    """R11 post-release：删除赛季（Season Manager）。
+
+    合同：
+    - running / 当前 default 赛季：禁止删除；
+    - 其他状态（draft/completed/archived）：允许删除，但若 Match Ledger 有任何
+      对局引用该 season_id → 拒绝硬删除（绝不连 Match 一起删）；
+    - 无引用时：删除 season registry JSON + Workbench 认领的派生数据
+      （dirty marker / projection lock / ``ladder/seasons/<id>`` 快照目录——
+      该目录必须是 Workbench 布局内的固定路径，绝不按 registry report_dir
+      递归删除任意路径）。
+    """
+    season = get_season_config(configs_dir, season_id)
+    status = str(season.get("status") or "draft")
+    if season.get("default") is True:
+        raise SeasonRegistryError("当前正式赛季不可删除（请先设其他赛季为当前）")
+    if status == "running":
+        raise SeasonRegistryError("running 赛季不可删除（请先结束/归档）")
+    if referenced_match_count > 0:
+        raise SeasonRegistryError(
+            f"该赛季仍被 {referenced_match_count} 场历史对局引用，拒绝删除"
+        )
+
+    # 1. season registry JSON
+    path = _season_path(configs_dir, season_id)
+    path.unlink(missing_ok=True)
+
+    # 2. Workbench 认领的派生数据（仅固定布局内路径）
+    from project_data import data_path as _data_path
+
+    dirty = (participants_data_root or _data_path("participants")) / f"ladder_dirty_{season_id}.json"
+    dirty.unlink(missing_ok=True)
+    lock = (participants_data_root or _data_path("participants")) / "projection_locks" / f"{season_id}.lock"
+    lock.unlink(missing_ok=True)
+    owned_snapshots = _data_path("ladder") / "seasons" / season_id
+    if owned_snapshots.is_dir():
+        shutil.rmtree(owned_snapshots, ignore_errors=True)
+
+    return {"season_id": season_id, "deleted": True}
 
 
 # ---------------------------------------------------------------------------

@@ -1688,6 +1688,20 @@ async def get_ladder_season_config(season_id: str):
     return JSONResponse(content=season)
 
 
+@app.delete("/api/ladder/seasons/{season_id}", response_class=JSONResponse)
+async def delete_ladder_season(season_id: str):
+    """删除赛季（R11 post-release）：running/current 禁止；有 Match 引用拒绝。"""
+    sr = _season_manager()
+    try:
+        from participants import ledger as participants_ledger
+
+        referenced = participants_ledger.count_matches_for_season(season_id)
+        result = sr.delete_season(_LADDER_SEASONS_DIR, season_id, referenced_match_count=referenced)
+    except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
+        return _manager_errors(exc)
+    return JSONResponse(content=result)
+
+
 @app.put("/api/ladder/seasons/{season_id}/enrollment", response_class=JSONResponse)
 async def set_ladder_season_enrollment(season_id: str, payload: dict):
     """编辑赛季参赛阵容（R11-E2）。

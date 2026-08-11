@@ -144,6 +144,83 @@ def test_reopen_does_not_claim_current_and_audits(configs_dir):
     assert sr.get_season(configs_dir, "s1")["default"] is True
 
 
+# ---------------------------------------------------------------------------
+# R11 post-release：删除赛季
+# ---------------------------------------------------------------------------
+
+def test_delete_season_running_and_current_refused(configs_dir):
+    sr.create_season(configs_dir, season_id="s1")
+    sr.set_season_status(configs_dir, "s1", "running")
+    with pytest.raises(SeasonRegistryError, match="running 赛季不可删除"):
+        sr.delete_season(configs_dir, "s1", referenced_match_count=0)
+    sr.set_default_season(configs_dir, "s1")
+    with pytest.raises(SeasonRegistryError, match="当前正式赛季不可删除"):
+        sr.delete_season(configs_dir, "s1", referenced_match_count=0)
+
+
+def test_delete_season_refused_when_matches_reference(configs_dir):
+    sr.create_season(configs_dir, season_id="s1")
+    sr.set_season_status(configs_dir, "s1", "running")
+    sr.set_season_status(configs_dir, "s1", "completed")
+    with pytest.raises(SeasonRegistryError, match="2 场历史对局引用"):
+        sr.delete_season(configs_dir, "s1", referenced_match_count=2)
+    assert (configs_dir / "s1.json").exists()
+
+
+def test_delete_season_draft_without_reference_cleans_owned_state(configs_dir, tmp_path):
+    sr.create_season(configs_dir, season_id="s1")
+    assert (configs_dir / "s1.json").exists()
+    result = sr.delete_season(configs_dir, "s1", referenced_match_count=0)
+    assert result["deleted"] is True
+    assert not (configs_dir / "s1.json").exists()
+
+
+def test_delete_season_cleans_dirty_lock_and_owned_snapshots(configs_dir, tmp_path, monkeypatch):
+    """删除时清理 Workbench 认领的派生数据（dirty marker / projection lock /
+    ladder/seasons/<id> 快照目录）；不触碰任意 report_dir 指向的外部位置。"""
+    sr.create_season(configs_dir, season_id="s1")
+    sr.set_season_status(configs_dir, "s1", "running")
+    sr.set_season_status(configs_dir, "s1", "completed")
+
+    participants_root = tmp_path / "participants"
+    monkeypatch.setenv("KEQING_PARTICIPANT_DATA_ROOT", str(participants_root))
+    from project_data import data_path as _data_path
+
+    dirty = participants_root / "ladder_dirty_s1.json"
+    lock = participants_root / "projection_locks" / "s1.lock"
+    dirty.parent.mkdir(parents=True, exist_ok=True)
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    dirty.write_text("{}", encoding="utf-8")
+    lock.write_text("", encoding="utf-8")
+    # Workbench 认领的快照目录 + 外部目录（模拟历史 report_dir 指向外部）
+    owned = _data_path("ladder") / "seasons" / "s1"
+    owned.mkdir(parents=True, exist_ok=True)
+    (owned / "account_summary.json").write_text("{}", encoding="utf-8")
+    external = tmp_path / "external-report"
+    external.mkdir(parents=True)
+    (external / "keep.txt").write_text("keep", encoding="utf-8")
+
+    sr.delete_season(configs_dir, "s1", referenced_match_count=0, participants_data_root=participants_root)
+    assert not (configs_dir / "s1.json").exists()
+    assert not dirty.exists()
+    assert not lock.exists()
+    assert not owned.exists()
+    assert (external / "keep.txt").exists()  # 外部目录绝不被删
+
+
+def test_api_delete_season_endpoint(configs_dir, monkeypatch):
+    """R11 post-release：DELETE /api/ladder/seasons/{id}（无引用可删 / 有引用 409）。"""
+    from replay import server
+
+    monkeypatch.setattr(server, "_LADDER_SEASONS_DIR", configs_dir)
+    sr.create_season(configs_dir, season_id="s1")
+    resp = _run(server.delete_ladder_season("s1"))
+    assert resp.status_code == 200
+    assert not (configs_dir / "s1.json").exists()
+    resp = _run(server.delete_ladder_season("s1"))
+    assert resp.status_code == 404
+
+
 def test_complete_default_season_clears_default(configs_dir):
     sr.create_season(configs_dir, season_id="s1")
     sr.set_season_status(configs_dir, "s1", "running")

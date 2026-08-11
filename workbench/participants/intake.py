@@ -226,6 +226,60 @@ def _eligible_account_ids(identity_id: str | None) -> list[str] | None:
     ]
 
 
+def _identity_for_checkpoint(checkpoint_path: str) -> str | None:
+    """把 frozen checkpoint 路径匹配到 Participants ModelIdentity。
+
+    遍历各 identity 的 artifact，规范化 artifact_path（legacy 相对路径走
+    ``resolve_model_checkpoint`` 收敛到 keqing-data authoritative 路径）后与
+    frozen checkpoint 精确比较；命中即返回 ``model_identity_id``。
+    """
+    from inference.bot_registry import resolve_model_checkpoint
+    from participants.ladder_eligibility import PROJECT_ROOT
+
+    target = Path(checkpoint_path).resolve()
+    for identity in registry.list_models():
+        for artifact in identity.artifacts:
+            if not artifact.artifact_path:
+                continue
+            try:
+                resolved = resolve_model_checkpoint(artifact.artifact_path, PROJECT_ROOT)
+            except FileNotFoundError:
+                continue
+            if resolved == target:
+                return identity.model_identity_id
+    return None
+
+
+def _session_frozen_model_map(session_id: str | None) -> dict[str, str]:
+    """raw_name（NoName-N）→ model_identity_id。
+
+    来自 session 的 ``binding.json``（frozen roster：model_id + 冻结的绝对
+    checkpoint 路径）。R11-B 的 model-only launcher 在 session alias 中不携带
+    模型字段，赛后 provenance 的模型身份由这里恢复（R11-G Repair）。
+    """
+    if not session_id:
+        return {}
+    from project_data import ladder_capture_root
+
+    binding_path = ladder_capture_root() / session_id / "binding.json"
+    if not binding_path.exists():
+        return {}
+    try:
+        binding = json.loads(binding_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    result: dict[str, str] = {}
+    for entry in binding.get("roster") or []:
+        raw_name = str(entry.get("expected_raw_name") or "")
+        checkpoint = str(entry.get("resolved_checkpoint_path") or "")
+        if not raw_name or not checkpoint:
+            continue
+        identity_id = _identity_for_checkpoint(checkpoint)
+        if identity_id:
+            result[raw_name] = identity_id
+    return result
+
+
 def _auto_account_id(candidates: list, registry) -> str | None:
     """候选唯一且 confirmed → 自动账号。
 
@@ -304,6 +358,9 @@ def build_preview(text: str, *, session_id: str | None = None) -> dict:
     duplicate = ledger.find_match_by_external("tenhou", parsed["log_id"])
 
     seats = []
+    # R11-G Repair：session alias 可能不带模型字段（R11-B model-only launcher），
+    # 从 frozen roster（binding.json）按 checkpoint 恢复 raw_name → 模型身份。
+    frozen_model_map = _session_frozen_model_map(session_id)
     for seat, name in enumerate(names):
         candidates = aliases.resolve_candidates(
             "tenhou", name, session_id=session_id, external_match_id=parsed["log_id"]
@@ -314,6 +371,8 @@ def build_preview(text: str, *, session_id: str | None = None) -> dict:
             (c.model_identity_id for c in candidates if c.model_identity_id and not c.account_id),
             None,
         )
+        if frozen_identity_id is None:
+            frozen_identity_id = frozen_model_map.get(name)
         seats.append(
             {
                 "seat": seat,
@@ -517,6 +576,11 @@ def _resolve_seat(
         account_id = alias.account_id
         model_identity_id = alias.model_identity_id
         model_artifact_id = alias.model_artifact_id
+        if not model_identity_id:
+            # R11-G Repair：R11-B model-only launcher 的 session alias 无模型字段；
+            # 从 frozen roster（binding.json）恢复 raw_name → 模型身份，使 Confirm
+            # 与 Preview 使用同一 provenance（seat 保留模型证据 + 账号兼容校验）。
+            model_identity_id = _session_frozen_model_map(session_id).get(name)
         if account_id:
             # 别名绑定了账号：权威自动解析
             account = registry.get_account(account_id)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,6 +88,31 @@ def test_conditional_switch_registry_is_atomic_and_readable(tmp_path: Path):
     assert updated["report_dir"] == str(snapshot_dir)
     assert not list((tmp_path / "registries").glob("*.tmp"))
     assert not (tmp_path / "registries" / "dev-live.json.lock").exists()
+
+
+def test_conditional_switch_registry_cleans_tmp_on_replace_failure(tmp_path: Path, monkeypatch):
+    """R11-G Repair：os.replace 失败时必须清理 tmp 并抛 PublishError，
+    不能在每个失败重试里堆积孤儿 tmp 文件。"""
+    season = _running_season(report_dir="artifacts/old-snapshot")
+    registry_path = _write_registry(tmp_path, season)
+    snapshot_dir = tmp_path / "snapshots" / "20260801-120000"
+    snapshot_dir.mkdir(parents=True)
+
+    def _failing_replace(src, dst):
+        raise PermissionError("simulated lock")
+
+    monkeypatch.setattr(os, "replace", _failing_replace)
+
+    with pytest.raises(publisher.PublishError, match="原子切换失败"):
+        publisher.conditional_switch_registry(
+            registry_path,
+            expected_season=season,
+            expected_report_dir="artifacts/old-snapshot",
+            new_report_dir=snapshot_dir,
+        )
+    # tmp 被清理；线上 registry 保持不变
+    assert not list((tmp_path / "registries").glob("*.tmp"))
+    assert ladder.read_registry(registry_path)["report_dir"] == "artifacts/old-snapshot"
 
 
 def test_publish_dry_run_builds_and_validates_without_switching(tmp_path: Path):

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 
 from . import ledger
@@ -106,12 +107,28 @@ def _project_season_locked(season_id: str) -> dict:
     }
 
 
+# R11-G Repair：赛季投影失败后的 worker 冷却——防止错误赛季每 10s 被重试，
+# 造成"构建快照 → 写 tmp → 切换失败"的高频风暴（曾因此堆积数百个孤儿 tmp）。
+_FAILURE_COOLDOWN_SECONDS = 60.0
+_failure_ts: dict[str, float] = {}
+
+
 def run_dirty_projection() -> list[dict]:
-    """扫描并投影全部 dirty 赛季（worker / 启动恢复 / 手动重试共用）。"""
+    """扫描并投影全部 dirty 赛季（worker / 启动恢复 / 手动重试共用）。
+
+    手动 ``/project`` 直接调用 ``project_season``，不受冷却限制；冷却只作用于
+    后台 worker 的自动扫描。
+    """
     results: list[dict] = []
+    now = time.monotonic()
     for marker in _dirty_markers():
         season_id = marker.name[len("ladder_dirty_"):-len(".json")]
-        results.append(project_season(season_id))
+        if now - _failure_ts.get(season_id, 0.0) < _FAILURE_COOLDOWN_SECONDS:
+            continue
+        result = project_season(season_id)
+        if result.get("state") == "error":
+            _failure_ts[season_id] = now
+        results.append(result)
     return results
 
 

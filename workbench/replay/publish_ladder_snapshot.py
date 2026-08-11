@@ -315,7 +315,15 @@ def conditional_switch_registry(
         except Exception:
             tmp_path.unlink(missing_ok=True)
             raise
-        os.replace(tmp_path, registry_path)
+        try:
+            os.replace(tmp_path, registry_path)
+        except OSError as exc:
+            # R11-G Repair：切换失败必须清理 tmp（否则每次失败都留下一个 tmp 文件，
+            # worker 高频重试时会在 registry 目录堆积数百个孤儿 tmp）。
+            tmp_path.unlink(missing_ok=True)
+            raise PublishError(
+                f"registry 原子切换失败（{exc}），线上 registry 保持不变"
+            ) from exc
 
 
 def _dir_total_bytes(directory: Path) -> int:

@@ -222,3 +222,34 @@ def test_ladder_projection_status(participants_root):
     assert status["dirty"] is True
     assert status["eligible_count"] == 1
     assert status["states"].get("pending") == 1
+
+
+def test_worker_cooldowns_failed_season(participants_root, monkeypatch):
+    """R11-G Repair：worker 对 error 赛季冷却——失败后 60s 内不再自动重试
+    （防止每 10s 触发"构建快照→写 tmp→切换失败"的风暴）。手动 project 不受限。"""
+    from participants import projection
+
+    calls: list[str] = []
+
+    def _fake_project(season_id: str) -> dict:
+        calls.append(season_id)
+        return {"season_id": season_id, "state": "error", "reason": "boom"}
+
+    monkeypatch.setattr(projection, "project_season", _fake_project)
+    projection._failure_ts.clear()
+    marker = projection.data_root() / "ladder_dirty_official-ladder-v2.json"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("{}", encoding="utf-8")
+
+    # 第一次：project 被调用（失败）
+    projection.run_dirty_projection()
+    assert calls == ["official-ladder-v2"]
+    # 冷却期内：不再调用
+    projection.run_dirty_projection()
+    projection.run_dirty_projection()
+    assert calls == ["official-ladder-v2"]
+    # 冷却过期后：恢复重试
+    projection._failure_ts["official-ladder-v2"] -= projection._FAILURE_COOLDOWN_SECONDS + 1
+    projection.run_dirty_projection()
+    assert calls == ["official-ladder-v2", "official-ladder-v2"]
+    marker.unlink(missing_ok=True)

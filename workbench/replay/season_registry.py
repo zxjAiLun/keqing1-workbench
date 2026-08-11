@@ -257,6 +257,10 @@ def delete_season(
 
     warnings: list[str] = []
     with participants_data_lock(), _registry_lock(configs_dir):
+        # crash-recovery：此前进程崩溃可能留下 pending intake/ledger 事务
+        # （match.season_id 已冻结但 matches.jsonl 尚未落账）。先恢复再 count，
+        # 否则该 pending Match 会变成指向已删除赛季的 dangling reference。
+        participants_ledger.recover_pending_transaction_locked()
         season = get_season_config(configs_dir, season_id)
         status = str(season.get("status") or "draft")
         if season.get("default") is True:

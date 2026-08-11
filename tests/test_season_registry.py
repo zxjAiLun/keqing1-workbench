@@ -199,6 +199,64 @@ def test_delete_refused_when_ledger_references(configs_dir, tmp_path, monkeypatc
     assert (configs_dir / "s1.json").exists()
 
 
+def test_delete_recovers_stale_pending_before_count(configs_dir, tmp_path, monkeypatch):
+    """crash-recovery dangling：pending 事务（match.season_id 已冻结但未落账）
+    在 delete 锁内先恢复 → count 看到引用 → 拒绝删除；season JSON 保留。"""
+    import json as _json
+
+    from participants import ledger, registry
+    from participants.paths import atomic_write_text
+    from participants.schemas import AccountCreate, MatchCreate, MatchSeat
+
+    monkeypatch.setenv("KEQING_PARTICIPANT_DATA_ROOT", str(tmp_path / "participants"))
+    monkeypatch.setenv("KEQING_LADDER_CONFIG_DIR", str(configs_dir))
+    sr.create_season(configs_dir, season_id="s1")
+    for i in range(4):
+        registry.create_account(AccountCreate(account_id=f"p{i}", display_name=f"p{i}", account_type="human"))
+    sr.set_season_enrollment(configs_dir, "s1", [f"p{i}" for i in range(4)], participants_registry=registry)
+    sr.set_season_status(configs_dir, "s1", "running")
+    match = ledger.create_match(
+        MatchCreate(
+            occurred_at="2026-08-11T12:00:00+08:00",
+            game_length="hanchan",
+            season_id="s1",
+            rating_eligible=True,
+            source="manual",
+            seats=[MatchSeat(seat=i, account_id=f"p{i}", controller_type="human_ui") for i in range(4)],
+            final_scores=[30000, 25000, 20000, 25000],
+        ),
+        registry,
+    )
+    sr.set_season_status(configs_dir, "s1", "completed")
+
+    # 模拟 crash：Match 已从 matches.jsonl 移除，仅留 pending 事务
+    matches_path = tmp_path / "participants" / "matches.jsonl"
+    rows = [r for r in ledger._read_match_rows() if r.get("match_id") != match.match_id]
+    atomic_write_text(matches_path, "".join(_json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+    atomic_write_text(
+        ledger.pending_transaction_path(),
+        _json.dumps(
+            {
+                "match": match.model_dump(by_alias=True),
+                "revision": {
+                    "revision_id": match.latest_revision_id,
+                    "match_id": match.match_id,
+                },
+            }
+        ),
+    )
+    # 直接读行确认（不用 count_matches_for_season——它会先触发恢复）
+    assert sum(1 for r in ledger._read_match_rows() if r.get("match_id") == match.match_id) == 0
+    assert ledger.pending_transaction_path().exists()
+
+    with pytest.raises(SeasonRegistryError, match="1 场历史对局引用"):
+        sr.delete_season(configs_dir, "s1")
+    # pending 已被恢复：Match 重新进入 ledger；season JSON 保留（无 dangling）
+    assert (configs_dir / "s1.json").exists()
+    assert ledger.count_matches_for_season("s1") == 1
+    assert not ledger.pending_transaction_path().exists()
+
+
 def test_delete_waits_for_ledger_lock(configs_dir, tmp_path, monkeypatch):
     """固定锁序：delete 必须取得 ledger data_lock 后才读/删——
     data_lock 被占时阻塞，释放后完成（与进行中的 intake 互斥）。"""

@@ -61,7 +61,10 @@ DEFAULT_RETAIN_SNAPSHOTS = 24
 # v2：版本化计分引擎（tenhou_4p_ranked / legacy fixed profile）取代固定七段常量
 # v3：R12-A——ingest 路径接入 libriichi 详细统计（旧快照的统计字段全为 None，
 #     相同输入指纹也会强制重建一次以回填行为指标与覆盖率字段）
-SNAPSHOT_BUILD_CONTRACT_VERSION = "v3"
+# v4：R12-A Repair——reach_accepted 按 upstream convlog 状态机成立（宣言牌被
+#     荣和/局在宣言牌后结束 → 不成立，下一次 take/call 前才注入）。该修复改变
+#     detailed-stats 派生语义但 Ledger / artifact 不变，必须强制重建所有 v3 快照。
+SNAPSHOT_BUILD_CONTRACT_VERSION = "v4"
 
 
 class PublishError(Exception):

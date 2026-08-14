@@ -539,12 +539,16 @@ def normalize_stats_events(
 
     - ``start_game.names`` 按 seat 改写为正式 account_id（libriichi Stat 以
       player_name 匹配日志内名字，这里直接以 account_id 作为日志内名字）；
-    - 每个 ``reach`` 之后注入 ``reach_accepted``（actor=立直者）——Stat 依赖
-      它扣除立直棒并标记 riichi_accepted，Tenhou converter 不产出该事件；
+    - ``reach_accepted`` 由 canonical converter 状态机补齐（R12-A Repair）：
+      旧 artifact 的事件流没有该事件 → 按 upstream convlog 状态机做 legacy
+      synthesis（宣言牌之后牌局继续才成立；被荣和/局结束则不成立）；新
+      artifact 已自带 → 幂等跳过，绝不重复注入；
     - ``start_kyoku`` 装饰字段防御性补齐：``dora_marker`` 缺失 → "?"，
       ``tehais`` 不足/超长 → 以 "?" 补齐到 13 张（统计不消费手牌内容，
       只为让事件流可解析）。
     """
+    from convert.tenhou6_utils import insert_reach_accepted
+
     normalized: list[dict[str, Any]] = []
     for event in events:
         row = dict(event)
@@ -564,11 +568,7 @@ def normalize_stats_events(
                         padded.append(["?"] * 13)
                 row["tehais"] = padded
         normalized.append(row)
-        if event_type == "reach":
-            actor = row.get("actor")
-            if actor is not None:
-                normalized.append({"type": "reach_accepted", "actor": int(actor)})
-    return normalized
+    return insert_reach_accepted(normalized)
 
 
 def write_replay_stats_logs(

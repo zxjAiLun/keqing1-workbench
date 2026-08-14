@@ -160,6 +160,54 @@ def _result_events(result: list[Any]) -> list[dict[str, Any]]:
     return events
 
 
+REACH_ACCEPT_TRIGGERS = ("tsumo", "chi", "pon", "daiminkan")
+
+
+def insert_reach_accepted(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按 upstream convlog 状态机补齐 ``reach_accepted``（幂等）。
+
+    立直宣言与成立是两件事（R12-A Repair）：
+    - ``reach`` 之后的首个 ``dahai`` 是宣言牌；
+    - 牌局继续（下一次 take / call：tsumo/chi/pon/daiminkan 真正发生）前，
+      才注入一次 ``reach_accepted(actor)``——立直成立，立直棒 1000 才被扣除；
+    - 宣言牌直接被荣和、或局在宣言牌后结束（hora/ryukyoku/end_kyoku 紧跟），
+      不注入——立直未成立；
+    - 输入流已自带对应 ``reach_accepted`` 时不再注入（绝不扣两次 1000）。
+    """
+    out: list[dict[str, Any]] = []
+    declared: set[int] = set()  # 已 reach，尚未见到宣言牌
+    accepted: set[int] = set()  # 输入流已自带 reach_accepted 的立直
+    pending: list[int] = []  # 宣言牌已出、等待成立判定的立直者
+    for event in events:
+        row = dict(event)
+        event_type = row.get("type")
+        raw_actor = row.get("actor")
+        actor = int(raw_actor) if raw_actor is not None else -1
+        if event_type == "reach" and actor >= 0:
+            declared.add(actor)
+        elif event_type == "dahai" and actor in declared:
+            declared.discard(actor)
+            if actor in accepted:
+                accepted.discard(actor)  # 先 accepted 后宣言牌的异常顺序：不二次注入
+            else:
+                pending.append(actor)
+        elif event_type == "reach_accepted" and actor in declared:
+            declared.discard(actor)
+            accepted.add(actor)
+        if pending:
+            if event_type == "reach_accepted" and actor in pending:
+                pending.remove(actor)
+                accepted.add(actor)
+            elif event_type in REACH_ACCEPT_TRIGGERS:
+                for declarer in pending:
+                    out.append({"type": "reach_accepted", "actor": declarer})
+                pending.clear()
+            elif event_type in ("hora", "ryukyoku", "end_kyoku", "end_game"):
+                pending.clear()  # 宣言牌即终局：立直未成立
+        out.append(row)
+    return out
+
+
 def _convert_kyoku_to_events(kyoku: list[Any], names: list[str], rule: dict[str, Any]) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = [_start_kyoku_event(kyoku, names, rule)]
     oya = int(events[0]["oya"])
@@ -283,7 +331,10 @@ def _convert_kyoku_to_events(kyoku: list[Any], names: list[str], rule: dict[str,
 
     events.extend(_result_events(kyoku[-1] if kyoku else []))
     events.append({"type": "end_kyoku"})
-    return events
+    # R12-A Repair：立直成立与否按 upstream convlog 状态机决定（宣言牌被荣和
+    # 或局在宣言牌后结束 → 不成立）。canonical converter 统一产出正确语义，
+    # 统计/Replay 等所有消费者共享同一套事件。
+    return insert_reach_accepted(events)
 
 
 def tenhou6_to_mjai_events(t6_json: dict[str, Any]) -> list[dict[str, Any]]:

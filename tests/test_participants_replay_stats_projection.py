@@ -110,6 +110,7 @@ def _hand(
     deltas: list[int] | None = None,
     reach: tuple[int, ...] = (),
     calls: dict[int, int] | None = None,
+    declaration_ron: bool = False,
 ) -> list[dict]:
     events: list[dict] = [
         {
@@ -127,6 +128,10 @@ def _hand(
     for seat in reach:
         events.append({"type": "reach", "actor": seat})
         events.append({"type": "dahai", "actor": seat, "pai": "9p", "tsumogiri": False})
+        if not declaration_ron:
+            # 宣言牌未被荣和：牌局继续 → 下一次 take 触发立直成立
+            # （真实 converter 流在宣言牌与和了/流局之间必有后续摸牌/副露）。
+            events.append({"type": "tsumo", "actor": (seat + 1) % 4, "pai": "1m"})
     for seat, count in (calls or {}).items():
         for _ in range(count):
             events.append(
@@ -424,12 +429,15 @@ def test_stats_logs_account_normalized_with_reach_accepted(tmp_path, monkeypatch
                 assert event.get("dora_marker") == "?"
                 assert [len(hand) for hand in event["tehais"]] == [13, 13, 13, 13]
                 assert all(tile == "?" for hand in event["tehais"] for tile in hand)
-        # 每个 reach 之后紧跟同 actor 的 reach_accepted
+        # R12-A Repair：reach_accepted 按 convlog 状态机成立——宣言牌之后牌局
+        # 继续才注入一次；注入点紧随其后的是下一次 take/call（而非紧跟 reach）；
+        # 每个立直恰好一个 reach_accepted。
+        reach_actors = [e["actor"] for e in events if e.get("type") == "reach"]
+        accepted_actors = [e["actor"] for e in events if e.get("type") == "reach_accepted"]
+        assert sorted(accepted_actors) == sorted(reach_actors)
         for index, event in enumerate(events):
-            if event.get("type") == "reach":
-                nxt = events[index + 1]
-                assert nxt["type"] == "reach_accepted"
-                assert nxt["actor"] == event["actor"]
+            if event.get("type") == "reach_accepted":
+                assert events[index + 1]["type"] in ("tsumo", "chi", "pon", "daiminkan")
 
 
 def test_result_only_excluded_from_stats_denominator(tmp_path, monkeypatch):
@@ -565,7 +573,7 @@ def test_projection_fingerprint_includes_replay_artifact(tmp_path, monkeypatch):
 
 
 def test_normalize_stats_events_unit(participants_root):
-    events = [
+    base = [
         {"type": "start_game", "names": ["A", "B", "C", "D"]},
         {
             "type": "start_kyoku",
@@ -574,15 +582,114 @@ def test_normalize_stats_events_unit(participants_root):
             "tehais": [["1m"], [], [], []],
         },
         {"type": "reach", "actor": 2},
+        {"type": "dahai", "actor": 2, "pai": "9p", "tsumogiri": False},
+    ]
+    # 局在宣言牌后直接结束（hora 紧跟）：立直未成立 → 不注入 reach_accepted
+    ron_events = base + [
+        {"type": "hora", "actor": 1, "target": 2, "deltas": [0, 3000, -3000, 0]},
         {"type": "end_kyoku"},
     ]
-    normalized = ladder_ingest.normalize_stats_events(events, ACCOUNTS)
+    normalized = ladder_ingest.normalize_stats_events(ron_events, ACCOUNTS)
     assert normalized[0]["names"] == list(ACCOUNTS)
     start_kyoku = normalized[1]
     assert start_kyoku["dora_marker"] == "?"
     assert [len(hand) for hand in start_kyoku["tehais"]] == [13, 13, 13, 13]
     assert start_kyoku["tehais"][0][0] == "1m"
     assert start_kyoku["tehais"][0][1] == "?"
-    assert normalized[2]["type"] == "reach"
-    assert normalized[3] == {"type": "reach_accepted", "actor": 2}
-    assert normalized[4]["type"] == "end_kyoku"
+    assert [e["type"] for e in normalized if e["type"] == "reach_accepted"] == []
+    # 牌局继续（下一次 take）→ 恰好一次 reach_accepted，且紧跟其后的是该 take
+    continue_events = base + [
+        {"type": "tsumo", "actor": 3, "pai": "1m"},
+        {"type": "end_kyoku"},
+    ]
+    continued = ladder_ingest.normalize_stats_events(continue_events, ACCOUNTS)
+    accepted = [e for e in continued if e.get("type") == "reach_accepted"]
+    assert accepted == [{"type": "reach_accepted", "actor": 2}]
+    accepted_index = continued.index(accepted[0])
+    assert continued[accepted_index + 1] == {"type": "tsumo", "actor": 3, "pai": "1m"}
+    # 输入流已自带 reach_accepted → 幂等，绝不重复注入
+    already = ladder_ingest.normalize_stats_events(
+        base + [{"type": "reach_accepted", "actor": 2}, {"type": "tsumo", "actor": 3, "pai": "1m"}],
+        ACCOUNTS,
+    )
+    assert [e for e in already if e.get("type") == "reach_accepted"] == [
+        {"type": "reach_accepted", "actor": 2}
+    ]
+
+
+# ---------------------------------------------------------------------------
+# R12-A Repair：reach acceptance 语义（真实 libriichi Stat 后端回归）
+# ---------------------------------------------------------------------------
+
+def _stat_class():
+    from replay.build_platform_account_report import import_stat_class
+
+    mortal_root = Path(__file__).resolve().parents[1] / "third_party" / "Mortal"
+    return import_stat_class(mortal_root)
+
+
+def _stat_log(events: list[dict]) -> str:
+    return "\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n"
+
+
+def _riichi_kyoku(*, accepted: bool) -> list[dict]:
+    """构造最小立直局：seat 0 立直宣言，seat 1 荣和。
+
+    ``accepted=True``：宣言牌未被荣和，牌局继续（下一次 take 发生）→ 立直成立；
+    ``accepted=False``：宣言牌直接被 seat 1 荣和 → 立直不成立。
+    """
+    events: list[dict] = [
+        {
+            "type": "start_kyoku",
+            "bakaze": "E",
+            "dora_marker": "1m",
+            "kyoku": 1,
+            "honba": 0,
+            "kyotaku": 0,
+            "oya": 0,
+            "scores": [25000, 25000, 25000, 25000],
+            "tehais": [["1m"] * 13 for _ in range(4)],
+        },
+        {"type": "tsumo", "actor": 0, "pai": "1m"},
+        {"type": "reach", "actor": 0},
+        {"type": "dahai", "actor": 0, "pai": "9p", "tsumogiri": False},
+    ]
+    if accepted:
+        # 牌局继续：下一次 take 发生 → 立直成立；立直者后续摸切被荣和
+        events.extend([
+            {"type": "tsumo", "actor": 1, "pai": "1m"},
+            {"type": "tsumo", "actor": 0, "pai": "1m"},
+            {"type": "dahai", "actor": 0, "pai": "1m", "tsumogiri": True},
+        ])
+    events.extend([
+        {"type": "hora", "actor": 1, "target": 0, "deltas": [-4000, 4000, 0, 0]},
+        {"type": "end_kyoku"},
+    ])
+    return events
+
+
+def test_real_stat_deducts_1000_on_accepted_riichi():
+    """正常成立立直：reach → dahai → 牌局继续 ⇒ 恰好一次 reach_accepted，
+    Stat 正确扣 1000（point = -5000 = -4000 放铳 - 1000 立直棒）。"""
+    from convert.tenhou6_utils import insert_reach_accepted
+
+    events = insert_reach_accepted(_riichi_kyoku(accepted=True))
+    accepted_events = [e for e in events if e.get("type") == "reach_accepted"]
+    assert accepted_events == [{"type": "reach_accepted", "actor": 0}]
+    stat = _stat_class().from_log(_stat_log(events), 0)
+    assert int(stat.point) == -5000
+    assert int(stat.riichi) == 1
+    assert int(stat.houjuu) == 1
+
+
+def test_real_stat_no_deduction_on_declaration_discard_ron():
+    """立直宣言牌被荣和：reach → dahai → hora(target=立直者) ⇒ 零 reach_accepted，
+    立直未成立不多扣 1000（point = -4000 仅放铳）。"""
+    from convert.tenhou6_utils import insert_reach_accepted
+
+    events = insert_reach_accepted(_riichi_kyoku(accepted=False))
+    assert [e for e in events if e.get("type") == "reach_accepted"] == []
+    stat = _stat_class().from_log(_stat_log(events), 0)
+    assert int(stat.point) == -4000
+    assert int(stat.riichi) == 1
+    assert int(stat.houjuu) == 1

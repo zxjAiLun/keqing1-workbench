@@ -275,7 +275,8 @@ check(intakeP.includes('read_replay_events'), 'intake 暴露 replay 事件读取
 const ladderData = read('../replay/ladder.py');
 check(ladderData.includes('stats_coverage') && ladderData.includes('stats_games'), '_enrich_account_row 转发覆盖率字段');
 const plsR12 = read('../replay/publish_ladder_snapshot.py');
-check(plsR12.includes('SNAPSHOT_BUILD_CONTRACT_VERSION = "v3"'), '快照契约版本 v3（强制旧快照重建回填统计）');
+check(plsR12.includes('SNAPSHOT_BUILD_CONTRACT_VERSION = "v4"'), '快照契约版本 v4（reach acceptance 修复强制重建 v3 快照）');
+check(tenhouUtils.includes('insert_reach_accepted'), 'converter 按 convlog 状态机补 reach_accepted（canonical）');
 const ladderTypes = read('src/types/ladder.ts');
 check(ladderTypes.includes('stats_coverage') && ladderTypes.includes('stats_total_games'), 'TS 类型含统计覆盖率字段');
 const accountPage = read('src/pages/LadderAccountPage.tsx');

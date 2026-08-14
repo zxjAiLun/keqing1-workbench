@@ -74,7 +74,7 @@ def _season(tmp_path: Path, report_dir: Path) -> dict:
     return {
         "schema": ladder.SEASON_SCHEMA,
         "season_id": "rt-progression",
-        "status": "active",
+        "status": "running",
         "report_dir": str(report_dir.resolve()),
         "games_expected": 4,
         "default": True,

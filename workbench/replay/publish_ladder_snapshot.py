@@ -59,7 +59,9 @@ DEFAULT_RETAIN_SNAPSHOTS = 24
 
 # report 派生逻辑契约版本：未来算法更新时递增，避免相同源日志复用旧产物
 # v2：版本化计分引擎（tenhou_4p_ranked / legacy fixed profile）取代固定七段常量
-SNAPSHOT_BUILD_CONTRACT_VERSION = "v2"
+# v3：R12-A——ingest 路径接入 libriichi 详细统计（旧快照的统计字段全为 None，
+#     相同输入指纹也会强制重建一次以回填行为指标与覆盖率字段）
+SNAPSHOT_BUILD_CONTRACT_VERSION = "v3"
 
 
 class PublishError(Exception):
@@ -126,6 +128,8 @@ def build_snapshot(
             season=season,
             sources_root=ingest_root,
             output_dir=snapshot_dir,
+            # R12-A：详细统计复用同一 libriichi Stat 后端
+            mortal_root=mortal_root,
         )
     else:
         from replay import build_platform_account_report as account_report

@@ -17,12 +17,16 @@ import csv
 import hashlib
 import json
 import os
+import re
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Protocol, Sequence
 
 from replay.rank_systems import create_rank_system
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 GAME_LENGTHS = ("hanchan", "tonpuu")
 
@@ -47,6 +51,14 @@ def resolve_ingest_sources_root(project_root: Path, season: Mapping[str, Any]) -
 
 class LadderIngestError(ValueError):
     """Ingest validation / merge / replay failure (conflict, bad identity, ...)."""
+
+
+def _resolve_mortal_root(mortal_root: str | Path) -> Path:
+    """R12-A：相对 mortal_root 一律按仓库根解析（publisher 的 CWD 无关性）。"""
+    path = Path(mortal_root)
+    if path.is_absolute():
+        return path
+    return (_REPO_ROOT / path).resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +89,9 @@ class LadderMatch:
     players: tuple[LadderMatchPlayer, ...]
     source_type: str
     source_ref: str | None = None
+    # R12-A：可选的详细统计来源引用。只有 data_completeness == full_replay
+    # 的来源才允许携带；手级数据保持在 replay artifact，投影阶段按需读取。
+    replay_artifact_dir: Path | None = None
 
 
 class SourceAdapter(Protocol):
@@ -348,6 +363,9 @@ class ParticipantLedgerAdapter:
                 ),
                 source_type=self.source_type,
                 source_ref=match.external_match_id,
+                # R12-A：full_replay + replay_id 的 Match 把 replay artifact
+                # 作为详细统计来源关联进来（Ledger 本身仍不含手级数据）。
+                replay_artifact_dir=replay_artifact_dir_for_match(match),
             )
 
 
@@ -356,12 +374,30 @@ def _ladder_game_length(game_length: str) -> str:
     return "tonpuu" if game_length == "tonpu" else game_length
 
 
+def replay_artifact_dir_for_match(match: Any) -> Path | None:
+    """R12-A：解析 participants Match 的详细统计来源目录。
+
+    仅 ``data_completeness == full_replay`` 且带 ``replay_id`` 的 Match 参与；
+    artifact 目录按 participants intake 的统一路径解析（replays/<log_id>）。
+    """
+    if getattr(match, "data_completeness", None) != "full_replay":
+        return None
+    replay_id = getattr(match, "replay_id", None)
+    if not replay_id:
+        return None
+    from participants import intake as participants_intake
+
+    return participants_intake.artifact_dir(str(replay_id))
+
+
 def participants_projection_fingerprint(season_id: str) -> str:
     """participants ledger 的语义投影指纹（P1-1）。
 
     只有影响天梯的字段参与：season_id + active + rating_eligible + match_id +
-    occurred_at + game_length + 四座 account_id + final_scores。按稳定顺序
-    canonical JSON 后 SHA-256。revision note / projection state 等不影响。
+    occurred_at + game_length + 四座 account_id + final_scores +（R12-A）
+    full_replay 比赛的 replay artifact 文件证据（路径/大小/mtime_ns）。
+    按稳定顺序 canonical JSON 后 SHA-256。revision note / projection state
+    等不影响。
     """
     from participants import ledger as participants_ledger
 
@@ -369,6 +405,20 @@ def participants_projection_fingerprint(season_id: str) -> str:
     for match in participants_ledger.list_matches(status="active").matches:
         if match.season_id != season_id or not match.rating_eligible:
             continue
+        replay_evidence: dict[str, Any] | None = None
+        artifact_dir = replay_artifact_dir_for_match(match)
+        if artifact_dir is not None:
+            # R12-A：详细统计来源于 replay artifact——artifact 被替换/修复/
+            # 删除都会改变天梯快照内容，必须进入投影指纹。
+            replay_evidence = {}
+            for name in ("tenhou6.json", "events.jsonl", "hands.jsonl", "summary.json"):
+                path = artifact_dir / name
+                try:
+                    st = path.stat()
+                except OSError:
+                    replay_evidence[name] = None
+                else:
+                    replay_evidence[name] = [st.st_size, st.st_mtime_ns]
         rows.append(
             {
                 "match_id": match.match_id,
@@ -379,6 +429,7 @@ def participants_projection_fingerprint(season_id: str) -> str:
                     for seat in sorted(match.seats, key=lambda s: s.seat)
                 ],
                 "final_scores": match.final_scores,
+                "replay_artifact": replay_evidence,
             }
         )
     rows.sort(key=lambda row: row["match_id"])
@@ -437,6 +488,14 @@ def merge_ladder_matches(
         elif _content_key(previous) == _content_key(match):
             if match.occurred_at < previous.occurred_at:
                 by_id[match.match_id] = match  # 保留最早记录时间
+            elif (
+                match.occurred_at == previous.occurred_at
+                and previous.replay_artifact_dir is None
+                and match.replay_artifact_dir is not None
+            ):
+                # R12-A：同 match_id 同内容同时间时，优先保留携带 replay artifact
+                # 引用的证据（否则详细统计来源会在去重时被无统计来源的记录顶掉）。
+                by_id[match.match_id] = match
         else:
             raise LadderIngestError(
                 f"match_id 冲突: {match.match_id}（两个来源记录了不同内容，拒绝发布）"
@@ -450,6 +509,105 @@ def _content_key(match: LadderMatch):
 
 
 # ---------------------------------------------------------------------------
+# R12-A: Replay stats projection（详细统计投影）
+# ---------------------------------------------------------------------------
+
+STATS_LOG_SUBDIR = "account_logs"
+
+
+def _safe_log_stem(value: str) -> str:
+    """match_id → 文件名安全片段（确定性，不含路径分隔符）。"""
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value)
+
+
+def read_replay_stats_events(artifact_dir: Path) -> list[dict[str, Any]] | None:
+    """读取 replay artifact 的原始 mjai 事件流（events.jsonl 优先，
+    tenhou6.json 重建回退）。artifact 缺失/不可读返回 None——调用方通过
+    覆盖率字段如实披露，而不是把未知当作 0。
+
+    artifact 目录由 participants intake 以 log_id 命名，因此目录名即 replay_id。
+    """
+    from participants import intake as participants_intake
+
+    return participants_intake.read_replay_events(artifact_dir.name)
+
+
+def normalize_stats_events(
+    events: Sequence[Mapping[str, Any]], account_ids: Sequence[str]
+) -> list[dict[str, Any]]:
+    """把 replay artifact 事件流改写成 account-normalized 统计日志事件。
+
+    - ``start_game.names`` 按 seat 改写为正式 account_id（libriichi Stat 以
+      player_name 匹配日志内名字，这里直接以 account_id 作为日志内名字）；
+    - 每个 ``reach`` 之后注入 ``reach_accepted``（actor=立直者）——Stat 依赖
+      它扣除立直棒并标记 riichi_accepted，Tenhou converter 不产出该事件；
+    - ``start_kyoku`` 装饰字段防御性补齐：``dora_marker`` 缺失 → "?"，
+      ``tehais`` 不足/超长 → 以 "?" 补齐到 13 张（统计不消费手牌内容，
+      只为让事件流可解析）。
+    """
+    normalized: list[dict[str, Any]] = []
+    for event in events:
+        row = dict(event)
+        event_type = row.get("type")
+        if event_type == "start_game":
+            row["names"] = [str(account_ids[seat]) for seat in range(4)]
+        elif event_type == "start_kyoku":
+            if row.get("dora_marker") is None:
+                row["dora_marker"] = "?"
+            tehais = row.get("tehais")
+            if isinstance(tehais, list):
+                padded: list[list[str]] = []
+                for hand in tehais:
+                    if isinstance(hand, list):
+                        padded.append(([str(tile) for tile in hand] + ["?"] * 13)[:13])
+                    else:
+                        padded.append(["?"] * 13)
+                row["tehais"] = padded
+        normalized.append(row)
+        if event_type == "reach":
+            actor = row.get("actor")
+            if actor is not None:
+                normalized.append({"type": "reach_accepted", "actor": int(actor)})
+    return normalized
+
+
+def write_replay_stats_logs(
+    matches: Sequence[LadderMatch],
+    stats_log_dir: Path,
+) -> list[str]:
+    """为携带 replay artifact 引用的 Match 生成 account-normalized 统计日志。
+
+    每局写出 ``<game_index:04d>_<match_id>.json.gz``（game_index 与全量重放的
+    局序一致）。artifact 缺失/事件不可读时跳过该局，覆盖率字段如实披露。
+    返回实际写出的 match_id 列表。
+    """
+    from replay.build_platform_account_report import write_account_log
+
+    stats_log_dir.mkdir(parents=True, exist_ok=True)
+    written: list[str] = []
+    for game_index, match in enumerate(matches):
+        artifact_dir = match.replay_artifact_dir
+        if artifact_dir is None:
+            continue
+        events = read_replay_stats_events(artifact_dir)
+        if not events:
+            continue
+        account_ids = [""] * 4
+        for player in match.players:
+            account_ids[player.seat] = player.account_id
+        if any(not account_id for account_id in account_ids):
+            continue
+        normalized = normalize_stats_events(events, account_ids)
+        write_account_log(
+            normalized,
+            account_ids,
+            stats_log_dir / f"{game_index:04d}_{_safe_log_stem(match.match_id)}.json.gz",
+        )
+        written.append(match.match_id)
+    return written
+
+
+# ---------------------------------------------------------------------------
 # Full replay (newcomer / R1500)
 # ---------------------------------------------------------------------------
 
@@ -457,12 +615,19 @@ def replay_ladder_matches(
     matches: Sequence[LadderMatch],
     *,
     scoring_config: Mapping[str, Any] | None,
+    stats_log_dir: Path | None = None,
+    mortal_root: str | Path = Path("third_party/Mortal"),
 ) -> dict[str, Any]:
     """从新人/R1500 全量重放，产出 v2 报告核心产物（summary/ledger/curve）。
 
     与 report builder 的赛前快照规则一致：每局先复制四名账号的不可变赛前
     状态，构造一次共享 MatchContext，再逐 seat 独立 apply_result，全部算完
     后才写回账号状态。
+
+    R12-A：``stats_log_dir`` 提供时，携带 replay artifact 引用的 Match 会
+    生成 account-normalized 统计日志并复用现有 build_stat_report（libriichi
+    Stat）把详细指标合并进 account summary；无 full replay 的账号保持 None
+    并由 stats_games / stats_total_games / stats_coverage 披露覆盖率。
     """
     rank_system = create_rank_system(dict(scoring_config) if scoring_config else None)
     initial = rank_system.initial_state()
@@ -496,6 +661,12 @@ def replay_ladder_matches(
 
     ledger_rows: list[dict[str, Any]] = []
     curve_rows: list[dict[str, Any]] = []
+
+    # R12-A：先为携带 replay artifact 引用的 Match 生成 account-normalized
+    # 统计日志（与重放同一局序），随后统一走 build_stat_report 聚合。
+    stats_eligible_match_ids: list[str] = []
+    if stats_log_dir is not None:
+        stats_eligible_match_ids = write_replay_stats_logs(matches, stats_log_dir)
 
     for game_index, match in enumerate(matches):
         for player in match.players:
@@ -590,12 +761,41 @@ def replay_ladder_matches(
                 }
             )
 
+    # R12-A：有完整牌谱时复用 native report 的 build_stat_report（libriichi
+    # Stat）——不手搓指标定义，保证与旧 native-log detailed stats 同一口径。
+    stat_report: dict[str, Any] | None = None
+    if stats_eligible_match_ids:
+        from replay.build_platform_account_report import build_stat_report
+
+        is_legacy_fixed = rank_system.system_id == "tenhou_houou_7dan_fixed"
+        if is_legacy_fixed:
+            # legacy fixed profile：stat 的"平均顺位列 PT"以 profile 的 rank_points 为权威。
+            stat_rank_pts = [float(value) for value in rank_system.rank_points]
+            stat_profile = "houou_7dan_hanchan"
+        else:
+            # 动态段位下平均顺位列 PT 失去意义；权威指标改为引擎 total_pt_delta /
+            # avg_pt_delta。行为指标（和率/放铳率/副露率/立直率等）不受影响。
+            stat_rank_pts = [0.0, 0.0, 0.0, 0.0]
+            stat_profile = rank_system.system_id
+        stat_report = build_stat_report(
+            log_dir=stats_log_dir,
+            players={account_id: account_id for account_id in sorted(states)},
+            mortal_root=mortal_root,
+            rank_pts=stat_rank_pts,
+            rank_points_profile=stat_profile,
+        )
+
     summary_rows: list[dict[str, Any]] = []
     for account_id in sorted(states):
         state = states[account_id]
         meta = rank_system.rank_meta(state["rank_id"])
         pt_target = meta.target_pt
         games = int(state["games"])
+        stat_player = (stat_report or {}).get("players", {}).get(account_id, {})
+        raw_stats = stat_player.get("raw", {})
+        derived_stats = stat_player.get("derived", {})
+        stats_games = int(raw_stats.get("game") or 0)
+        stats_rounds = int(raw_stats.get("round") or 0)
         summary_rows.append(
             {
                 "account_id": account_id,
@@ -625,12 +825,23 @@ def replay_ladder_matches(
                 "avg_pt_delta": (
                     total_pt_delta[account_id] / float(games) if games else None
                 ),
-                "agari_rate": None,
-                "houjuu_rate": None,
-                "fuuro_rate": None,
-                "riichi_rate": None,
-                "avg_point_per_agari": None,
-                "total_delta_score": None,
+                "agari_rate": derived_stats.get("agari_rate"),
+                "houjuu_rate": derived_stats.get("houjuu_rate"),
+                "fuuro_rate": derived_stats.get("fuuro_rate"),
+                "riichi_rate": derived_stats.get("riichi_rate"),
+                "agari_rate_after_fuuro": derived_stats.get("agari_rate_after_fuuro"),
+                "houjuu_rate_after_fuuro": derived_stats.get("houjuu_rate_after_fuuro"),
+                "agari_rate_after_riichi": derived_stats.get("agari_rate_after_riichi"),
+                "houjuu_rate_after_riichi": derived_stats.get("houjuu_rate_after_riichi"),
+                "avg_point_per_agari": derived_stats.get("avg_point_per_agari"),
+                "total_delta_score": raw_stats.get("point"),
+                # R12-A：详细统计覆盖率披露（分母只含实际算出的完整牌谱场数）。
+                "stats_games": stats_games,
+                "stats_rounds": stats_rounds,
+                "stats_total_games": games,
+                "stats_coverage": (
+                    round(stats_games / float(games), 4) if games else None
+                ),
             }
         )
 
@@ -642,12 +853,15 @@ def replay_ladder_matches(
         "sources": {
             "ingest": True,
             "match_count": len(matches),
+            # R12-A：实际进入详细统计的完整牌谱场数（覆盖率披露的事实依据）。
+            "stats_match_count": len(stats_eligible_match_ids),
         },
     }
     return {
         "report": report,
         "ledger_rows": ledger_rows,
         "curve_rows": curve_rows,
+        "stat_report": stat_report,
     }
 
 
@@ -670,7 +884,11 @@ def _avg_rank(rank_counts: Sequence[int], games: int) -> float | None:
 
 
 def write_ingest_outputs(output_dir: Path, result: dict[str, Any]) -> None:
-    """写出快照必需三件套（与 SNAPSHOT_REQUIRED_FILES 契约一致）。"""
+    """写出快照必需三件套（与 SNAPSHOT_REQUIRED_FILES 契约一致）。
+
+    R12-A：stat_report 存在时附带写出 detailed_stats.json/.md（native report
+    同构产物，供人工核验）；不存在时清理残留旧文件。
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     report = result["report"]
     (output_dir / "account_summary.json").write_text(
@@ -689,6 +907,22 @@ def write_ingest_outputs(output_dir: Path, result: dict[str, Any]) -> None:
             writer.writerows(curve_rows)
     else:
         (output_dir / "rating_curve.csv").write_text("", encoding="utf-8")
+    stat_report = result.get("stat_report")
+    if stat_report:
+        from replay.build_platform_account_report import format_markdown_report
+
+        (output_dir / "detailed_stats.json").write_text(
+            json.dumps(stat_report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        (output_dir / "detailed_stats.md").write_text(
+            format_markdown_report(stat_report), encoding="utf-8"
+        )
+    else:
+        for name in ("detailed_stats.json", "detailed_stats.md"):
+            stale = output_dir / name
+            if stale.exists():
+                stale.unlink()
 
 
 def build_ingest_report(
@@ -696,15 +930,27 @@ def build_ingest_report(
     season: Mapping[str, Any],
     sources_root: Path,
     output_dir: Path,
+    mortal_root: str | Path = Path("third_party/Mortal"),
 ) -> dict[str, Any]:
     """赛季级 ingest 构建：读所有 source -> 合并 -> 全量重放 -> 写产物。
 
     ``season["ingest"]`` 结构：
     ``{"sources_root": str, "native": {"name_to_account": {...}} | null}``
+
+    R12-A：``mortal_root`` 用于复用 build_stat_report（libriichi Stat）；
+    相对路径按仓库根解析（与 publisher 运行目录无关）。
     """
     ingest = season.get("ingest")
     if not isinstance(ingest, dict):
         raise LadderIngestError("season 缺少 ingest 配置")
+
+    resolved_mortal_root = _resolve_mortal_root(mortal_root)
+    # R12-A：account-normalized 统计日志的派生目录（同 native report 的
+    # account_logs 约定）。每次构建前清理，避免残留污染覆盖率与统计。
+    stats_log_dir = output_dir / STATS_LOG_SUBDIR
+    if stats_log_dir.exists():
+        shutil.rmtree(stats_log_dir)
+    stats_log_dir.mkdir(parents=True, exist_ok=True)
 
     allowed_accounts = {
         str(account.get("account_id"))
@@ -760,11 +1006,21 @@ def build_ingest_report(
                 entry for entry in source_entries if entry[0].source_type == "participants"
             ]
             matches = merge_ladder_matches(exclusive_entries, allowed_accounts=allowed_accounts)
-            result = replay_ladder_matches(matches, scoring_config=season.get("scoring"))
+            result = replay_ladder_matches(
+                matches,
+                scoring_config=season.get("scoring"),
+                stats_log_dir=stats_log_dir,
+                mortal_root=resolved_mortal_root,
+            )
             write_ingest_outputs(output_dir, result)
             return result["report"]
 
     matches = merge_ladder_matches(source_entries, allowed_accounts=allowed_accounts)
-    result = replay_ladder_matches(matches, scoring_config=season.get("scoring"))
+    result = replay_ladder_matches(
+        matches,
+        scoring_config=season.get("scoring"),
+        stats_log_dir=stats_log_dir,
+        mortal_root=resolved_mortal_root,
+    )
     write_ingest_outputs(output_dir, result)
     return result["report"]

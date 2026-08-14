@@ -220,6 +220,16 @@ def test_r10_vertical_smoke(env):
     account_summary = json.loads((snapshot_dir / "account_summary.json").read_text(encoding="utf-8"))
     nick_row = next(r for r in account_summary["accounts"] if r["account_id"] == "nick@01")
     assert nick_row["games"] == 1
+    # R12-A：快照已接入 libriichi 详细统计（真实 Stat 后端，非 stub）——
+    # 1 和 / 4 局 → 和率 0.25；终局 30000 → 总分数变化 +5000；覆盖率 1/1。
+    assert nick_row["stats_games"] == 1
+    assert nick_row["stats_total_games"] == 1
+    assert nick_row["stats_coverage"] == 1.0
+    assert nick_row["stats_rounds"] == 4
+    assert nick_row["agari_rate"] == pytest.approx(0.25)
+    assert nick_row["houjuu_rate"] == 0.0
+    assert nick_row["total_delta_score"] == 5000
+    assert (snapshot_dir / "detailed_stats.json").is_file()
     ledger_rows = [
         json.loads(line)
         for line in (snapshot_dir / "account_ledger.jsonl").read_text(encoding="utf-8").splitlines()

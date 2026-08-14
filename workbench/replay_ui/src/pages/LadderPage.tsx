@@ -266,10 +266,10 @@ export function LadderPage() {
                         <td style={{ ...tdStyle, ...numStyle }}>{fmtRank(row.avg_rank)}</td>
                         <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.rank_1_rate)}</td>
                         <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.rank_4_rate)}</td>
-                        <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.agari_rate)}</td>
-                        <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.houjuu_rate)}</td>
-                        <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.fuuro_rate)}</td>
-                        <td style={{ ...tdStyle, ...numStyle }}>{fmtRate(row.riichi_rate)}</td>
+                        <td style={{ ...tdStyle, ...numStyle }} title={statsCoverageTitle(row)}>{fmtRate(row.agari_rate)}</td>
+                        <td style={{ ...tdStyle, ...numStyle }} title={statsCoverageTitle(row)}>{fmtRate(row.houjuu_rate)}</td>
+                        <td style={{ ...tdStyle, ...numStyle }} title={statsCoverageTitle(row)}>{fmtRate(row.fuuro_rate)}</td>
+                        <td style={{ ...tdStyle, ...numStyle }} title={statsCoverageTitle(row)}>{fmtRate(row.riichi_rate)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -290,6 +290,16 @@ export function LadderPage() {
       )}
     </PageShell>
   );
+}
+
+// R12-A：行为指标列悬停披露统计覆盖率（分母只含实际算出的完整牌谱场数）。
+function statsCoverageTitle(row: LadderAccountRow): string | undefined {
+  if (row.stats_total_games === null || row.stats_total_games === undefined) {
+    return undefined;
+  }
+  const coverage = row.stats_coverage;
+  const suffix = coverage === null || coverage === undefined ? '' : `（${Math.round(coverage * 100)}% 覆盖）`;
+  return `详细牌谱统计：${row.stats_games ?? 0} / ${row.stats_total_games} 场${suffix}`;
 }
 
 function scoringLabel(scoring: LadderSeasonScoring): string {

@@ -532,17 +532,50 @@ def rich_hands_for_artifact(log_id: str) -> list[dict] | None:
     events_path = directory / "events.jsonl"
     if events_path.exists():
         try:
-            events = [
-                json.loads(line)
-                for line in events_path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
+            events = _read_artifact_events_file(events_path)
             rebuilt = hand_summaries(events)
             if rebuilt:
                 return rebuilt
         except (OSError, json.JSONDecodeError):
             pass
     return hands
+
+
+def _read_artifact_events_file(events_path: Path) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in events_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def read_replay_events(log_id: str) -> list[dict] | None:
+    """读取 artifact 的原始 mjai 事件流（R12-A 统计投影的数据来源）。
+
+    - 优先 events.jsonl（import 时持久化的完整事件）；
+    - 缺失/损坏时从原始 tenhou6.json 内存重建（与 rich_hands 同一优先级）；
+    - artifact 不存在或两者都不可读时返回 None（调用方按覆盖率披露降级）。
+    """
+    directory = artifact_dir(log_id)
+    events_path = directory / "events.jsonl"
+    if events_path.exists():
+        try:
+            events = _read_artifact_events_file(events_path)
+            if events and events[0].get("type") == "start_game":
+                return events
+        except (OSError, json.JSONDecodeError):
+            pass
+    tenhou6_path = directory / "tenhou6.json"
+    if tenhou6_path.exists():
+        try:
+            tenhou6 = json.loads(tenhou6_path.read_text(encoding="utf-8"))
+            if tenhou6.get("log"):
+                rebuilt = tenhou6_events(tenhou6)
+                if rebuilt:
+                    return rebuilt
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -951,5 +984,6 @@ __all__ = [
     "recover_intake_transaction_locked",
     "read_replay_artifact",
     "rich_hands_for_artifact",
+    "read_replay_events",
     "artifact_dir",
 ]

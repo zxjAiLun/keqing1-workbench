@@ -11,7 +11,7 @@ import { TrendChart } from '../components/Ladder/TrendChart';
 import { useLadderSeasonCatalog } from '../hooks/useLadderSeasonCatalog';
 import { useVisibleLiveQuery } from '../hooks/useVisibleLiveQuery';
 import { routes, withLadderSeason } from '../routes';
-import type { LadderAccountDetail, LadderSeasonScoring } from '../types/ladder';
+import type { LadderAccountDetail, LadderAccountRow, LadderSeasonScoring } from '../types/ladder';
 import { fmtPt, fmtRate, fmtRating, fmtSignedInt } from '../utils/ladderFormat';
 
 const RECENT_GAMES_LIMIT = 50;
@@ -197,7 +197,7 @@ export function LadderAccountPage() {
 
             {/* 行为指标 */}
             <section className="card" style={{ padding: 12 }}>
-              <SectionTitle title="行为指标" />
+              <SectionTitle title="行为指标" description={statsCoverageLabel(account)} />
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 14px', fontSize: 12 }}>
                 {[
                   ['和率', fmtRate(account.agari_rate)],
@@ -212,6 +212,7 @@ export function LadderAccountPage() {
                   ['总分数变化', fmtSignedInt(account.total_delta_score)],
                   ['累计PTΔ', account.total_pt_delta === null || account.total_pt_delta === undefined ? '—' : fmtSignedInt(account.total_pt_delta)],
                   ['平均每场PTΔ', account.avg_pt_delta === null || account.avg_pt_delta === undefined ? '—' : (account.avg_pt_delta >= 0 ? '+' : '') + account.avg_pt_delta.toFixed(1)],
+                  ['统计总局数', account.stats_rounds === null || account.stats_rounds === undefined ? '—' : String(account.stats_rounds)],
                 ].map(([label, value]) => (
                   <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, borderBottom: '1px dashed var(--border)', paddingBottom: 3 }}>
                     <span style={{ color: 'var(--text-muted)' }}>{label}</span>
@@ -340,6 +341,17 @@ function scoringProfileLabel(scoring: LadderSeasonScoring): string {
     return [scoring.system, scoring.version, scoring.tier_policy].filter(Boolean).join(' · ');
   }
   return scoring.pt_profile || 'legacy';
+}
+
+// R12-A：详细牌谱统计覆盖率披露——行为指标的分母只含实际算出完整统计的场数。
+function statsCoverageLabel(account: LadderAccountRow): string | undefined {
+  if (account.stats_total_games === null || account.stats_total_games === undefined) {
+    return undefined;
+  }
+  const games = account.stats_games ?? 0;
+  const coverage = account.stats_coverage;
+  const suffix = coverage === null || coverage === undefined ? '' : `（${Math.round(coverage * 100)}% 覆盖）`;
+  return `详细牌谱统计：${games} / ${account.stats_total_games} 场${suffix}`;
 }
 
 const linkButtonStyle: CSSProperties = {

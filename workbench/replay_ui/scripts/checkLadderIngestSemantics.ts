@@ -51,7 +51,7 @@ check(/positive_pt/.test(ingest), 'ledger 应含 positive_pt');
 check(/account_summary\.json/.test(ingest), '应写出 account_summary.json（快照契约）');
 
 // 5. publisher ingest 分支
-const publisher = read('training/mortal/publish_ladder_snapshot.py');
+const publisher = read('workbench/replay/publish_ladder_snapshot.py');
 check(/ingest_root/.test(publisher), 'publisher 应支持 ingest_root');
 check(/build_ingest_report/.test(publisher), 'publisher 应调用 build_ingest_report（ingest 分支）');
 check(/ingest=1/.test(publisher), 'publisher ingest 指纹应标记 ingest=1');

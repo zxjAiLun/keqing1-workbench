@@ -70,17 +70,12 @@ check(
 );
 check(inFile('../participants/api.py', ['prefix="/api/participants"']), 'participants api 前缀 /api/participants');
 
-// 7) pytest 白名单包含 5 个 R10 测试文件
+// 7) pytest 白名单：participants 测试以 glob 收录（新增 R12-A 文件自动纳入）
 const pyproject = read('../../pyproject.toml');
-for (const testFile of [
-  'test_participants_registry.py',
-  'test_participants_ledger.py',
-  'test_participants_validation.py',
-  'test_participants_server.py',
-  'test_participants_migration.py',
-]) {
-  check(pyproject.includes(testFile), `pyproject python_files 白名单包含 ${testFile}`);
-}
+check(
+  pyproject.includes('test_participants_*.py'),
+  'pyproject python_files 白名单包含 test_participants_*.py（glob）',
+);
 
 // 8) MatchesPage 渲染 status（active|void）
 const matchesPage = read('src/pages/MatchesPage.tsx');
@@ -147,7 +142,7 @@ check(ledgerF2.includes('"generation": uuid.uuid4().hex'), 'dirty marker 带 gen
 check(ledgerF2.includes('complete_ladder_projection'), '发布完成 CAS（generation 变了保留 dirty）');
 check(ledgerF2.includes('model_fields_set'), 'revise 区分省略与显式 null（可清空 season）');
 check(ledgerF2.includes('for season in {old_season, new_season}'), 'season move → 新旧双 dirty');
-const pls = read('../../training/mortal/publish_ladder_snapshot.py');
+const pls = read('../replay/publish_ladder_snapshot.py');
 check(pls.includes('extra_fingerprint'), 'publisher 指纹合并 ledger 投影输入');
 const proj = read('../participants/projection.py');
 check(proj.includes('run_dirty_projection'), '自动 dirty consumer');
@@ -269,4 +264,22 @@ const import5 = read('src/pages/TenhouImportPage.tsx');
 check(import5.includes('frozenModel ? draft.alias_id :'), 'frozen seat 切 scope 不清 source alias');
 check(import5.includes('保存本局账号对齐'), 'frozen NoName 只允许 match/none');
 
-console.log('participant semantics OK (model-only launcher, account-less session alias, force-save, routes, server mount, pytest whitelist)');
+// 25) R12-A：Replay Stats Projection——正式天梯接入 libriichi 详细统计
+check(ladderIngest.includes('replay_artifact_dir'), 'LadderMatch 携带 replay artifact 引用（统计来源）');
+check(ladderIngest.includes('normalize_stats_events'), '投影阶段 account-normalized 事件归一');
+check(ladderIngest.includes('reach_accepted'), '注入 reach_accepted（libriichi Stat 依赖）');
+check(ladderIngest.includes('build_stat_report'), '复用 build_stat_report（不手搓指标定义）');
+check(ladderIngest.includes('stats_coverage') && ladderIngest.includes('stats_total_games'), '覆盖率字段披露（stats_coverage / stats_total_games）');
+check(ladderIngest.includes('replay_artifact'), '投影指纹包含 replay artifact 证据');
+check(intakeP.includes('read_replay_events'), 'intake 暴露 replay 事件读取（events.jsonl 优先）');
+const ladderData = read('../replay/ladder.py');
+check(ladderData.includes('stats_coverage') && ladderData.includes('stats_games'), '_enrich_account_row 转发覆盖率字段');
+const plsR12 = read('../replay/publish_ladder_snapshot.py');
+check(plsR12.includes('SNAPSHOT_BUILD_CONTRACT_VERSION = "v3"'), '快照契约版本 v3（强制旧快照重建回填统计）');
+const ladderTypes = read('src/types/ladder.ts');
+check(ladderTypes.includes('stats_coverage') && ladderTypes.includes('stats_total_games'), 'TS 类型含统计覆盖率字段');
+const accountPage = read('src/pages/LadderAccountPage.tsx');
+check(accountPage.includes('详细牌谱统计'), '账号详情披露详细牌谱统计覆盖率');
+check(pyproject.includes('test_participants_replay_stats_projection.py') || pyproject.includes('test_participants_*.py'), 'R12-A 测试入 pytest 白名单');
+
+console.log('participant semantics OK (model-only launcher, account-less session alias, force-save, routes, server mount, pytest whitelist, R12-A replay stats projection)');

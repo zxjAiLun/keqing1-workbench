@@ -124,6 +124,11 @@ export interface LadderAccountRow {
   houjuu_rate_after_riichi: number | null;
   avg_point_per_agari: number | null;
   total_delta_score: number | null;
+  /** R12-A：详细牌谱统计覆盖率（完整牌谱场数/总局数/覆盖率） */
+  stats_games?: number | null;
+  stats_rounds?: number | null;
+  stats_total_games?: number | null;
+  stats_coverage?: number | null;
   rank_position?: number;
 }
 

@@ -567,6 +567,11 @@ def _enrich_account_row(
         "houjuu_rate_after_riichi": row.get("houjuu_rate_after_riichi"),
         "avg_point_per_agari": row.get("avg_point_per_agari"),
         "total_delta_score": row.get("total_delta_score"),
+        # R12-A：详细统计覆盖率（完整牌谱场数 / 总局数 / 覆盖率）。
+        "stats_games": row.get("stats_games"),
+        "stats_rounds": row.get("stats_rounds"),
+        "stats_total_games": row.get("stats_total_games"),
+        "stats_coverage": row.get("stats_coverage"),
     }
 
 

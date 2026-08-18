@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Protocol, Sequence
 
+from project_data import resolve_ladder_path
 from replay.rank_systems import create_rank_system
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -41,12 +42,8 @@ def resolve_ingest_sources_root(project_root: Path, season: Mapping[str, Any]) -
     raw = ingest.get("sources_root")
     if not raw:
         raise LadderIngestError("season 缺少 ingest.sources_root")
-    path = Path(str(raw))
-    if path.is_absolute():
-        return path.resolve()
-    data_root = os.environ.get("KEQING_LADDER_DATA_ROOT", "").strip()
-    base = Path(data_root) if data_root else project_root
-    return (base / path).resolve()
+    del project_root
+    return resolve_ladder_path(str(raw))
 
 
 class LadderIngestError(ValueError):

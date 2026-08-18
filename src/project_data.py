@@ -31,6 +31,45 @@ def data_path(*parts: str) -> Path:
     return data_root().joinpath(*parts)
 
 
+def _override_path(name: str, default: Path) -> Path:
+    """Resolve an optional deployment override, otherwise return ``default``."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    path = Path(raw).expanduser()
+    return path if path.is_absolute() else (REPO_ROOT / path).resolve()
+
+
+def ladder_data_root() -> Path:
+    """Canonical root for all portable Ladder runtime data.
+
+    ``KEQING_LADDER_DATA_ROOT`` remains an advanced deployment override; normal
+    local operation derives this from the single shared ``KEQING_DATA_ROOT``.
+    """
+    return _override_path("KEQING_LADDER_DATA_ROOT", data_path("ladder"))
+
+
+def ladder_registry_root() -> Path:
+    """Canonical runtime season-registry directory."""
+    return _override_path("KEQING_LADDER_CONFIG_DIR", ladder_data_root() / "registries")
+
+
+def resolve_ladder_path(raw: str | Path) -> Path:
+    """Resolve a persisted Ladder path relative to :func:`ladder_data_root`."""
+    path = Path(raw).expanduser()
+    return path.resolve() if path.is_absolute() else (ladder_data_root() / path).resolve()
+
+
+def encode_ladder_path(path: str | Path) -> str:
+    """Encode an in-root physical path for portable registry persistence."""
+    root = ladder_data_root().resolve()
+    resolved = Path(path).expanduser().resolve()
+    try:
+        return resolved.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise ValueError(f"Ladder path is outside data root: {resolved}") from exc
+
+
 def ladder_capture_root() -> Path:
     """Play-with-you ladder capture root。
 
@@ -39,6 +78,4 @@ def ladder_capture_root() -> Path:
     （capture 一直落在 ``KEQING_DATA_ROOT/ladder/captures/playwithyou``）。
     ``KEQING_LADDER_DATA_ROOT`` 为部署 override。
     """
-    raw = os.environ.get("KEQING_LADDER_DATA_ROOT", "").strip()
-    root = Path(raw) if raw else data_path("ladder")
-    return root / "captures" / "playwithyou"
+    return ladder_data_root() / "captures" / "playwithyou"

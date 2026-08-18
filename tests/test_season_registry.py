@@ -47,6 +47,7 @@ def test_create_season_is_draft_with_empty_enrollment(configs_dir):
     assert season["default"] is False
     assert season["models"] == []
     assert season["schema"] == "keqing.ladder.season.v1"
+    assert season["report_dir"] == "seasons/season-x/snapshots/placeholder"
     assert (configs_dir / "season-x.json").exists()
 
 

@@ -123,7 +123,8 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def _report_dir_for(configs_dir: Path, season_id: str) -> str:
     """新赛季 report_dir 占位（发布时由 publisher 原子切换为真实快照目录）。"""
-    return str((configs_dir.parent / "seasons" / season_id / "snapshots" / "placeholder").resolve())
+    del configs_dir
+    return f"seasons/{season_id}/snapshots/placeholder"
 
 
 def create_season(

@@ -18,6 +18,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from project_data import ladder_registry_root, resolve_ladder_path
+
 SEASON_SCHEMA = "keqing.ladder.season.v1"
 REPORT_SCHEMA = "keqing.mortal.platform_account_report.v1"
 REPORT_SCHEMA_V2 = "keqing.mortal.platform_account_report.v2"
@@ -294,13 +296,11 @@ def _registry_account_index(season: dict[str, Any]) -> dict[str, dict[str, Any]]
 def resolve_config_dir(project_root: Path) -> Path:
     """赛季注册表目录。
 
-    默认读取仓库内 ``workbench/configs/ladder/seasons``；正式 runtime 通过环境变量
-    ``KEQING_LADDER_CONFIG_DIR`` 指向外部动态注册表目录（如 keqing-data）。
+    正常 runtime 读取 ``KEQING_DATA_ROOT/ladder/registries``。仓库 configs
+    仅作 seed/example，不得作为生产 fallback。
     """
-    override = os.environ.get("KEQING_LADDER_CONFIG_DIR", "").strip()
-    if override:
-        return Path(override)
-    return project_root / "workbench" / "configs" / "ladder" / "seasons"
+    del project_root
+    return ladder_registry_root()
 
 
 def resolve_report_dir(project_root: Path, raw_dir: str) -> Path:
@@ -309,12 +309,18 @@ def resolve_report_dir(project_root: Path, raw_dir: str) -> Path:
     - 绝对路径原样使用（动态赛季通常直接指向 keqing-data 下的快照）；
     - 相对路径默认相对 project_root；设置 ``KEQING_LADDER_DATA_ROOT`` 时相对该数据根。
     """
-    path = Path(raw_dir)
-    if path.is_absolute():
-        return path.resolve()
-    data_root = os.environ.get("KEQING_LADDER_DATA_ROOT", "").strip()
-    base = Path(data_root) if data_root else project_root
-    return (base / raw_dir).resolve()
+    # Direct loader callers in tests/tools may supply an isolated project root
+    # with no runtime data configuration.  Preserve that explicit fixture mode;
+    # the Workbench runtime passes its real repository root and always uses the
+    # portable ladder-data contract below.
+    if (
+        not os.environ.get("KEQING_LADDER_DATA_ROOT", "").strip()
+        and not os.environ.get("KEQING_DATA_ROOT", "").strip()
+        and project_root.resolve() != Path(__file__).resolve().parents[2]
+        and not Path(raw_dir).is_absolute()
+    ):
+        return (project_root / raw_dir).resolve()
+    return resolve_ladder_path(raw_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -939,5 +945,3 @@ def load_model(project_root: Path, configs_dir: Path, season_id: str, model_id: 
         },
         "league_summary": _load_league_summary(project_root, season, model_id),
     }
-
-

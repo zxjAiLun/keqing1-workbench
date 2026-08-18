@@ -1571,17 +1571,15 @@ async def list_selfplay_anomaly_replays():
 # ========== Model Ladder（模型天梯与账号） ==========
 
 _LADDER_PROJECT_ROOT = BASE_DIR.parent.parent
-# 默认读取仓库 workbench/configs/ladder/seasons；正式 runtime 可用 KEQING_LADDER_CONFIG_DIR 指向外部注册表
+# 默认读取 KEQING_DATA_ROOT/ladder/registries；Ladder 专用环境变量仅用于高级部署 override。
 _LADDER_SEASONS_DIR = ladder_data.resolve_config_dir(_LADDER_PROJECT_ROOT)
 # R11-A1 可观测性：启动即打印实际加载的赛季注册表，避免"到底读哪份配置"靠猜。
-# fallback 是仓库内 workbench/configs/ladder/seasons（repository_default），
-# 不是 KEQING_DATA_ROOT —— 文案与 resolve_config_dir() 的真实行为保持一致。
 logging.getLogger(__name__).info(
     "Ladder registry: %s source=%s",
     _LADDER_SEASONS_DIR,
     "KEQING_LADDER_CONFIG_DIR"
     if os.environ.get("KEQING_LADDER_CONFIG_DIR", "").strip()
-    else "repository_default",
+    else "KEQING_DATA_ROOT/ladder/registries",
 )
 
 

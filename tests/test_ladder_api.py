@@ -435,10 +435,12 @@ def test_curve_point_boundaries(season_env, max_points, expected_games):
 # 外部注册表 / 数据根边界（Live Ladder Data Plane）
 # ---------------------------------------------------------------------------
 
-def test_resolve_config_dir_defaults_to_workbench(monkeypatch, tmp_path: Path):
+def test_resolve_config_dir_defaults_to_shared_ladder_data(monkeypatch, tmp_path: Path):
     monkeypatch.delenv("KEQING_LADDER_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("KEQING_LADDER_DATA_ROOT", raising=False)
+    monkeypatch.setenv("KEQING_DATA_ROOT", str(tmp_path / "runtime"))
     resolved = ladder.resolve_config_dir(tmp_path)
-    assert resolved == tmp_path / "workbench" / "configs" / "ladder" / "seasons"
+    assert resolved == tmp_path / "runtime" / "ladder" / "registries"
 
 
 def test_resolve_config_dir_override(monkeypatch, tmp_path: Path):

@@ -28,6 +28,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+from project_data import encode_ladder_path, ladder_data_root, resolve_ladder_path
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
@@ -101,7 +103,7 @@ def load_registry(registry_path: Path) -> dict[str, Any]:
 
 
 def default_snapshot_root(data_root: Path | None, season_id: str) -> Path:
-    base = data_root or Path.cwd()
+    base = data_root or ladder_data_root()
     return base / "seasons" / season_id / "snapshots"
 
 
@@ -314,7 +316,13 @@ def conditional_switch_registry(
             raise PublishError("registry 契约（模型/账号/状态/checkpoint）在构建期间发生变化，拒绝旧发布覆盖")
 
         updated = dict(current)
-        updated["report_dir"] = str(new_report_dir)
+        try:
+            updated["report_dir"] = encode_ladder_path(new_report_dir)
+        except ValueError:
+            # Explicit --snapshot-root is a diagnostics/test escape hatch.  A
+            # normal publisher root always lives under ladder_data_root and is
+            # therefore persisted portably.
+            updated["report_dir"] = str(new_report_dir)
         tmp_path = _tmp_path_for(registry_path)
         tmp_path.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         try:
@@ -662,8 +670,6 @@ def publish_snapshot(
     scoring_hash = scoring_config_hash(effective_scoring)
     expected_rank_points = manifest_rank_points(resolved_block)
 
-    data_root = os.environ.get("KEQING_LADDER_DATA_ROOT", "").strip()
-
     # ingest 赛季：sources_root 解析与 API 共用同一实现（相对路径基于
     # KEQING_LADDER_DATA_ROOT，未设置时基于仓库根）。
     ingest_root: Path | None = None
@@ -673,16 +679,12 @@ def publish_snapshot(
 
         ingest_root = ladder_ingest.resolve_ingest_sources_root(_REPO_ROOT, season)
 
-    root = snapshot_root or default_snapshot_root(Path(data_root) if data_root else None, season_id)
+    root = snapshot_root or default_snapshot_root(None, season_id)
 
     previous_report_dir = season.get("report_dir")
     previous_snapshot: Path | None = None
     if previous_report_dir:
-        previous_snapshot = Path(str(previous_report_dir))
-        if not previous_snapshot.is_absolute():
-            data_root_env = Path(data_root) if data_root else None
-            base = data_root_env or _REPO_ROOT
-            previous_snapshot = (base / str(previous_report_dir)).resolve()
+        previous_snapshot = resolve_ladder_path(str(previous_report_dir))
 
     source_fingerprint = compute_source_fingerprint(
         log_dirs,

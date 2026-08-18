@@ -18,6 +18,12 @@ from replay import publish_ladder_snapshot as publisher  # noqa: E402
 from replay import ladder  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _portable_ladder_root(monkeypatch, tmp_path: Path):
+    """Keep publisher fixtures inside a portable per-test ladder data root."""
+    monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(tmp_path))
+
+
 def _running_season(report_dir: str = "artifacts/old-snapshot") -> dict:
     return {
         "schema": ladder.SEASON_SCHEMA,
@@ -85,7 +91,7 @@ def test_conditional_switch_registry_is_atomic_and_readable(tmp_path: Path):
     )
 
     updated = ladder.read_registry(registry_path)
-    assert updated["report_dir"] == str(snapshot_dir)
+    assert updated["report_dir"] == "snapshots/20260801-120000"
     assert not list((tmp_path / "registries").glob("*.tmp"))
     assert not (tmp_path / "registries" / "dev-live.json.lock").exists()
 
@@ -136,6 +142,33 @@ def test_publish_dry_run_builds_and_validates_without_switching(tmp_path: Path):
     assert ladder.read_registry(registry_path)["report_dir"] == "artifacts/old-snapshot"
 
 
+def test_publish_rejects_external_snapshot_root_without_mutating_registry(tmp_path: Path, monkeypatch):
+    registry_path = _write_registry(tmp_path, _running_season())
+    monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(tmp_path / "ladder"))
+    with pytest.raises(publisher.PublishError, match="必须位于 KEQING_DATA_ROOT/ladder"):
+        publisher.publish_snapshot(
+            registry_path=registry_path,
+            log_dirs=[tmp_path / "logs"],
+            snapshot_root=tmp_path / "external-snapshots",
+            build_report=_fake_build([_row()], games=1),
+        )
+    assert ladder.read_registry(registry_path)["report_dir"] == "artifacts/old-snapshot"
+
+
+def test_publish_dry_run_allows_external_snapshot_root_without_switching(tmp_path: Path, monkeypatch):
+    registry_path = _write_registry(tmp_path, _running_season())
+    monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(tmp_path / "ladder"))
+    result = publisher.publish_snapshot(
+        registry_path=registry_path,
+        log_dirs=[tmp_path / "logs"],
+        snapshot_root=tmp_path / "external-snapshots",
+        dry_run=True,
+        build_report=_fake_build([_row()], games=1),
+    )
+    assert result["registry_switched"] is False
+    assert ladder.read_registry(registry_path)["report_dir"] == "artifacts/old-snapshot"
+
+
 def test_publish_switches_registry(tmp_path: Path):
     registry_path = _write_registry(tmp_path, _running_season())
     result = publisher.publish_snapshot(
@@ -146,7 +179,7 @@ def test_publish_switches_registry(tmp_path: Path):
         build_report=_fake_build([_row()], games=1),
     )
     assert result["registry_switched"] is True
-    assert ladder.read_registry(registry_path)["report_dir"] == str(Path(result["snapshot_dir"]))
+    assert ladder.read_registry(registry_path)["report_dir"] == Path(result["snapshot_dir"]).relative_to(tmp_path).as_posix()
 
 
 def test_publish_rejects_completed_season(tmp_path: Path):
@@ -201,7 +234,7 @@ def test_publish_keeps_previous_snapshot_available(tmp_path: Path):
     assert Path(second["snapshot_dir"]).exists()
     assert first["snapshot_dir"] != second["snapshot_dir"]
     assert second["registry_switched"] is True
-    assert ladder.read_registry(registry_path)["report_dir"] == str(Path(second["snapshot_dir"]))
+    assert ladder.read_registry(registry_path)["report_dir"] == Path(second["snapshot_dir"]).relative_to(tmp_path).as_posix()
 
 
 def test_stale_publisher_cannot_overwrite_advanced_report_dir(tmp_path: Path):
@@ -749,7 +782,7 @@ def test_post_switch_retention_failure_keeps_live_snapshot(tmp_path: Path, monke
     assert result["retention_deleted"] == []
     # 线上快照仍存在且 registry 指向它
     assert Path(result["snapshot_dir"]).exists()
-    assert ladder.read_registry(registry_path)["report_dir"] == result["snapshot_dir"]
+    assert ladder.read_registry(registry_path)["report_dir"] == Path(result["snapshot_dir"]).relative_to(tmp_path).as_posix()
 
 
 def test_retention_protects_relative_previous_by_data_root(tmp_path: Path, monkeypatch):
@@ -922,7 +955,7 @@ def test_corrupted_utf8_snapshot_rebuilds_instead_of_skipping(tmp_path: Path):
     assert summary["schema"] == ladder.REPORT_SCHEMA
     assert (rebuilt / "account_ledger.jsonl").is_file()
     assert (rebuilt / "rating_curve.csv").is_file()
-    assert ladder.read_registry(registry_path)["report_dir"] == second["snapshot_dir"]
+    assert ladder.read_registry(registry_path)["report_dir"] == Path(second["snapshot_dir"]).relative_to(tmp_path).as_posix()
 
 
 def test_retain_negative_rejected(tmp_path: Path):
@@ -1104,4 +1137,4 @@ def test_publish_ingest_season_builds_snapshot(tmp_path: Path):
     assert manifest["source_file_count"] == 1
     assert manifest["source_total_bytes"] > 0
     assert manifest["source_log_dirs"] == [str(sources.parent.resolve())]
-    assert ladder.read_registry(registry_path)["report_dir"] == result["snapshot_dir"]
+    assert ladder.read_registry(registry_path)["report_dir"] == Path(result["snapshot_dir"]).relative_to(tmp_path).as_posix()

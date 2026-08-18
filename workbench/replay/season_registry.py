@@ -277,7 +277,7 @@ def delete_season(
         path = _season_path(configs_dir, season_id)
         path.unlink(missing_ok=True)
 
-        from project_data import data_path as _data_path
+        from project_data import data_path as _data_path, ladder_data_root
 
         participants_root = participants_data_root or _data_path("participants")
         dirty = participants_root / f"ladder_dirty_{season_id}.json"
@@ -290,7 +290,7 @@ def delete_season(
             lock.unlink(missing_ok=True)
         except OSError as exc:
             warnings.append(f"projection lock 清理失败: {exc}")
-        owned_snapshots = _data_path("ladder") / "seasons" / season_id
+        owned_snapshots = ladder_data_root() / "seasons" / season_id
         if owned_snapshots.is_dir():
             try:
                 shutil.rmtree(owned_snapshots)

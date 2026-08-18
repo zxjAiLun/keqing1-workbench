@@ -328,6 +328,16 @@ def test_delete_season_cleans_dirty_lock_and_owned_snapshots(configs_dir, tmp_pa
     assert (external / "keep.txt").exists()  # 外部目录绝不被删
 
 
+def test_delete_season_cleans_snapshots_under_ladder_root_override(configs_dir, tmp_path, monkeypatch):
+    sr.create_season(configs_dir, season_id="s1")
+    ladder_root = tmp_path / "other-disk" / "ladder"
+    monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(ladder_root))
+    owned = ladder_root / "seasons" / "s1"
+    owned.mkdir(parents=True)
+    sr.delete_season(configs_dir, "s1")
+    assert not owned.exists()
+
+
 def test_api_delete_season_endpoint(configs_dir, monkeypatch):
     """R11 post-release：DELETE /api/ladder/seasons/{id}（无引用可删 / 有引用 409）。"""
     from replay import server

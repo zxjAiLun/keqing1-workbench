@@ -318,11 +318,11 @@ def conditional_switch_registry(
         updated = dict(current)
         try:
             updated["report_dir"] = encode_ladder_path(new_report_dir)
-        except ValueError:
-            # Explicit --snapshot-root is a diagnostics/test escape hatch.  A
-            # normal publisher root always lives under ladder_data_root and is
-            # therefore persisted portably.
-            updated["report_dir"] = str(new_report_dir)
+        except ValueError as exc:
+            raise PublishError(
+                "正式天梯快照必须位于 KEQING_DATA_ROOT/ladder 下；"
+                "如需使用其他磁盘，请设置 KEQING_LADDER_DATA_ROOT"
+            ) from exc
         tmp_path = _tmp_path_for(registry_path)
         tmp_path.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         try:

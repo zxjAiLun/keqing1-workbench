@@ -36,17 +36,30 @@ def _resolve_checkpoint(checkpoint: Any, project_root: Path) -> Path | None:
     if not checkpoint:
         return None
     path = Path(str(checkpoint))
-    if not path.is_absolute():
-        path = project_root / path
-    return path.resolve()
+    # Eligibility must compare the same physical checkpoint used by the
+    # launcher/intake path.  In particular, old season registries may retain
+    # ``artifacts/...`` or Windows paths while Participants stores the portable
+    # path under the shared ``keqing-data/mortal/authoritative`` tree.
+    from inference.bot_registry import resolve_model_checkpoint
+
+    try:
+        return resolve_model_checkpoint(path, project_root)
+    except FileNotFoundError:
+        # Keep the old virtual-path behavior for test fixtures and for a
+        # missing checkpoint: the caller still reports the precise eligibility
+        # mismatch instead of turning a registry comparison into an import
+        # crash.  Existing files always take the canonical resolver path above.
+        if not path.is_absolute():
+            path = project_root / path
+        return path.resolve()
 
 
-def _artifact_path(registry, artifact_id: str) -> Path | None:
+def _artifact_path(registry, artifact_id: str, project_root: Path) -> Path | None:
     """按 artifact_id 在 participants registry 查找产物路径。"""
     for identity in registry.list_models():
         for artifact in identity.artifacts:
             if artifact.model_artifact_id == artifact_id:
-                return _resolve_checkpoint(artifact.artifact_path, PROJECT_ROOT)
+                return _resolve_checkpoint(artifact.artifact_path, project_root)
     return None
 
 
@@ -127,7 +140,7 @@ def validate_ladder_eligibility(
         if artifact_id:
             # 模型受控座位：冻结 artifact 必须与该账号赛季模型的 checkpoint 精确一致
             # （赛季模型配置了 checkpoint 时才校验；未配置则无法比对，跳过）
-            artifact_path = _artifact_path(registry, artifact_id)
+            artifact_path = _artifact_path(registry, artifact_id, project_root)
             if artifact_path is None:
                 raise ValueError(f"模型产物不存在: {artifact_id}")
             season_ckpt = _resolve_checkpoint(season_model["checkpoint"], project_root)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from inference.mortal_bot import MortalReviewBot
@@ -42,11 +42,20 @@ def _search_authoritative_checkpoint(relative: str | Path) -> Path | None:
       exact subpath, so ``V2_74000/mortal_74000.pth`` and
       ``V3_74000/mortal_74000.pth`` never collide.
     * A bare basename is matched across all models dirs as a legacy fallback.
+    * If a legacy multi-component path has no exact match, its basename is also
+      tried (this covers old ``artifacts/...`` and Windows paths after the
+      authoritative tree became the shared runtime source).
 
     Exactly one match is returned.  Multiple matches are ambiguous -- filesystem
     enumeration order must not decide -- so we raise instead of guessing.
     """
-    rel = Path(relative)
+    raw = str(relative)
+    rel = Path(raw)
+    # A registry produced on Windows can arrive on Linux with backslashes
+    # treated as literal filename characters.  Normalize only for lookup; the
+    # persisted value remains untouched by this read-only resolver.
+    if "\\" in raw and not rel.is_absolute():
+        rel = Path(*PureWindowsPath(raw).parts)
     if not rel.parts or not rel.name:
         return None
     base = data_root() / "mortal" / "authoritative"
@@ -64,6 +73,21 @@ def _search_authoritative_checkpoint(relative: str | Path) -> Path | None:
             hit = next((p for p in models_dir.rglob(rel.name) if p.is_file()), None)
             if hit is not None:
                 matches.append(hit.resolve())
+    # Legacy registry paths often contain a repo/Windows prefix that no longer
+    # exists on this machine.  Only those known legacy forms may fall back to a
+    # basename: a missing explicit family path such as
+    # ``V2_74000/mortal_74000.pth`` must not silently resolve to V3.
+    normalized = raw.replace("\\", "/")
+    first_component = normalized.split("/", 1)[0]
+    is_windows_path = len(first_component) >= 2 and first_component[1] == ":"
+    is_legacy_artifact_path = normalized.lower().startswith("artifacts/")
+    if not matches and len(rel.parts) > 1 and (is_windows_path or is_legacy_artifact_path):
+        for models_dir in base.glob("*/models"):
+            if not models_dir.is_dir():
+                continue
+            for hit in models_dir.rglob(rel.name):
+                if hit.is_file():
+                    matches.append(hit.resolve())
     if len(matches) == 1:
         return matches[0]
     if len(matches) > 1:
@@ -81,7 +105,8 @@ def resolve_model_checkpoint(path: str | Path, project_root: str | Path) -> Path
       1. absolute path
       2. ``<project_root>/<path>`` (legacy repo-relative)
       3. ``<data_root>/<path>`` (shared keqing-data, project-relative)
-      4. authoritative Mortal model dir (exact family subpath, or basename)
+      4. authoritative Mortal model dir (exact family subpath, or a unique
+         basename for legacy ``artifacts/...``/Windows paths)
 
     Raises ``FileNotFoundError`` listing every location searched.
     """

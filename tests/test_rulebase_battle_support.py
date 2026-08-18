@@ -87,3 +87,59 @@ def test_search_authoritative_subpath_disambiguates_family_dirs(tmp_path: Path, 
     assert v2.name == "mortal_74000.pth"
     assert v2.parent.name == "V2_74000"
     assert v3.parent.name == "V3_74000"
+
+
+def test_search_authoritative_legacy_path_uses_unique_basename(tmp_path: Path, monkeypatch) -> None:
+    # Existing season registries can still contain the former repo-relative
+    # artifacts path.  Once the model lives in the shared authoritative tree,
+    # the legacy path should resolve by basename when that basename is unique.
+    root = _make_authoritative(
+        tmp_path,
+        ("D3_gen", ["K0_70k/mortal_default_70k_promoted_candidate.pth"]),
+    )
+    monkeypatch.setattr(br, "data_root", lambda: root)
+
+    hit = br.resolve_model_checkpoint(
+        "artifacts/mortal_training/checkpoints/mortal_default_70k_promoted_candidate.pth",
+        "/tmp/project",
+    )
+    assert hit == (
+        root
+        / "mortal"
+        / "authoritative"
+        / "D3_gen"
+        / "models"
+        / "K0_70k"
+        / "mortal_default_70k_promoted_candidate.pth"
+    ).resolve()
+
+
+def test_search_authoritative_windows_path_uses_unique_basename(tmp_path: Path, monkeypatch) -> None:
+    root = _make_authoritative(
+        tmp_path,
+        ("D3_gen", ["ext_mortal/external_mortal_20240308_best_min.pth"]),
+    )
+    monkeypatch.setattr(br, "data_root", lambda: root)
+
+    hit = br.resolve_model_checkpoint(
+        r"E:\AUbuntuProject\keqing-data\mortal\authoritative\D3_gen\models\ext_mortal\external_mortal_20240308_best_min.pth",
+        "/tmp/project",
+    )
+    assert hit == (
+        root
+        / "mortal"
+        / "authoritative"
+        / "D3_gen"
+        / "models"
+        / "ext_mortal"
+        / "external_mortal_20240308_best_min.pth"
+    ).resolve()
+
+
+def test_search_authoritative_missing_family_path_does_not_cross_resolve(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = _make_authoritative(tmp_path, ("D3_gen", ["V3_74000/mortal_74000.pth"]))
+    monkeypatch.setattr(br, "data_root", lambda: root)
+
+    assert br._search_authoritative_checkpoint("V2_74000/mortal_74000.pth") is None

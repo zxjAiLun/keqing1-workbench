@@ -71,15 +71,46 @@ class AccountUpdate(BaseModel):
     note: str | None = None
 
 
+ArtifactStage = Literal["candidate", "promoted", "deprecated", "retired"]
+ArtifactCapability = Literal["ladder_eligible", "playwithyou_allowed", "review_allowed"]
+
+_DEFAULT_CAPABILITIES_BY_STAGE: dict[ArtifactStage, list[ArtifactCapability]] = {
+    "candidate": ["playwithyou_allowed", "review_allowed"],
+    "promoted": ["ladder_eligible", "playwithyou_allowed", "review_allowed"],
+    "deprecated": ["playwithyou_allowed", "review_allowed"],
+    "retired": ["review_allowed"],
+}
+
+
 class ModelArtifact(BaseModel):
     model_artifact_id: str
     label: str
     model_identity_id: str
     artifact_path: str | None = None
     hash: str | None = None
+    stage: ArtifactStage = "promoted"
+    capabilities: list[ArtifactCapability] | None = None
     is_current: bool = True
     created_at: str
     retired_at: str | None = None
+
+    @model_validator(mode="after")
+    def populate_stage_and_capabilities(self) -> ModelArtifact:
+        if not self.capabilities:
+            self.capabilities = _DEFAULT_CAPABILITIES_BY_STAGE.get(self.stage, ["review_allowed"])[:]
+        return self
+
+    @property
+    def is_ladder_eligible(self) -> bool:
+        return self.stage == "promoted" and "ladder_eligible" in self.capabilities
+
+    @property
+    def is_playwithyou_allowed(self) -> bool:
+        return self.stage != "retired" and "playwithyou_allowed" in self.capabilities
+
+    @property
+    def is_review_allowed(self) -> bool:
+        return "review_allowed" in self.capabilities
 
 
 class ModelIdentity(BaseModel):
@@ -100,6 +131,7 @@ class ModelIdentityCreate(BaseModel):
     kind: Literal["local_model", "external_agent", "none"]
     account_id: str | None = None
     artifact_path: str | None = None
+    stage: ArtifactStage = "promoted"
     note: str | None = None
 
 
@@ -115,6 +147,15 @@ class ModelArtifactCreate(BaseModel):
     model_artifact_id: str | None = None
     label: str = Field(min_length=1)
     artifact_path: str | None = None
+    stage: ArtifactStage = "promoted"
+    capabilities: list[ArtifactCapability] | None = None
+
+
+class ModelArtifactUpdate(BaseModel):
+    label: str | None = None
+    stage: ArtifactStage | None = None
+    capabilities: list[ArtifactCapability] | None = None
+    is_current: bool | None = None
 
 
 # ---------------------------------------------------------------------------

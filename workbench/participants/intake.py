@@ -236,7 +236,7 @@ def _frozen_provenance_for_checkpoint(checkpoint_path: str) -> tuple[str, str] |
     - 0 个匹配 → ``None``（provenance unresolved）；
     - >1 个匹配 → ``ValueError``（ambiguous——绝不 first-match 猜测）。
     """
-    from inference.bot_registry import resolve_model_checkpoint
+    from workbench.runtime.resolver import resolve_model_checkpoint
     from participants.ladder_eligibility import PROJECT_ROOT
 
     target = Path(checkpoint_path).resolve()

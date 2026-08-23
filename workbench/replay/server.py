@@ -716,7 +716,7 @@ def _infer_player_bot_type(player_name: str | None, fallback: str | None = None)
 
 
 def _default_checkpoint_for_bot_type(bot_type: str) -> Path:
-    from inference.bot_registry import resolve_bot_spec
+    from workbench.runtime.resolver import resolve_bot_spec
     project_root = BASE_DIR.parent.parent
     _kind, path = resolve_bot_spec(bot_type, project_root)
     if path is None:
@@ -1086,7 +1086,7 @@ def _resolve_focus_replay_step(decisions: dict, focus_event_index: int | None) -
 
 
 def _checkpoint_for_behavior_case(row: dict) -> Path:
-    from inference.bot_registry import resolve_model_checkpoint
+    from workbench.runtime.resolver import resolve_model_checkpoint
     checkpoint_path = row.get("checkpoint_path")
     if isinstance(checkpoint_path, str) and checkpoint_path.strip():
         try:
@@ -1108,7 +1108,7 @@ def _resolve_casebook_path(casebook_dir: Path, raw_path: str) -> Path | None:
 
 
 def _checkpoint_from_raw(raw_path: str | None, *, fallback_model: str = "mortal") -> Path:
-    from inference.bot_registry import resolve_model_checkpoint
+    from workbench.runtime.resolver import resolve_model_checkpoint
     if isinstance(raw_path, str) and raw_path.strip():
         try:
             return resolve_model_checkpoint(raw_path.strip(), BASE_DIR.parent.parent)

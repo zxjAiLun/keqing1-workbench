@@ -30,7 +30,7 @@ for _dir in (str(_SRC_DIR), str(_SCRIPTS_DIR), str(_PROJECT_ROOT)):
 
 from inference.rulebase_bot import RulebaseBot
 from inference.mortal_bot import MortalReviewBot
-from inference.bot_registry import resolve_bot_spec, resolve_model_checkpoint
+from workbench.runtime.resolver import resolve_bot_spec, resolve_model_checkpoint
 
 # bot 类型 → run_replay_from_source 内部创建 Bot 时用
 _BOT_CLASSES = {

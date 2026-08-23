@@ -98,6 +98,9 @@ def _search_authoritative_checkpoint(relative: str | Path) -> Path | None:
     return None
 
 
+search_authoritative_checkpoint = _search_authoritative_checkpoint
+
+
 def resolve_model_checkpoint(path: str | Path, project_root: str | Path) -> Path:
     """Resolve a checkpoint path to an existing absolute file.
 

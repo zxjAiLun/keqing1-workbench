@@ -22,7 +22,7 @@ from gateway.tenhou_bot_client import (
     launch_bot_threads,
     start_gateway_subprocess,
 )
-from inference.bot_registry import MORTAL_CHECKPOINTS, resolve_bot_spec
+from workbench.runtime.resolver import MORTAL_CHECKPOINTS, resolve_bot_spec
 
 MAX_BOTS = 4
 

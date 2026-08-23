@@ -23,6 +23,7 @@ third_party/*
 # Logs, temp, and scratch
 logs/
 tmp/
+artifacts/
 *.log
 *.tmp
 *.bak

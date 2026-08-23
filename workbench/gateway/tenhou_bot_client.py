@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from gateway.tenhou_bridge import normalize_tenhou_room
-from inference.bot_registry import resolve_bot_spec
+from workbench.runtime.resolver import resolve_bot_spec
 
 logger = logging.getLogger(__name__)
 

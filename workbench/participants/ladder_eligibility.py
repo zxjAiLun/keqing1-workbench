@@ -40,7 +40,7 @@ def _resolve_checkpoint(checkpoint: Any, project_root: Path) -> Path | None:
     # launcher/intake path.  In particular, old season registries may retain
     # ``artifacts/...`` or Windows paths while Participants stores the portable
     # path under the shared ``keqing-data/mortal/authoritative`` tree.
-    from inference.bot_registry import resolve_model_checkpoint
+    from workbench.runtime.resolver import resolve_model_checkpoint
 
     try:
         return resolve_model_checkpoint(path, project_root)
@@ -54,12 +54,20 @@ def _resolve_checkpoint(checkpoint: Any, project_root: Path) -> Path | None:
         return path.resolve()
 
 
-def _artifact_path(registry, artifact_id: str, project_root: Path) -> Path | None:
-    """按 artifact_id 在 participants registry 查找产物路径。"""
+def _artifact_record(registry, artifact_id: str) -> Any | None:
+    """按 artifact_id 在 participants registry 查找产物对象。"""
     for identity in registry.list_models():
         for artifact in identity.artifacts:
             if artifact.model_artifact_id == artifact_id:
-                return _resolve_checkpoint(artifact.artifact_path, project_root)
+                return artifact
+    return None
+
+
+def _artifact_path(registry, artifact_id: str, project_root: Path) -> Path | None:
+    """按 artifact_id 在 participants registry 查找产物路径。"""
+    artifact = _artifact_record(registry, artifact_id)
+    if artifact is not None:
+        return _resolve_checkpoint(artifact.artifact_path, project_root)
     return None
 
 
@@ -138,6 +146,14 @@ def validate_ladder_eligibility(
                 raise ValueError(f"正式人类座位 {account_id} 的控制器必须为 human_ui")
         artifact_id = seat.model_artifact_id
         if artifact_id:
+            artifact_record = _artifact_record(registry, artifact_id)
+            if artifact_record is not None:
+                if getattr(artifact_record, "stage", None) == "retired" or (
+                    hasattr(artifact_record, "is_ladder_eligible") and not artifact_record.is_ladder_eligible
+                ):
+                    raise ValueError(
+                        f"账号 {account_id} 所用模型产物 {artifact_id} 处于 {getattr(artifact_record, 'stage', 'retired')} 状态，无正式天梯参赛资格"
+                    )
             # 模型受控座位：冻结 artifact 必须与该账号赛季模型的 checkpoint 精确一致
             # （赛季模型配置了 checkpoint 时才校验；未配置则无法比对，跳过）
             artifact_path = _artifact_path(registry, artifact_id, project_root)

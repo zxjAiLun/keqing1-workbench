@@ -19,9 +19,12 @@ from .schemas import (
     Account,
     AccountCreate,
     AccountUpdate,
+    ArtifactCapability,
+    ArtifactStage,
     ControllerType,
     ModelArtifact,
     ModelArtifactCreate,
+    ModelArtifactUpdate,
     ModelIdentity,
     ModelIdentityCreate,
     ModelIdentityUpdate,
@@ -295,6 +298,7 @@ def create_model_identity(payload: ModelIdentityCreate) -> ModelIdentity:
                     "model_identity_id": identity_id,
                     "artifact_path": payload.artifact_path,
                     "hash": None,
+                    "stage": payload.stage,
                     "is_current": True,
                     "created_at": now,
                     "retired_at": None,
@@ -319,20 +323,81 @@ def add_model_artifact(identity_id: str, payload: ModelArtifactCreate) -> ModelA
         for raw in store["artifacts"]:
             if raw.get("model_identity_id") == identity_id and raw.get("is_current"):
                 raw["is_current"] = False
-        store["artifacts"].append(
-            {
-                "model_artifact_id": art_id,
-                "label": payload.label,
-                "model_identity_id": identity_id,
-                "artifact_path": payload.artifact_path,
-                "hash": None,
-                "is_current": True,
-                "created_at": now,
-                "retired_at": None,
-            }
-        )
+        art_entry = {
+            "model_artifact_id": art_id,
+            "label": payload.label,
+            "model_identity_id": identity_id,
+            "artifact_path": payload.artifact_path,
+            "hash": None,
+            "stage": payload.stage,
+            "capabilities": payload.capabilities,
+            "is_current": True,
+            "created_at": now,
+            "retired_at": None,
+        }
+        store["artifacts"].append(art_entry)
         write_json(_models_path(), MODELS_SCHEMA, store)
     return ModelArtifact.model_validate(store["artifacts"][-1])
+
+
+def update_model_artifact(
+    identity_id: str, artifact_id: str, payload: ModelArtifactUpdate
+) -> ModelArtifact:
+    with _write_lock, data_lock():
+        store = _read_models()
+        if not any(raw.get("model_identity_id") == identity_id for raw in store["identities"]):
+            raise KeyError(f"model identity not found: {identity_id}")
+        target = next(
+            (
+                raw
+                for raw in store["artifacts"]
+                if raw.get("model_artifact_id") == artifact_id
+                and raw.get("model_identity_id") == identity_id
+            ),
+            None,
+        )
+        if target is None:
+            raise KeyError(f"model artifact not found: {artifact_id}")
+
+        raw_fields = payload.model_dump(exclude_unset=True)
+        if raw_fields.get("is_current"):
+            for raw in store["artifacts"]:
+                if raw.get("model_identity_id") == identity_id:
+                    raw["is_current"] = raw.get("model_artifact_id") == artifact_id
+        if "stage" in raw_fields:
+            new_stage = raw_fields["stage"]
+            target["stage"] = new_stage
+            if new_stage == "retired" and not target.get("retired_at"):
+                target["retired_at"] = now_iso()
+                target["is_current"] = False
+        if "label" in raw_fields:
+            target["label"] = raw_fields["label"]
+        if "capabilities" in raw_fields:
+            target["capabilities"] = raw_fields["capabilities"]
+
+        write_json(_models_path(), MODELS_SCHEMA, store)
+    return ModelArtifact.model_validate(target)
+
+
+def promote_model_artifact(identity_id: str, artifact_id: str) -> ModelArtifact:
+    """把指定 artifact 阶段变更为 promoted 并设为 current。"""
+    return update_model_artifact(
+        identity_id, artifact_id, ModelArtifactUpdate(stage="promoted", is_current=True)
+    )
+
+
+def deprecate_model_artifact(identity_id: str, artifact_id: str) -> ModelArtifact:
+    """把指定 artifact 阶段变更为 deprecated。"""
+    return update_model_artifact(
+        identity_id, artifact_id, ModelArtifactUpdate(stage="deprecated")
+    )
+
+
+def retire_model_artifact(identity_id: str, artifact_id: str) -> ModelArtifact:
+    """把指定 artifact 阶段变更为 retired 并封存。"""
+    return update_model_artifact(
+        identity_id, artifact_id, ModelArtifactUpdate(stage="retired", is_current=False)
+    )
 
 
 def set_current_model_artifact(identity_id: str, artifact_id: str) -> ModelArtifact:

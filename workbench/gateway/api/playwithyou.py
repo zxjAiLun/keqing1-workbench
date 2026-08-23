@@ -308,7 +308,7 @@ def _resolve_artifact_path(artifact, project_root: Path) -> Path:
     （``data_root()``），再回落到 authoritative Mortal 模型目录按文件名匹配，
     见 ``inference.bot_registry.resolve_model_checkpoint``。
     """
-    from inference.bot_registry import resolve_model_checkpoint
+    from workbench.runtime.resolver import resolve_model_checkpoint
 
     try:
         return resolve_model_checkpoint(str(artifact.artifact_path or ""), project_root)
@@ -327,6 +327,10 @@ def _artifact_spec_for_launcher(identity_id: str, artifact_id: str) -> str:
     artifact = next((a for a in identity.artifacts if a.model_artifact_id == artifact_id), None)
     if artifact is None:
         raise ValueError(f"model identity {identity_id} 无产物 {artifact_id}")
+    if getattr(artifact, "stage", None) == "retired" or (
+        hasattr(artifact, "is_playwithyou_allowed") and not artifact.is_playwithyou_allowed
+    ):
+        raise ValueError(f"模型产物 {artifact_id} 已退役 (retired)，无法用于 Play-with-you 对局")
     path = _resolve_artifact_path(artifact, PROJECT_ROOT)
     if not path.exists():
         raise ValueError(f"artifact checkpoint 不存在: {path}")
@@ -349,6 +353,10 @@ def _artifact_spec_for_seat(account_id: str, identity_id: str, artifact_id: str)
     artifact = next((a for a in identity.artifacts if a.model_artifact_id == artifact_id), None)
     if artifact is None:
         raise ValueError(f"model identity {identity_id} 无产物 {artifact_id}")
+    if getattr(artifact, "stage", None) == "retired" or (
+        hasattr(artifact, "is_playwithyou_allowed") and not artifact.is_playwithyou_allowed
+    ):
+        raise ValueError(f"模型产物 {artifact_id} 已退役 (retired)，无法用于 Play-with-you 对局")
     path = _resolve_artifact_path(artifact, PROJECT_ROOT)
     if not path.exists():
         raise ValueError(f"artifact checkpoint 不存在: {path}")
@@ -370,7 +378,7 @@ def _freeze_launcher_models(roster_bindings: List[dict], specs: List[str]) -> tu
     - ``frozen_launcher_specs`` 为按 launcher_slot 排序的**绝对 checkpoint 路径**，
       直接传给 launcher（child/runtime 不再按动态名字重新解析）。
     """
-    from inference.bot_registry import resolve_bot_spec
+    from workbench.runtime.resolver import resolve_bot_spec
     from participants import registry as participant_registry
 
     # launcher_slot → spec（specs 已按 launcher_slot 排序）
@@ -562,7 +570,7 @@ def _validate_ladder_capture(capture: LadderCaptureRequest, specs: List[str]) ->
         model_id = _spec_to_model_id(spec, PROJECT_ROOT)
         if model_id is None:
             # 自定义 checkpoint：resolved path 必须与 registry checkpoint 完全一致
-            from inference.bot_registry import resolve_bot_spec
+            from workbench.runtime.resolver import resolve_bot_spec
 
             _kind, resolved_path = resolve_bot_spec(spec, PROJECT_ROOT)
             expected = ""
@@ -852,7 +860,7 @@ def start_playwithyou(req: StartPlayWithYouRequest) -> PlayWithYouStatus:
             # → 绝对 checkpoint 路径，直接作为 launcher spec（冻结 A、运行 B 不可能发生）。
             if not (1 <= len(req.launchers) <= 4):
                 raise ValueError("一次呼出 1-4 个模型")
-            from inference.bot_registry import resolve_bot_spec
+            from workbench.runtime.resolver import resolve_bot_spec
 
             for index, ln in enumerate(req.launchers):
                 model_id = str(ln.model_id or "").strip()

@@ -318,7 +318,7 @@ function ReviewDetail({ caseItem }: { caseItem: ReviewCase }) {
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.index} style={{ background: row.is_mortal_top1 ? 'rgba(34,197,94,0.08)' : undefined }}>
+              <tr key={row.index} style={{ background: row.is_mortal_top1 ? 'rgba(79,195,138,0.10)' : undefined }}>
                 <td style={tdStyle}>{row.index}</td>
                 <td style={tdStyle}>
                   <strong>{row.type}</strong>

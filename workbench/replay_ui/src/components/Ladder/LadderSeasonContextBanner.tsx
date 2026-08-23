@@ -32,7 +32,7 @@ export function LadderSeasonContextBanner({
   // 1. 没有默认赛季：明确"没有当前正式赛季"
   if (!defaultSeasonId) {
     return (
-      <div style={bannerStyle('#e67e22')}>
+      <div style={bannerStyle('var(--warning)')}>
         <b>当前没有正式赛季</b>
         {activeSeasonId ? `——正在查看 ${activeTitle}，它不是当前正式榜。` : '。'}
         {' '}
@@ -45,14 +45,14 @@ export function LadderSeasonContextBanner({
   if (activeSeasonId && activeSeasonId !== defaultSeasonId) {
     if (isHistorical) {
       return (
-        <div style={bannerStyle('#95a5a6')}>
+        <div style={bannerStyle('var(--text-muted)')}>
           ⏳ <b>历史赛季</b>（{activeSeason?.status === 'completed' ? '已结束' : '已归档'}）——仅供回顾，不是当前正式榜。
         </div>
       );
     }
     const defaultTitle = defaultSeason?.title || defaultSeasonId;
     return (
-      <div style={bannerStyle('#95a5a6')}>
+      <div style={bannerStyle('var(--text-muted)')}>
         <b>非当前赛季</b>——正在查看 {activeTitle}；当前正式赛季是 <b>{defaultTitle}</b>。
       </div>
     );
@@ -68,7 +68,7 @@ const bannerStyle = (color: string): CSSProperties => ({
   borderRadius: 6,
   marginBottom: 10,
   border: `1px solid ${color}`,
-  background: 'rgba(149,165,166,0.08)',
+  background: 'var(--surface-2)',
   color: 'var(--text-secondary)',
 });
 

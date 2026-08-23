@@ -50,7 +50,7 @@ export function AccountTable({
               <button style={linkBtn} onClick={() => onToggleEnabled(account)}>
                 {account.enabled ? '停用' : '启用'}
               </button>
-              <button style={{ ...linkBtn, color: '#e74c3c' }} onClick={() => onDelete(account)}>删除</button>
+              <button style={{ ...linkBtn, color: 'var(--negative)' }} onClick={() => onDelete(account)}>删除</button>
             </td>
           </tr>
         ))}

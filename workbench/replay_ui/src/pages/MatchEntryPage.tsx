@@ -94,7 +94,7 @@ export function MatchEntryPage() {
             onClick={submit}
             disabled={submitting || seats.some((s) => !s.account_id) || scores.some((s) => !s.trim())}
             style={{
-              border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff',
+              border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--accent-text)',
               borderRadius: 6, fontSize: 13, fontWeight: 700, padding: '8px 16px', cursor: 'pointer',
             }}
           >
@@ -136,7 +136,7 @@ export function MatchEntryPage() {
             onReasonChange={setReason}
           />
         )}
-        {error && <div style={{ color: '#e74c3c', fontSize: 13 }}>{error}</div>}
+        {error && <div style={{ color: 'var(--negative)', fontSize: 13 }}>{error}</div>}
       </div>
     </PageShell>
   );

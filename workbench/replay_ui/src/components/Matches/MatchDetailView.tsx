@@ -16,7 +16,7 @@ export function MatchDetailView({ match, accounts }: { match: Match; accounts: A
         <span>·</span>
         <span>{SOURCE_LABELS[match.source]}</span>
         {match.source_ref && <span>· {match.source_ref}</span>}
-        {match.status === 'void' && <span style={{ color: '#e74c3c' }}>· 已作废：{match.void_reason}</span>}
+        {match.status === 'void' && <span style={{ color: 'var(--negative)' }}>· 已作废：{match.void_reason}</span>}
       </div>
 
       <div style={{ display: 'grid', gap: 6 }}>

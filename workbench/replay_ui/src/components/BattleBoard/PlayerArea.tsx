@@ -34,10 +34,10 @@ export function PlayerArea({
 }: PlayerAreaProps) {
   const sortedHand = sortHand(hand, tsumoPai || null);
   const jikaze = JIKAZE_CN[playerId];
-  const playerColor = ["#e74c3c", "#3498db", "#8e44ad", "#27ae60"][playerId];
+  const playerColor = ["var(--seat-0)", "var(--seat-1)", "var(--seat-2)", "var(--seat-3)"][playerId];
 
   const containerStyle: React.CSSProperties = {
-    background: isActive ? `${playerColor}15` : 'rgba(0,0,0,0.04)',
+    background: isActive ? 'var(--accent-bg)' : 'rgba(240,234,217,0.04)',
     border: isActive ? `2px solid ${playerColor}` : '2px solid transparent',
     borderRadius: 10,
     padding: "10px 12px",
@@ -51,9 +51,9 @@ export function PlayerArea({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
           <div className="seat-indicator" style={{ width: 8, height: 8, borderRadius: '50%', background: isActive ? playerColor : 'transparent' }} />
           <span style={{ fontWeight: 700, fontSize: 13, color: playerColor }}>{playerInfo.name}</span>
-          <span style={{ fontSize: 11, color: '#9ca3af' }}>{jikaze}</span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{jikaze}</span>
           {reached && (
-            <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d', fontWeight: 600 }}>
+            <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: 'var(--gold-bg)', color: 'var(--accent)', border: '1px solid var(--gold-border)', fontWeight: 600 }}>
               立直
             </span>
           )}
@@ -86,9 +86,9 @@ export function PlayerArea({
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
         <div className="seat-indicator" style={{ width: 10, height: 10, borderRadius: '50%', background: isActive ? playerColor : 'transparent' }} />
         <span style={{ fontWeight: 700, fontSize: 15, color: playerColor }}>{playerInfo.name}</span>
-        <span style={{ fontSize: 12, color: '#9ca3af' }}>{jikaze}</span>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{jikaze}</span>
         {reached && (
-          <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d', fontWeight: 600 }}>
+          <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: 'var(--gold-bg)', color: 'var(--accent)', border: '1px solid var(--gold-border)', fontWeight: 600 }}>
             立直
           </span>
         )}
@@ -106,7 +106,7 @@ export function PlayerArea({
           />
         ))}
         {tsumoPai && (
-          <div style={{ marginLeft: 4, border: '2px solid #d4a853', borderRadius: 4, boxShadow: '0 0 8px rgba(212,168,83,0.4)' }}>
+          <div style={{ marginLeft: 4, border: '2px solid var(--gold)', borderRadius: 4, boxShadow: '0 0 8px var(--tile-glow-gold)' }}>
             <Tile tile={tsumoPai} size="normal" />
           </div>
         )}
@@ -118,7 +118,7 @@ export function PlayerArea({
           <div key={i} style={{ position: 'relative' }}>
             <Tile tile={d.pai} size="small" />
             {d.tsumogiri && (
-              <div style={{ position: 'absolute', top: -2, right: -2, width: 8, height: 8, borderRadius: '50%', background: '#e74c3c', border: '1px solid rgba(0,0,0,0.3)' }} />
+              <div style={{ position: 'absolute', top: -2, right: -2, width: 8, height: 8, borderRadius: '50%', background: 'var(--negative)', border: '1px solid rgba(0,0,0,0.3)' }} />
             )}
           </div>
         ))}

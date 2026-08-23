@@ -100,7 +100,7 @@ export function BotBattlePage() {
             onClick={startBotBattle}
             disabled={loading}
             className="btn-primary"
-            style={{ height: 34, padding: "0 16px", fontSize: 13, background: loading ? "var(--text-muted)" : "#8e44ad" }}
+            style={{ height: 34, padding: "0 16px", fontSize: 13, background: loading ? "var(--text-muted)" : "var(--accent)" }}
           >
             {loading ? "启动中..." : "开始对战"}
           </button>
@@ -125,9 +125,9 @@ export function BotBattlePage() {
                     borderRadius: 6,
                     fontSize: 13,
                     fontWeight: 700,
-                    border: `1px solid ${gameLength === value ? "#8e44ad" : "var(--border)"}`,
-                    background: gameLength === value ? "rgba(142,68,173,0.08)" : "var(--surface-subtle)",
-                    color: gameLength === value ? "#8e44ad" : "var(--text-primary)",
+                    border: `1px solid ${gameLength === value ? "var(--accent)" : "var(--border)"}`,
+                    background: gameLength === value ? "var(--accent-bg)" : "var(--surface-subtle)",
+                    color: gameLength === value ? "var(--accent)" : "var(--text-primary)",
                     cursor: "pointer",
                   }}
                 >
@@ -148,8 +148,8 @@ export function BotBattlePage() {
                     borderRadius: 7,
                     fontSize: 13,
                     fontWeight: 500,
-                    border: `1px solid ${botModel === bot.value ? "#8e44ad" : "var(--border)"}`,
-                    background: botModel === bot.value ? "rgba(142,68,173,0.08)" : "var(--surface-subtle)",
+                    border: `1px solid ${botModel === bot.value ? "var(--accent)" : "var(--border)"}`,
+                    background: botModel === bot.value ? "var(--accent-bg)" : "var(--surface-subtle)",
                     color: "var(--text-primary)",
                     cursor: "pointer",
                     transition: "all var(--transition)",
@@ -158,7 +158,7 @@ export function BotBattlePage() {
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
                     <span style={{ fontWeight: 700 }}>{bot.label}</span>
-                    <span style={{ fontSize: 11, color: botModel === bot.value ? "#8e44ad" : "var(--text-muted)" }}>{bot.badge}</span>
+                    <span style={{ fontSize: 11, color: botModel === bot.value ? "var(--accent)" : "var(--text-muted)" }}>{bot.badge}</span>
                   </div>
                   <div style={{ marginTop: 3, fontSize: 12, color: "var(--text-muted)" }}>{bot.description}</div>
                 </button>

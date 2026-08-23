@@ -224,7 +224,7 @@ function kyokuItemStyle(active: boolean): CSSProperties {
     padding: '3px 8px',
     border: `1px solid ${active ? 'var(--accent)' : 'transparent'}`,
     borderRadius: 4,
-    background: active ? 'rgba(52, 152, 219, 0.12)' : 'transparent',
+    background: active ? 'var(--accent-bg)' : 'transparent',
     color: active ? 'var(--accent)' : 'var(--text-primary)',
     fontSize: 12,
     fontWeight: active ? 800 : 600,

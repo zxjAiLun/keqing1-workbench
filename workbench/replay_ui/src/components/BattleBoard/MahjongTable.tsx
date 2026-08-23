@@ -26,8 +26,19 @@ import type { LogitTileData } from "../../utils/replayAdapter";
 import { BAKAZE_CN, JIKAZE_CN } from "../../utils/constants";
 import { sortHand } from "../../utils/tileUtils";
 import { buildMeldDisplayTiles, computeSelfHandContentOffset, computeSelfHandWidth, computeSouthMeldLaneWidth, getKakanStackOffset, getMeldTileOrientation, getSeatModel, orderMeldsForDisplay, SELF_HAND_LEFT_OFFSET, SELF_HAND_MELD_GAP, SELF_SEAT_SHELL_WIDTH_PX, SELF_SEAT_SIDE_MARGIN, type LayoutAxis, type SeatPosition } from "./seatLayout";
-import { TABLECLOTH_OPTIONS } from "./tableclothOptions";
+import { TABLECLOTH_OPTIONS, DEFAULT_TABLECLOTH_ID } from "./tableclothOptions";
 import type { TableclothId } from "./tableclothOptions";
+import {
+  decisionColors,
+  tableTextureLayer,
+  tableVignetteLayer,
+  reachBanner,
+  reachChip,
+  reachChipIcon,
+  actorIndicatorBase,
+  ctrlToggleStyle,
+  ctrlToggleDotStyle,
+} from "./tableStyles";
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -161,7 +172,7 @@ function DiscardTile({ d, position, zIndex, claimed }: { d: DiscardEntry; positi
         orientation={orientation}
         dimmed={d.tsumogiri}
         outlined={Boolean(claimed || d.reach_declared)}
-        outlineColor={claimed ? "#ef4444" : undefined}
+        outlineColor={claimed ? "var(--negative)" : undefined}
       />
     </div>
   );
@@ -718,10 +729,10 @@ function PlayerZone({
                     const localHeight = d && d.pct >= SELF_HAND_BAR_MIN_VISIBLE_PCT
                       ? Math.round(normalizedPct * SELF_HAND_BAR_MAX_HEIGHT)
                       : 0;
-                    const localBarColor = d?.isChosen && d?.isGt ? "#8e44ad"
-                      : d?.isChosen ? "#e74c3c"
-                      : d?.isGt ? "#27ae60"
-                      : d?.score !== undefined ? "var(--accent)"
+                    const localBarColor = d?.isChosen && d?.isGt ? decisionColors.both
+                      : d?.isChosen ? decisionColors.bot
+                      : d?.isGt ? decisionColors.gt
+                      : d?.score !== undefined ? decisionColors.score
                       : "transparent";
                     const teacherBars = d?.teacherBars ?? [];
                     const teacherBarWidth = teacherBars.length > 0
@@ -753,7 +764,7 @@ function PlayerZone({
                                     width: teacherBarWidth,
                                     height,
                                     background: height > 0
-                                      ? isActiveTeacher ? "#8e44ad" : "#9ca3af"
+                                      ? isActiveTeacher ? decisionColors.teacher : decisionColors.teacherInactive
                                       : "transparent",
                                     borderRadius: "2px 2px 0 0",
                                     transition: "height 0.15s ease, background 0.15s ease",
@@ -784,10 +795,10 @@ function PlayerZone({
                   <div key={`${tile}-${i}`} style={{ width: TILE_SIZES.large.w, height: TILE_SIZES.large.h, flexShrink: 0, position: "relative" }}>
                     <Tile tile={tile} size="large" selected={!showDecisionFrames && i === highlightIdx} onClick={() => onTileClick?.(tile, i)} />
                     {showDecisionFrames && d?.isChosen && (
-                      <div style={decisionFrameStyle("#8e44ad", 0)} />
+                      <div style={decisionFrameStyle(decisionColors.both, 0)} />
                     )}
                     {showDecisionFrames && d?.isGt && (
-                      <div style={decisionFrameStyle("#27ae60", d?.isChosen ? 4 : 0)} />
+                      <div style={decisionFrameStyle(decisionColors.gt, d?.isChosen ? 4 : 0)} />
                     )}
                   </div>
                 );
@@ -1100,7 +1111,8 @@ function CenterPanel({
         width: CENTER_INFO_SIZE, height: CENTER_INFO_SIZE,
         background: "var(--center-bg)",
         border: "1px solid var(--center-border)",
-        borderRadius: 1,
+        borderRadius: 8,
+        backdropFilter: "blur(6px)",
         display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center",
         gap: 1, zIndex: 20,
@@ -1225,7 +1237,7 @@ export function MahjongTable({
   }, [terminalWinner, state.revealed_hands]);
   const effectiveRevealedOpponentHands = revealedOpponentHands ?? terminalRevealedHands;
 
-  const [tablecloth, setTablecloth]             = useState<TableclothId>("default");
+  const [tablecloth, setTablecloth]             = useState<TableclothId>(DEFAULT_TABLECLOTH_ID);
   const showActionBar = mode === "battle" && isMyTurn && !reachPending && !state.pending_reach[humanId] && !suppressActionBar;
   const showReachBanner = mode === "battle" && isMyTurn && (reachPending || state.pending_reach[humanId]);
   const replayPendingReachActor = mode === "replay"
@@ -1341,7 +1353,7 @@ export function MahjongTable({
       if (stored && TABLECLOTH_OPTIONS.some((opt) => opt.id === stored)) {
         setTablecloth(stored as typeof tablecloth);
       } else {
-        setTablecloth("default");
+        setTablecloth(DEFAULT_TABLECLOTH_ID);
       }
     };
     applyPreference();
@@ -1356,7 +1368,7 @@ export function MahjongTable({
     setHideSelfHandLogitHints(false);
   }, [selfHandLogitKey]);
 
-  const tableBg = TABLECLOTH_OPTIONS.find(t => t.id === tablecloth)?.color ?? "#1a2744";
+  const tableBg = TABLECLOTH_OPTIONS.find(t => t.id === tablecloth)?.color ?? TABLECLOTH_OPTIONS[0].color;
   const viewportBg = "var(--page-bg)";
 
   return (
@@ -1381,6 +1393,10 @@ export function MahjongTable({
           flexShrink: 0,
           transition: "background 0.3s ease",
         }}>
+
+          {/* 桌面质感层（§3.1：呢绒纹理 + 四边暗角） */}
+          <div style={{ ...tableTextureLayer, zIndex: 1 }} />
+          <div style={{ ...tableVignetteLayer, zIndex: 1 }} />
 
           <BoardInfoCorner dora_markers={dora_markers} honba={honba} />
 
@@ -1486,19 +1502,7 @@ export function MahjongTable({
                   disabled={!isMyTurn}
                 />
               ) : (
-                <div
-                  style={{
-                    fontSize: 16,
-                    color: "var(--gold)",
-                    fontWeight: 800,
-                    padding: "14px 22px",
-                    borderRadius: 16,
-                    background: "linear-gradient(180deg, rgba(24,18,7,0.88) 0%, rgba(24,18,7,0.72) 100%)",
-                    border: "1px solid var(--gold-border)",
-                    boxShadow: "0 14px 40px rgba(0,0,0,0.32)",
-                    backdropFilter: "blur(16px)",
-                  }}
-                >
+                <div style={reachBanner}>
                   立直宣言中，请点击要打出的牌
                 </div>
               )}
@@ -1556,10 +1560,9 @@ export function MahjongTable({
             }}>
               <div
                 style={{
-                  padding: "3px 10px", borderRadius: 3, fontSize: 10, fontWeight: 600,
-                  background: "rgba(0,0,0,0.5)", color: SEAT_COLORS[actor_to_move],
+                  ...actorIndicatorBase,
+                  color: SEAT_COLORS[actor_to_move],
                   border: `1px solid ${SEAT_COLORS[actor_to_move]}60`,
-                  whiteSpace: "nowrap",
                 }}
               >
                 {player_info[actor_to_move]?.name || `P${actor_to_move}`}
@@ -1576,27 +1579,8 @@ export function MahjongTable({
               zIndex: 32,
               pointerEvents: "none",
             }}>
-              <div style={{
-                padding: "6px 14px",
-                borderRadius: 2,
-                background: "rgba(24, 18, 7, 0.9)",
-                border: "1px solid var(--gold-border)",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-              }}>
-                <div style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: 2,
-                  background: "var(--gold)",
-                  color: "#23180a",
-                  fontWeight: 900,
-                  fontSize: 11,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}>
+              <div style={reachChip}>
+                <div style={reachChipIcon}>
                   立
                 </div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: "var(--gold)" }}>
@@ -1628,24 +1612,9 @@ export function MahjongTable({
           <button
             key={label}
             onClick={() => set(!value)}
-            style={{
-              padding: "3px 12px",
-              borderRadius: 5,
-              border: `1px solid ${value ? "rgba(212,168,83,0.4)" : "rgba(255,255,255,0.08)"}`,
-              background: value ? "var(--ctrlbar-active-bg)" : "rgba(255,255,255,0.04)",
-              color: value ? "var(--ctrlbar-active-text)" : "var(--ctrlbar-text)",
-              fontSize: 12, fontWeight: 600, cursor: "pointer",
-              transition: "all 0.15s",
-              display: "flex", alignItems: "center", gap: 5,
-              letterSpacing: "0.02em",
-            }}
+            style={ctrlToggleStyle(value)}
           >
-            <span style={{
-              width: 7, height: 7, borderRadius: "50%",
-              background: value ? "rgba(212,168,83,0.9)" : "rgba(255,255,255,0.2)",
-              display: "inline-block", flexShrink: 0,
-              transition: "background 0.15s",
-            }} />
+            <span style={ctrlToggleDotStyle(value)} />
             {label}
           </button>
         ))}

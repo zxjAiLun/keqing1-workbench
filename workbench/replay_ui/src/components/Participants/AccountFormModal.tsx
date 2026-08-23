@@ -104,10 +104,10 @@ export function AccountFormModal({
           备注
           <input value={note} onChange={(e) => setNote(e.target.value)} style={inputStyle} placeholder="可选" />
         </label>
-        {error && <div style={{ color: '#e74c3c', fontSize: 12 }}>{error}</div>}
+        {error && <div style={{ color: 'var(--negative)', fontSize: 12 }}>{error}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
           <button style={btnStyle} onClick={onClose}>取消</button>
-          <button style={{ ...btnStyle, background: 'var(--accent)', color: '#fff' }} onClick={submit} disabled={saving || !displayName.trim()}>
+          <button style={{ ...btnStyle, background: 'var(--accent)', color: 'var(--accent-text)' }} onClick={submit} disabled={saving || !displayName.trim()}>
             {saving ? '保存中…' : '保存'}
           </button>
         </div>

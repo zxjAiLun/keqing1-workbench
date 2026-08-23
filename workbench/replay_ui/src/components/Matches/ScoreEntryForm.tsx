@@ -71,7 +71,7 @@ export function ScoreEntryForm({
         ))}
       </div>
 
-      <div style={{ fontSize: 12, color: sumOk ? 'var(--text-secondary)' : (parsed.length > 0 && sum !== expected ? '#e74c3c' : 'var(--text-muted)') }}>
+      <div style={{ fontSize: 12, color: sumOk ? 'var(--text-secondary)' : (parsed.length > 0 && sum !== expected ? 'var(--negative)' : 'var(--text-muted)') }}>
         总分 {Number.isFinite(sum) ? sum : '—'} / 期望 {expected} {sumOk ? '✓' : ''}
       </div>
 

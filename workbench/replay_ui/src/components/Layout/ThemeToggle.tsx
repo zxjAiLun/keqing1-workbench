@@ -7,7 +7,7 @@ export function ThemeToggle() {
   return (
     <button
       onClick={toggle}
-      title={theme === 'white' ? '切换到现代风格' : '切换到白色风格'}
+      title={theme === 'light' ? '切换到深色风格' : '切换到浅色风格（旧版）'}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -30,10 +30,10 @@ export function ThemeToggle() {
         e.currentTarget.style.borderColor = 'var(--border)';
       }}
     >
-      {theme === 'white' ? (
+      {theme === 'light' ? (
         <Moon size={16} style={{ color: 'var(--text-secondary)', transition: 'color var(--transition)' }} />
       ) : (
-        <Sun size={16} style={{ color: '#fbbf24', transition: 'color var(--transition)' }} />
+        <Sun size={16} style={{ color: 'var(--accent)', transition: 'color var(--transition)' }} />
       )}
     </button>
   );

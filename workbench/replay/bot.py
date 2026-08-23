@@ -30,6 +30,7 @@ for _dir in (str(_SRC_DIR), str(_SCRIPTS_DIR), str(_PROJECT_ROOT)):
 
 from inference.rulebase_bot import RulebaseBot
 from inference.mortal_bot import MortalReviewBot
+from inference.bot_registry import resolve_bot_spec, resolve_model_checkpoint
 
 # bot 类型 → run_replay_from_source 内部创建 Bot 时用
 _BOT_CLASSES = {
@@ -42,16 +43,6 @@ _BOT_CLASSES = {
 _MORTAL_BOT_TYPES = {"mortal", "70k", "weak_mortal", "ext_mortal"}
 
 PLAYER_NAMES = ["East", "South", "West", "North"]
-
-# 默认 checkpoint 路径（按 bot 类型，相对于 PROJECT_ROOT）
-_ANCHOR_70K = _PROJECT_ROOT / "artifacts/mortal_training/checkpoints/mortal_default_70k_promoted_candidate.pth"
-_V2_CANDIDATE = _PROJECT_ROOT / "artifacts/experiments/model_pool_2026_07/V2_population_mixed_v4_warmstart_2026_07/checkpoints/mortal_74000.pth"
-_DEFAULT_CHECKPOINTS = {
-    "mortal": _V2_CANDIDATE if _V2_CANDIDATE.exists() else _ANCHOR_70K,
-    "70k": _ANCHOR_70K,
-    "weak_mortal": _PROJECT_ROOT / "artifacts/external_mortal_20240308_best_min.pth",
-    "ext_mortal": _PROJECT_ROOT / "artifacts/external_mortal_20240308_best_min.pth",
-}
 _REVIEW_EXPORTER = DefaultRuntimeReviewExporter()
 
 
@@ -194,16 +185,9 @@ def run_replay_from_source(
     if bot_type == "rulebase":
         checkpoint = None
     elif checkpoint is None:
-        checkpoint = _DEFAULT_CHECKPOINTS[bot_type]
+        _kind, checkpoint = resolve_bot_spec(bot_type, _PROJECT_ROOT)
     else:
-        checkpoint = Path(checkpoint)
-        if not checkpoint.is_absolute() and not checkpoint.exists():
-            # 相对路径：尝试相对于 PROJECT_ROOT 解析
-            candidate = _PROJECT_ROOT / checkpoint
-            if candidate.exists():
-                checkpoint = candidate
-    if checkpoint is not None and not checkpoint.exists():
-        raise FileNotFoundError(f"Checkpoint 未找到：{checkpoint}")
+        checkpoint = resolve_model_checkpoint(checkpoint, _PROJECT_ROOT)
 
     events = _load_events_from_source(source, input_type=input_type)
     bot_cls = _BOT_CLASSES[bot_type]

@@ -128,10 +128,10 @@ const openButtonStyle: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   gap: 5,
-  border: '1px solid rgba(142,68,173,0.5)',
+  border: '1px solid var(--accent-border)',
   borderRadius: 5,
-  background: 'rgba(142,68,173,0.1)',
-  color: '#8e44ad',
+  background: 'var(--accent-bg)',
+  color: 'var(--accent)',
   fontWeight: 800,
   cursor: 'pointer',
 };

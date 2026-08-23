@@ -265,7 +265,7 @@ export function BattlePage() {
                       height: 32,
                       borderRadius: 6,
                       border: `1px solid ${gameLength === value ? 'var(--accent)' : 'var(--border)'}`,
-                      background: gameLength === value ? 'rgba(52,152,219,0.10)' : 'var(--card-bg)',
+                      background: gameLength === value ? 'var(--accent-bg)' : 'var(--card-bg)',
                       color: gameLength === value ? 'var(--accent)' : 'var(--text-primary)',
                       fontSize: 13,
                       fontWeight: 700,
@@ -290,7 +290,7 @@ export function BattlePage() {
                       fontSize: 13,
                       fontWeight: 500,
                       border: `1px solid ${botModel === bot.value ? 'var(--accent)' : 'var(--border)'}`,
-                      background: botModel === bot.value ? 'rgba(52,152,219,0.10)' : 'var(--card-bg)',
+                      background: botModel === bot.value ? 'var(--accent-bg)' : 'var(--card-bg)',
                       color: 'var(--text-primary)',
                       cursor: 'pointer',
                       textAlign: 'left',
@@ -365,7 +365,7 @@ export function BattlePage() {
         <button onClick={() => downloadExport("tenhou6")} style={battleToolButtonStyle}>Tenhou6</button>
         <button
           onClick={() => setShowQuitConfirm(true)}
-          style={{ ...battleToolButtonStyle, borderColor: '#e74c3c', color: '#e74c3c' }}
+          style={{ ...battleToolButtonStyle, borderColor: 'var(--negative)', color: 'var(--negative)' }}
         >
           退出
         </button>
@@ -391,22 +391,22 @@ export function BattlePage() {
       {/* 退出确认对话框 */}
       {showQuitConfirm && (
         <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          position: 'fixed', inset: 0, background: 'var(--result-overlay-bg)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200,
         }}>
           <div style={{
-            background: '#fff', borderRadius: 12, padding: 28, minWidth: 280,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.2)', textAlign: 'center',
+            background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 12, padding: 28, minWidth: 280,
+            boxShadow: 'var(--elev-3)', textAlign: 'center', color: 'var(--text-primary)',
           }}>
             <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>确认退出对局？</div>
-            <div style={{ fontSize: 13, color: '#666', marginBottom: 20 }}>退出后该座位将由 Bot 接管，对局继续。</div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 20 }}>退出后该座位将由 Bot 接管，对局继续。</div>
             <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
               <button onClick={() => setShowQuitConfirm(false)}
-                style={{ padding: '8px 20px', borderRadius: 6, border: '1px solid #ccc', background: '#fff', cursor: 'pointer', fontSize: 13 }}>
+                style={{ padding: '8px 20px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface-3)', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 13 }}>
                 取消
               </button>
               <button onClick={handleQuit}
-                style={{ padding: '8px 20px', borderRadius: 6, border: 'none', background: '#e74c3c', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                style={{ padding: '8px 20px', borderRadius: 6, border: 'none', background: 'var(--negative)', color: 'var(--accent-text)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
                 确认退出
               </button>
             </div>
@@ -417,19 +417,19 @@ export function BattlePage() {
       {/* 断线/重连提示覆盖层 */}
       {connStatus === 'disconnected' && (
         <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+          position: 'fixed', inset: 0, background: 'var(--result-overlay-bg)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300,
         }}>
           <div style={{
-            background: '#fff', borderRadius: 12, padding: 32, minWidth: 300,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.3)', textAlign: 'center',
+            background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 12, padding: 32, minWidth: 300,
+            boxShadow: 'var(--elev-3)', textAlign: 'center', color: 'var(--text-primary)',
           }}>
             <div style={{ fontSize: 32, marginBottom: 12 }}>⚠️</div>
             <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>连接已断开</div>
-            <div style={{ fontSize: 13, color: '#666', marginBottom: 4 }}>正在尝试重连... ({reconnectAttempts}/5)</div>
-            <div style={{ fontSize: 12, color: '#999' }}>若长时间无法重连，可以放弃本局。</div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>正在尝试重连... ({reconnectAttempts}/5)</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>若长时间无法重连，可以放弃本局。</div>
             <button onClick={() => { setGameId(null); setState(null); }}
-              style={{ marginTop: 20, padding: '8px 20px', borderRadius: 6, border: '1px solid #ccc', background: '#fff', cursor: 'pointer', fontSize: 13 }}>
+              style={{ marginTop: 20, padding: '8px 20px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface-3)', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 13 }}>
               放弃本局
             </button>
           </div>
@@ -439,7 +439,7 @@ export function BattlePage() {
       {connStatus === 'reconnecting' && (
         <div style={{
           position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
-          background: 'rgba(0,0,0,0.75)', color: '#fff', borderRadius: 20,
+          background: 'var(--overlay-bg)', color: 'var(--text-primary)', border: '1px solid var(--overlay-border)', borderRadius: 20,
           padding: '8px 20px', fontSize: 13, zIndex: 300,
         }}>
           重连中... ({reconnectAttempts}/5)
@@ -494,8 +494,8 @@ function BattleResultOverlay({
     <div style={resultOverlayBackdropStyle}>
       <div style={resultOverlayPanelStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 16 }}>
-          <div style={{ color: "#f7f7f7", fontSize: 30, fontWeight: 500 }}>{isFinal ? "最终结算" : title}</div>
-          <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 14 }}>{subtitle}</div>
+          <div style={{ color: "var(--result-title)", fontSize: 30, fontWeight: 500 }}>{isFinal ? "最终结算" : title}</div>
+          <div style={{ color: "var(--result-subtitle)", fontSize: 14 }}>{subtitle}</div>
         </div>
 
         {winner != null && winnerTiles.length > 0 && (
@@ -504,7 +504,7 @@ function BattleResultOverlay({
               <Tile key={`${tile}-${idx}`} tile={tile} size="small" />
             ))}
             {winTile && (
-              <div style={{ marginLeft: 8, outline: "2px solid #ff4d4f", outlineOffset: 1, borderRadius: 3 }}>
+              <div style={{ marginLeft: 8, outline: "2px solid var(--result-negative)", outlineOffset: 1, borderRadius: 3 }}>
                 <Tile tile={winTile} size="small" />
               </div>
             )}
@@ -512,7 +512,7 @@ function BattleResultOverlay({
         )}
 
         {yakuLines.length ? (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "4px 14px", color: "rgba(255,255,255,0.84)", fontSize: 15, lineHeight: 1.5 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "4px 14px", color: "var(--result-title)", fontSize: 15, lineHeight: 1.5 }}>
             {yakuLines.map((line, idx) => (
               <span key={`${line}-${idx}`}>{line}</span>
             ))}
@@ -526,14 +526,14 @@ function BattleResultOverlay({
             const rating = ratingByName.get(player?.name ?? "");
             return (
               <div key={pid} style={resultRowStyle}>
-                <span style={{ color: "rgba(255,255,255,0.62)", width: 34 }}>{rank + 1}位</span>
+                <span style={{ color: "var(--result-muted)", width: 34 }}>{rank + 1}位</span>
                 <span style={{ flex: 1 }}>{player?.name ?? `P${pid}`}</span>
                 <span style={{ width: 90, textAlign: "right" }}>{score.toLocaleString()}</span>
-                <span style={{ width: 86, textAlign: "right", color: delta >= 0 ? "#00d4d8" : "#ff4d4f" }}>
+                <span style={{ width: 86, textAlign: "right", color: delta >= 0 ? "var(--result-positive)" : "var(--result-negative)" }}>
                   {delta === 0 ? "" : `${delta > 0 ? "+" : ""}${delta.toLocaleString()}`}
                 </span>
                 {isFinal && (
-                  <span style={{ width: 112, textAlign: "right", color: rating && rating.rating_delta >= 0 ? "#00d4d8" : "#ff4d4f" }}>
+                  <span style={{ width: 112, textAlign: "right", color: rating && rating.rating_delta >= 0 ? "var(--result-positive)" : "var(--result-negative)" }}>
                     {rating ? `${rating.rating_delta >= 0 ? "+" : ""}${rating.rating_delta.toFixed(1)} R` : ""}
                   </span>
                 )}
@@ -606,16 +606,16 @@ const resultOverlayBackdropStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  background: "rgba(0,0,0,0.42)",
+  background: "var(--result-overlay-bg)",
 };
 
 const resultOverlayPanelStyle: CSSProperties = {
   width: 620,
   maxWidth: "92vw",
   padding: "28px 32px 24px",
-  border: "1px solid rgba(255,255,255,0.28)",
-  background: "rgba(5,12,18,0.88)",
-  boxShadow: "0 18px 56px rgba(0,0,0,0.34)",
+  border: "1px solid var(--result-panel-border)",
+  background: "var(--result-panel-bg)",
+  boxShadow: "var(--result-panel-shadow)",
   display: "flex",
   flexDirection: "column",
   gap: 18,
@@ -626,7 +626,7 @@ const resultRowStyle: CSSProperties = {
   alignItems: "center",
   gap: 12,
   minHeight: 31,
-  color: "#f5f5f5",
+  color: "var(--result-title)",
   fontSize: 18,
   fontWeight: 500,
   fontVariantNumeric: "tabular-nums",
@@ -635,9 +635,9 @@ const resultRowStyle: CSSProperties = {
 const resultPrimaryButtonStyle: CSSProperties = {
   height: 34,
   padding: "0 16px",
-  border: "1px solid rgba(255,255,255,0.52)",
-  background: "rgba(255,255,255,0.16)",
-  color: "#fff",
+  border: "1px solid var(--gold-border)",
+  background: "var(--gold-bg)",
+  color: "var(--gold)",
   fontSize: 13,
   fontWeight: 700,
   cursor: "pointer",
@@ -646,5 +646,5 @@ const resultPrimaryButtonStyle: CSSProperties = {
 const resultSecondaryButtonStyle: CSSProperties = {
   ...resultPrimaryButtonStyle,
   background: "transparent",
-  color: "rgba(255,255,255,0.78)",
+  color: "var(--result-subtitle)",
 };

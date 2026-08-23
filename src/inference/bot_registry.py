@@ -80,7 +80,7 @@ def _search_authoritative_checkpoint(relative: str | Path) -> Path | None:
     normalized = raw.replace("\\", "/")
     first_component = normalized.split("/", 1)[0]
     is_windows_path = len(first_component) >= 2 and first_component[1] == ":"
-    is_legacy_artifact_path = normalized.lower().startswith("artifacts/")
+    is_legacy_artifact_path = normalized.lower().startswith("artifacts/") or "/artifacts/" in normalized.lower()
     if not matches and len(rel.parts) > 1 and (is_windows_path or is_legacy_artifact_path):
         for models_dir in base.glob("*/models"):
             if not models_dir.is_dir():

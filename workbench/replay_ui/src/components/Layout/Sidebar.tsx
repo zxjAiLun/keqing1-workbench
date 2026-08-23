@@ -16,7 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
-import { TABLECLOTH_OPTIONS } from '../BattleBoard/tableclothOptions';
+import { TABLECLOTH_OPTIONS, DEFAULT_TABLECLOTH_ID } from '../BattleBoard/tableclothOptions';
 import type { TableclothId } from '../BattleBoard/tableclothOptions';
 import { routes } from '../../routes';
 
@@ -82,7 +82,7 @@ export function Sidebar() {
     if (stored && TABLECLOTH_OPTIONS.some((item) => item.id === stored)) {
       return stored as TableclothId;
     }
-    return 'default';
+    return DEFAULT_TABLECLOTH_ID;
   });
 
   useEffect(() => {
@@ -155,7 +155,7 @@ export function Sidebar() {
                     borderRadius: 5,
                     border: tablecloth === item.id
                       ? '2px solid var(--accent)'
-                      : '1px solid rgba(255,255,255,0.18)',
+                      : '1px solid var(--border-strong)',
                     background: item.color,
                     cursor: 'pointer',
                   }}
@@ -200,7 +200,7 @@ export function Sidebar() {
               height: 28,
               borderRadius: 7,
               background: 'var(--accent)',
-              color: 'var(--btn-primary-text)',
+              color: 'var(--accent-text)',
               display: 'grid',
               placeItems: 'center',
               fontWeight: 800,
@@ -224,8 +224,8 @@ export function Sidebar() {
               width: 28,
               height: 28,
               borderRadius: 6,
-              border: '1px solid rgba(255,255,255,0.12)',
-              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid var(--border)',
+              background: 'var(--sidebar-hover-bg)',
               color: 'var(--sidebar-text-muted)',
               display: 'grid',
               placeItems: 'center',
@@ -291,8 +291,8 @@ export function Sidebar() {
             style={{
               width: 32,
               height: 32,
-              border: '1px solid rgba(255,255,255,0.12)',
-              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid var(--border)',
+              background: 'var(--sidebar-hover-bg)',
               color: 'var(--sidebar-text)',
               borderRadius: 6,
               display: 'grid',
@@ -314,7 +314,7 @@ export function Sidebar() {
               position: 'fixed',
               inset: 0,
               zIndex: 130,
-              background: 'rgba(0,0,0,0.42)',
+              background: 'var(--result-overlay-bg)',
               display: 'flex',
             }}
           >
@@ -326,10 +326,10 @@ export function Sidebar() {
                   style={{
                     width: 32,
                     height: 32,
-                    border: 'none',
+                    border: '1px solid var(--border)',
                     borderRadius: 6,
-                    background: 'rgba(255,255,255,0.9)',
-                    color: '#111827',
+                    background: 'var(--surface-2)',
+                    color: 'var(--text-primary)',
                     display: 'grid',
                     placeItems: 'center',
                   }}

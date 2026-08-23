@@ -159,7 +159,7 @@ export function ParticipantsPage() {
           {loading ? (
             <div style={{ padding: 24, color: 'var(--text-muted)' }}>加载中…</div>
           ) : error ? (
-            <div style={{ padding: 24, color: '#e74c3c' }}>{error}</div>
+            <div style={{ padding: 24, color: 'var(--negative)' }}>{error}</div>
           ) : (
             <AccountTable
               accounts={accounts}
@@ -342,7 +342,7 @@ const cardHeaderStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10,
 };
 const primaryBtn: React.CSSProperties = {
-  border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff',
+  border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--accent-text)',
   borderRadius: 5, fontSize: 12, fontWeight: 700, padding: '6px 12px', cursor: 'pointer',
 };
 const ghostBtn: React.CSSProperties = {

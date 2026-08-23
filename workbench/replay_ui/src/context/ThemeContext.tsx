@@ -14,8 +14,10 @@ import {
 export function ThemeProvider({ children }: { children: import('react').ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {
     const stored = localStorage.getItem(STORAGE_KEY_THEME);
-    if (stored === 'white' || stored === 'modern') return stored;
-    return 'white';
+    // 旧值迁移：modern → dark，white → light；默认深色
+    if (stored === 'modern' || stored === 'dark') return 'dark';
+    if (stored === 'white' || stored === 'light') return 'light';
+    return 'dark';
   });
 
   const [tileBack, setTileBackState] = useState<TileBackColor>(() => {
@@ -86,7 +88,7 @@ export function ThemeProvider({ children }: { children: import('react').ReactNod
   }, []);
 
   const toggle = useCallback(() => {
-    setTheme(theme === 'white' ? 'modern' : 'white');
+    setTheme(theme === 'light' ? 'dark' : 'light');
   }, [theme, setTheme]);
 
   // Apply theme attribute

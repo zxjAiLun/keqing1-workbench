@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { DecisionLogEntry } from '../../types/replay';
 import { sameReplayAction } from '../../utils/tileUtils';
+import { decisionColors, decisionBg, decisionBorder } from '../BattleBoard/tableStyles';
 
 interface ReplayDecisionPanelProps {
   entry: DecisionLogEntry | null;
@@ -269,10 +270,10 @@ export function ReplayDecisionPanel({
         <div style={{
           marginBottom: 8,
           padding: '6px 8px',
-          border: '1px solid rgba(180, 83, 9, 0.24)',
+          border: '1px solid var(--gold-border)',
           borderRadius: 4,
-          background: 'rgba(245, 158, 11, 0.08)',
-          color: '#92400e',
+          background: 'var(--gold-bg)',
+          color: 'var(--warning)',
           fontSize: 11,
         }}>
           响应被其他玩家的更高优先级动作截断，本步不计入错误统计
@@ -309,17 +310,17 @@ export function ReplayDecisionPanel({
             const scoreLabel = selectedTeacherModel ? displayOptionalScore(teacher?.q_value) : displayScoreLabel(c);
             const probLabel = selectedTeacherModel ? displayOptionalProb(teacher?.prob) : displayProbLabel(probability);
 
-            const barColor = isChosen && isGt ? '#8e44ad'
-              : isChosen ? '#e74c3c'
-              : isGt ? '#27ae60'
-              : isTeacher ? '#8e44ad'
+            const barColor = isChosen && isGt ? decisionColors.both
+              : isChosen ? decisionColors.bot
+              : isGt ? decisionColors.gt
+              : isTeacher ? decisionColors.teacher
               : 'var(--accent)';
 
-            const rowBg = isChosen && isGt ? 'rgba(142,68,173,0.08)'
-              : isChosen ? 'rgba(231,76,60,0.07)'
-              : isGt ? 'rgba(39,174,96,0.07)'
-              : isTeacher ? 'rgba(142,68,173,0.08)'
-              : idx % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.02)';
+            const rowBg = isChosen && isGt ? decisionBg.both
+              : isChosen ? decisionBg.bot
+              : isGt ? decisionBg.gt
+              : isTeacher ? decisionBg.both
+              : idx % 2 === 0 ? 'transparent' : decisionBg.zebra;
 
             return (
               <div key={idx} style={{
@@ -337,9 +338,9 @@ export function ReplayDecisionPanel({
                   display: 'flex', alignItems: 'center', gap: 3,
                 }}>
                   {shortLabel(c.action)}
-                  {isChosen && <span style={{ fontSize: 9, color: '#e74c3c' }}>★</span>}
-                  {isGt && !isChosen && <span style={{ fontSize: 9, color: '#27ae60' }}>●</span>}
-                  {isTeacher && <span style={{ fontSize: 9, color: '#8e44ad' }}>T</span>}
+                  {isChosen && <span style={{ fontSize: 9, color: decisionColors.bot }}>★</span>}
+                  {isGt && !isChosen && <span style={{ fontSize: 9, color: decisionColors.gt }}>●</span>}
+                  {isTeacher && <span style={{ fontSize: 9, color: decisionColors.teacher }}>T</span>}
                 </div>
 
                 <div style={{
@@ -389,7 +390,7 @@ export function ReplayDecisionPanel({
                     style={{
                       ...switchBtnStyle,
                       borderColor: active ? 'var(--accent)' : 'var(--border)',
-                      background: active ? 'rgba(52, 152, 219, 0.10)' : 'var(--card-bg)',
+                      background: active ? 'var(--accent-bg)' : 'var(--card-bg)',
                       color: active ? 'var(--accent)' : 'var(--text-primary)',
                       cursor: active ? 'default' : 'pointer',
                     }}
@@ -453,13 +454,13 @@ const tableHeaderStyle: React.CSSProperties = {
 };
 
 function teacherChipStyle(active: boolean): React.CSSProperties {
-  const color = active ? '#8e44ad' : '#8a8f98';
+  const color = active ? decisionColors.teacher : 'var(--text-muted)';
   return {
     minHeight: 22,
     padding: '3px 8px',
     borderRadius: 5,
-    border: `1px solid ${active ? 'rgba(142,68,173,0.55)' : 'rgba(127,127,127,0.26)'}`,
-    background: active ? 'rgba(142,68,173,0.16)' : 'rgba(127,127,127,0.10)',
+    border: `1px solid ${active ? decisionBorder.both : 'var(--border-strong)'}`,
+    background: active ? decisionBg.both : 'var(--surface-2)',
     color,
     fontSize: 10,
     fontWeight: active ? 800 : 650,

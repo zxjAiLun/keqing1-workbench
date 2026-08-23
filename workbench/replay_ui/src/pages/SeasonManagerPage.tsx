@@ -15,11 +15,12 @@ const STATUS_LABELS: Record<string, string> = {
   archived: '已归档',
 };
 
+// 赛季状态色（功能色，引用语义令牌）
 const STATUS_COLORS: Record<string, string> = {
-  draft: '#7f8c8d',
-  running: '#27ae60',
-  completed: '#e67e22',
-  archived: '#95a5a6',
+  draft: 'var(--text-muted)',
+  running: 'var(--success)',
+  completed: 'var(--warning)',
+  archived: 'var(--text-faint)',
 };
 
 export function SeasonManagerPage() {
@@ -158,7 +159,7 @@ export function SeasonManagerPage() {
   return (
     <PageShell>
       <PageHeader title="赛季管理" description="canonical 赛季注册表：生命周期 + 参赛阵容（成员只来自 Participants Account）" />
-      {error && <div style={{ fontSize: 13, color: '#e74c3c', marginBottom: 10 }}>{error}</div>}
+      {error && <div style={{ fontSize: 13, color: 'var(--negative)', marginBottom: 10 }}>{error}</div>}
 
       {catalog && !catalog.default_season_id && (
         <div
@@ -167,8 +168,8 @@ export function SeasonManagerPage() {
             padding: '10px 12px',
             borderRadius: 6,
             marginBottom: 12,
-            border: '1px solid #e67e22',
-            background: 'rgba(230,126,34,0.08)',
+            border: '1px solid var(--gold-border)',
+            background: 'var(--gold-bg)',
             color: 'var(--text-secondary)',
           }}
         >
@@ -196,7 +197,7 @@ export function SeasonManagerPage() {
                   padding: '8px 10px',
                   borderRadius: 8,
                   border: `1px solid ${selectedId === season.season_id ? 'var(--accent)' : 'var(--border)'}`,
-                  background: selectedId === season.season_id ? 'rgba(142,68,173,0.06)' : 'var(--surface-subtle)',
+                  background: selectedId === season.season_id ? 'var(--accent-bg)' : 'var(--surface-subtle)',
                   cursor: 'pointer',
                   fontSize: 13,
                 }}
@@ -215,14 +216,14 @@ export function SeasonManagerPage() {
                     fontWeight: 700,
                     padding: '3px 8px',
                     borderRadius: 6,
-                    color: '#fff',
-                    background: STATUS_COLORS[season.status ?? 'draft'] ?? '#7f8c8d',
+                    color: 'var(--accent-text)',
+                    background: STATUS_COLORS[season.status ?? 'draft'] ?? 'var(--text-muted)',
                   }}
                 >
                   {STATUS_LABELS[season.status ?? 'draft'] ?? season.status}
                 </span>
                 <span style={{ justifySelf: 'center', color: 'var(--text-secondary)' }}>{season.accounts} 账号</span>
-                <span style={{ justifySelf: 'center', fontSize: 11, color: season.data_ready ? '#27ae60' : 'var(--text-muted)' }}>
+                <span style={{ justifySelf: 'center', fontSize: 11, color: season.data_ready ? 'var(--success)' : 'var(--text-muted)' }}>
                   {season.data_ready ? '就绪' : '未就绪'}
                 </span>
                 <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>查看 →</span>
@@ -240,7 +241,7 @@ export function SeasonManagerPage() {
             <div style={cardHeaderStyle}>
               <span style={{ fontWeight: 800 }}>
                 {config.title ?? config.season_id}
-                {isCurrent && <span style={{ color: '#27ae60', marginLeft: 8, fontSize: 12 }}>● 当前正式赛季</span>}
+                {isCurrent && <span style={{ color: 'var(--success)', marginLeft: 8, fontSize: 12 }}>● 当前正式赛季</span>}
               </span>
               <span
                 style={{
@@ -248,8 +249,8 @@ export function SeasonManagerPage() {
                   fontWeight: 700,
                   padding: '3px 8px',
                   borderRadius: 6,
-                  color: '#fff',
-                  background: STATUS_COLORS[status] ?? '#7f8c8d',
+                  color: 'var(--accent-text)',
+                  background: STATUS_COLORS[status] ?? 'var(--text-muted)',
                 }}
               >
                 {STATUS_LABELS[status] ?? status}
@@ -266,7 +267,7 @@ export function SeasonManagerPage() {
               {status === 'running' && (
                 <>
                   <button
-                    style={{ ...ghostBtn, borderColor: '#27ae60', color: '#27ae60' }}
+                    style={{ ...ghostBtn, borderColor: 'var(--success)', color: 'var(--success)' }}
                     disabled={busy || isCurrent}
                     onClick={() => void run(() => ladderApi.setDefaultSeason(config.season_id))}
                   >
@@ -289,7 +290,7 @@ export function SeasonManagerPage() {
               {status === 'completed' && (
                 <>
                   <button
-                    style={{ ...ghostBtn, borderColor: '#27ae60', color: '#27ae60' }}
+                    style={{ ...ghostBtn, borderColor: 'var(--success)', color: 'var(--success)' }}
                     disabled={busy}
                     onClick={() => void run(() => ladderApi.startSeason(config.season_id))}
                   >
@@ -311,7 +312,7 @@ export function SeasonManagerPage() {
               {status === 'archived' && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>已归档（永久只读）</span>}
               <span style={{ flex: 1 }} />
               <button
-                style={{ ...ghostBtn, borderColor: '#c0392b', color: '#c0392b' }}
+                style={{ ...ghostBtn, borderColor: 'var(--negative)', color: 'var(--negative)' }}
                 disabled={busy || status === 'running' || isCurrent}
                 title={status === 'running' || isCurrent ? '运行中的当前赛季不可删除' : '删除赛季'}
                 onClick={() => void deleteSeason()}
@@ -384,7 +385,7 @@ export function SeasonManagerPage() {
             position: 'fixed',
             inset: 0,
             zIndex: 200,
-            background: 'rgba(0,0,0,0.42)',
+            background: 'var(--result-overlay-bg)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -400,7 +401,7 @@ export function SeasonManagerPage() {
               autoFocus
             />
             <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="标题（可选）" style={inputStyle} />
-            {error && <div style={{ fontSize: 12, color: '#e74c3c' }}>{error}</div>}
+            {error && <div style={{ fontSize: 12, color: 'var(--negative)' }}>{error}</div>}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button style={ghostBtn} onClick={() => setCreating(false)}>取消</button>
               <button style={primaryBtn} disabled={busy || !newSeasonId.trim()} onClick={() => void createSeason()}>
@@ -429,7 +430,7 @@ const cardHeaderStyle: React.CSSProperties = {
 const primaryBtn: React.CSSProperties = {
   border: '1px solid var(--accent)',
   background: 'var(--accent)',
-  color: '#fff',
+  color: 'var(--accent-text)',
   borderRadius: 5,
   fontSize: 12,
   fontWeight: 700,

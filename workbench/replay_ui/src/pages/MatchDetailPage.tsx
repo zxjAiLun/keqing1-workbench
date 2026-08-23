@@ -161,14 +161,14 @@ export function MatchDetailPage() {
             {match && match.status !== 'void' && (
               <>
                 <button style={primaryBtn} onClick={startEdit}>修订</button>
-                <button style={{ ...ghostBtn, color: '#e74c3c' }} onClick={submitVoid}>作废</button>
+                <button style={{ ...ghostBtn, color: 'var(--negative)' }} onClick={submitVoid}>作废</button>
               </>
             )}
           </>
         )}
       />
 
-      {error && <div style={{ color: '#e74c3c', fontSize: 13, marginBottom: 10 }}>{error}</div>}
+      {error && <div style={{ color: 'var(--negative)', fontSize: 13, marginBottom: 10 }}>{error}</div>}
 
       {loading && !data && <div style={{ padding: 24, color: 'var(--text-muted)' }}>加载中…</div>}
 
@@ -259,7 +259,7 @@ export function MatchDetailPage() {
               {match.season_id && (
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <button
-                    style={{ ...primaryBtn, background: '#16a085' }}
+                    style={{ ...primaryBtn, background: 'var(--success)' }}
                     onClick={projectSeason}
                     disabled={projecting}
                   >
@@ -294,9 +294,9 @@ function syncLabel(state: string | undefined, seasonId: string | null | undefine
 
 function syncColor(state?: string): string {
   switch (state) {
-    case 'pending': return '#e67e22';
-    case 'ready': return '#27ae60';
-    case 'error': return '#e74c3c';
+    case 'pending': return 'var(--warning)';
+    case 'ready': return 'var(--success)';
+    case 'error': return 'var(--negative)';
     default: return 'var(--text-muted)';
   }
 }
@@ -309,7 +309,7 @@ const cardStyle: React.CSSProperties = {
   marginBottom: 14,
 };
 const primaryBtn: React.CSSProperties = {
-  border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff',
+  border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--accent-text)',
   borderRadius: 5, fontSize: 12, fontWeight: 700, padding: '7px 14px', cursor: 'pointer',
 };
 const ghostBtn: React.CSSProperties = {

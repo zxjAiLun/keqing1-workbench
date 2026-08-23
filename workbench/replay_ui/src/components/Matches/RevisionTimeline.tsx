@@ -24,12 +24,12 @@ export function RevisionTimeline({ revisions }: { revisions: RevisionSummary[] }
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontWeight: 800 }}>rev {rev.revision} · {ACTION_LABELS[rev.action]}</span>
-            {rev.force && <span style={{ color: '#e74c3c', fontWeight: 700 }}>强制</span>}
+            {rev.force && <span style={{ color: 'var(--negative)', fontWeight: 700 }}>强制</span>}
             <span style={{ color: 'var(--text-muted)', marginLeft: 'auto' }}>{rev.created_at}</span>
           </div>
           {rev.reason && <div style={{ color: 'var(--text-secondary)' }}>原因：{rev.reason}</div>}
           {!rev.validation.passed && rev.validation.issues.length > 0 && (
-            <div style={{ color: '#e74c3c' }}>
+            <div style={{ color: 'var(--negative)' }}>
               {rev.validation.issues.map((issue) => issue.message).join('；')}
             </div>
           )}

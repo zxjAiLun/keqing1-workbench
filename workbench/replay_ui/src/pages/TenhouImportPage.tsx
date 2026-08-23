@@ -242,14 +242,14 @@ export function TenhouImportPage() {
               onClick={runPreview}
               disabled={loading || !url.trim()}
               style={{
-                border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff',
+                border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--accent-text)',
                 borderRadius: 6, fontSize: 13, fontWeight: 700, padding: '8px 16px', cursor: 'pointer',
               }}
             >
               {loading ? '解析中…' : '解析预览'}
             </button>
           </div>
-          {error && <div style={{ color: '#e74c3c', fontSize: 13, marginTop: 8 }}>{error}</div>}
+          {error && <div style={{ color: 'var(--negative)', fontSize: 13, marginTop: 8 }}>{error}</div>}
         </section>
 
         {preview && (
@@ -265,7 +265,7 @@ export function TenhouImportPage() {
                   <button
                     onClick={() => navigate(routes.matchDetail(duplicateMatchId))}
                     style={{
-                      border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff',
+                      border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--accent-text)',
                       borderRadius: 6, fontSize: 13, fontWeight: 700, padding: '8px 14px', cursor: 'pointer',
                     }}
                   >
@@ -334,7 +334,7 @@ export function TenhouImportPage() {
                             const identity = identities.find((m) => m.model_identity_id === c.model_identity_id);
                             const artifact = identity?.artifacts.find((a) => a.model_artifact_id === c.model_artifact_id);
                             return (
-                              <span key={c.alias_id} style={{ fontSize: 11, color: '#8e44ad' }}>
+                              <span key={c.alias_id} style={{ fontSize: 11, color: 'var(--seat-2)' }}>
                                 本次运行模型：{identity?.label ?? c.model_identity_id}
                                 {artifact ? ` / ${artifact.label}` : ''}
                               </span>
@@ -375,12 +375,12 @@ export function TenhouImportPage() {
                           </select>
                           {/* R11-D：候选唯一 → 预选但可改；无候选 → 需要先绑定 */}
                           {frozenModel && seatInfo.eligible_account_ids?.length === 1 && (
-                            <span style={{ fontSize: 11, color: '#27ae60' }}>
+                            <span style={{ fontSize: 11, color: 'var(--success)' }}>
                               候选唯一，已预选（可更改）
                             </span>
                           )}
                           {frozenModel && seatInfo.eligible_account_ids?.length === 0 && (
-                            <span style={{ fontSize: 11, color: '#e74c3c' }}>
+                            <span style={{ fontSize: 11, color: 'var(--negative)' }}>
                               该模型下没有可绑定账号，需先在 Participants 绑定
                             </span>
                           )}
@@ -469,7 +469,7 @@ export function TenhouImportPage() {
                 onClick={confirmImport}
                 disabled={confirming || Boolean(preview.duplicate_match_id)}
                 style={{
-                  border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff',
+                  border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--accent-text)',
                   borderRadius: 6, fontSize: 13, fontWeight: 700, padding: '9px 18px', cursor: 'pointer',
                 }}
               >

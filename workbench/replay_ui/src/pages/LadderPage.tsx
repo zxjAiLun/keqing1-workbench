@@ -333,7 +333,7 @@ const sortButtonStyle = (active: boolean): CSSProperties => ({
   padding: '0 10px',
   borderRadius: 6,
   border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
-  background: active ? 'rgba(52, 152, 219, 0.12)' : 'var(--card-bg)',
+  background: active ? 'var(--accent-bg)' : 'var(--card-bg)',
   color: active ? 'var(--accent)' : 'var(--text-secondary)',
   fontSize: 12,
   fontWeight: active ? 800 : 600,

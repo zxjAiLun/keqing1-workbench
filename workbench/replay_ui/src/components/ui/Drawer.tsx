@@ -70,13 +70,9 @@ export function Drawer({
           height: '70vh',
           maxHeight: '90vh',
         }),
-    background: 'var(--card-bg)',
-    border: '1px solid var(--card-border)',
-    boxShadow: side === 'right'
-      ? '-4px 0 24px rgba(0,0,0,0.15)'
-      : side === 'left'
-      ? '4px 0 24px rgba(0,0,0,0.15)'
-      : '0 -4px 24px rgba(0,0,0,0.15)',
+    background: 'var(--surface-2)',
+    border: '1px solid var(--border)',
+    boxShadow: 'var(--elev-2)',
     zIndex: 200, // modal
     display: 'flex',
     flexDirection: 'column',
@@ -94,7 +90,7 @@ export function Drawer({
   const backdropStyle: CSSProperties = {
     position: 'fixed',
     inset: 0,
-    background: 'rgba(0,0,0,0.35)',
+    background: 'var(--result-overlay-bg)',
     zIndex: 150, // overlay
     opacity: open ? 1 : 0,
     pointerEvents: open ? 'auto' : 'none',
@@ -127,14 +123,13 @@ export function Drawer({
             padding: '14px 16px',
             borderBottom: '1px solid var(--border)',
             flexShrink: 0,
-            background: 'var(--nav-bg)',
           }}
         >
           <span
             style={{
               fontSize: 15,
               fontWeight: 700,
-              color: '#fff',
+              color: 'var(--text-primary)',
             }}
           >
             {title}
@@ -146,9 +141,9 @@ export function Drawer({
                 width: 28,
                 height: 28,
                 borderRadius: '50%',
-                border: 'none',
-                background: 'rgba(255,255,255,0.2)',
-                color: '#fff',
+                border: '1px solid var(--border)',
+                background: 'var(--surface-3)',
+                color: 'var(--text-secondary)',
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',

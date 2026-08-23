@@ -19,7 +19,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { routes } from "../routes";
 
-const ACCENT = "#8e44ad";
+const ACCENT = "var(--accent)";
 
 const SPEED_OPTIONS: Array<{ value: SpeedId; label: string }> = [
   { value: "slow", label: "Slow" },
@@ -67,7 +67,7 @@ function Segmented<T extends string>({
               fontSize: 13,
               fontWeight: 700,
               border: `1px solid ${active ? ACCENT : "var(--border)"}`,
-              background: active ? "rgba(142,68,173,0.08)" : "var(--surface-subtle)",
+              background: active ? "var(--accent-bg)" : "var(--surface-subtle)",
               color: active ? ACCENT : "var(--text-primary)",
               cursor: disabled ? "not-allowed" : "pointer",
               opacity: disabled ? 0.5 : 1,
@@ -232,7 +232,7 @@ export function PlayWithYouPage() {
             onClick={stop}
             disabled={loading}
             className="btn-primary"
-            style={{ height: 34, padding: "0 16px", fontSize: 13, background: loading ? "var(--text-muted)" : "#c0392b" }}
+            style={{ height: 34, padding: "0 16px", fontSize: 13, background: loading ? "var(--text-muted)" : "var(--negative)" }}
           >
             {loading ? "处理中..." : "停止呼出"}
           </button>
@@ -340,8 +340,8 @@ export function PlayWithYouPage() {
                 borderRadius: 6,
                 fontSize: 12,
                 fontWeight: 700,
-                color: "#fff",
-                background: isRunning ? "#27ae60" : "#7f8c8d",
+                color: "var(--accent-text)",
+                background: isRunning ? "var(--success)" : "var(--text-muted)",
               }}
             >
               {isRunning ? "运行中" : "已结束"}
@@ -392,8 +392,8 @@ export function PlayWithYouPage() {
                 marginBottom: 10,
                 padding: "10px 12px",
                 borderRadius: 6,
-                border: "1px solid rgba(39,174,96,0.4)",
-                background: "rgba(39,174,96,0.06)",
+                border: "1px solid rgba(79,195,138,0.40)",
+                background: "rgba(79,195,138,0.08)",
                 color: "var(--text-secondary)",
               }}
             >
@@ -413,7 +413,7 @@ export function PlayWithYouPage() {
                       state: { session_id: status.session_id },
                     });
                   }}
-                  style={{ ...ghostSmallBtn, borderColor: "#27ae60", color: "#27ae60", fontWeight: 700 }}
+                  style={{ ...ghostSmallBtn, borderColor: "var(--success)", color: "var(--success)", fontWeight: 700 }}
                 >
                   确认结果 → 导入牌谱
                 </button>
@@ -462,8 +462,8 @@ export function PlayWithYouPage() {
                 fontSize: 12,
                 padding: "8px 10px",
                 borderRadius: 6,
-                border: "1px solid rgba(142,68,173,0.3)",
-                background: "rgba(142,68,173,0.05)",
+                border: "1px solid var(--accent-border)",
+                background: "var(--accent-bg)",
                 color: "var(--text-secondary)",
               }}
             >
@@ -505,8 +505,8 @@ export function PlayWithYouPage() {
             style={{
               height: 320,
               overflow: "auto",
-              background: "#0f1115",
-              color: "#d6dde6",
+              background: "var(--surface-1)",
+              color: "var(--text-secondary)",
               borderRadius: 8,
               padding: 10,
               fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",

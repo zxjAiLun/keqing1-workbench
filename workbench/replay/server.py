@@ -716,15 +716,12 @@ def _infer_player_bot_type(player_name: str | None, fallback: str | None = None)
 
 
 def _default_checkpoint_for_bot_type(bot_type: str) -> Path:
+    from inference.bot_registry import resolve_bot_spec
     project_root = BASE_DIR.parent.parent
-    candidate = project_root / "artifacts" / "experiments" / "model_pool_2026_07" / "V2_population_mixed_v4_warmstart_2026_07" / "checkpoints" / "mortal_74000.pth"
-    anchor = project_root / "artifacts" / "mortal_training" / "checkpoints" / "mortal_default_70k_promoted_candidate.pth"
-    mapping = {
-        "mortal": candidate if candidate.exists() else anchor,
-        "70k": anchor,
-        "ext_mortal": project_root / "artifacts" / "external_mortal_20240308_best_min.pth",
-    }
-    return mapping[bot_type]
+    _kind, path = resolve_bot_spec(bot_type, project_root)
+    if path is None:
+        raise ValueError(f"No default checkpoint for bot_type: {bot_type}")
+    return path
 
 
 def _external_review_links(naga_url: str = "", mortal_url: str = "") -> dict[str, str]:
@@ -1010,10 +1007,10 @@ def _list_review_history(
 
 _DEFAULT_BEHAVIOR_CASEBOOK = BASE_DIR.parent.parent / "artifacts" / "replay_model_reviews"
 _DEFAULT_PAIRED_BEHAVIOR_CASEBOOK = _DEFAULT_BEHAVIOR_CASEBOOK
-_CASEBOOK_CHECKPOINTS = {
-    "70k": BASE_DIR.parent.parent / "artifacts" / "mortal_training" / "checkpoints" / "mortal_default_70k_promoted_candidate.pth",
-    "candidate": _default_checkpoint_for_bot_type("mortal"),
-}
+def _get_casebook_checkpoint(model_label: str) -> Path:
+    if model_label == "70k":
+        return _default_checkpoint_for_bot_type("70k")
+    return _default_checkpoint_for_bot_type("mortal")
 
 
 def _load_behavior_case_manifest(casebook_dir: Path = _DEFAULT_BEHAVIOR_CASEBOOK) -> list[dict]:
@@ -1089,14 +1086,18 @@ def _resolve_focus_replay_step(decisions: dict, focus_event_index: int | None) -
 
 
 def _checkpoint_for_behavior_case(row: dict) -> Path:
+    from inference.bot_registry import resolve_model_checkpoint
     checkpoint_path = row.get("checkpoint_path")
     if isinstance(checkpoint_path, str) and checkpoint_path.strip():
-        path = Path(checkpoint_path)
-        if not path.is_absolute():
-            path = BASE_DIR.parent.parent / path
-        return path
+        try:
+            return resolve_model_checkpoint(checkpoint_path.strip(), BASE_DIR.parent.parent)
+        except Exception:
+            path = Path(checkpoint_path.strip())
+            if not path.is_absolute():
+                path = BASE_DIR.parent.parent / path
+            return path
     model_label = str(row.get("model_label", ""))
-    return _CASEBOOK_CHECKPOINTS.get(model_label, _default_checkpoint_for_bot_type("mortal"))
+    return _get_casebook_checkpoint(model_label)
 
 
 def _resolve_casebook_path(casebook_dir: Path, raw_path: str) -> Path | None:
@@ -1107,11 +1108,15 @@ def _resolve_casebook_path(casebook_dir: Path, raw_path: str) -> Path | None:
 
 
 def _checkpoint_from_raw(raw_path: str | None, *, fallback_model: str = "mortal") -> Path:
+    from inference.bot_registry import resolve_model_checkpoint
     if isinstance(raw_path, str) and raw_path.strip():
-        path = Path(raw_path)
-        if not path.is_absolute():
-            path = BASE_DIR.parent.parent / path
-        return path
+        try:
+            return resolve_model_checkpoint(raw_path.strip(), BASE_DIR.parent.parent)
+        except Exception:
+            path = Path(raw_path.strip())
+            if not path.is_absolute():
+                path = BASE_DIR.parent.parent / path
+            return path
     return _default_checkpoint_for_bot_type(fallback_model)
 
 

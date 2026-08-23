@@ -219,21 +219,21 @@ export function GameBoard({
   // 读取当前主题的 Canvas 颜色
   const getThemeColors = useCallback(() => {
     return {
-      tileFace: readCssVar('--canvas-tile-face', '#f5f0e8'),
-      tileStroke: readCssVar('--canvas-tile-stroke', '#c8cdd6'),
-      tileBackStart: readCssVar('--canvas-tile-back-start', '#1e4a7a'),
-      tileBackEnd: readCssVar('--canvas-tile-back-end', '#0f2d4a'),
-      highlightRed: readCssVar('--canvas-highlight-red', '#e74c3c'),
-      highlightGreen: readCssVar('--canvas-highlight-green', '#27ae60'),
-      highlightPurple: readCssVar('--canvas-highlight-purple', '#9b6dff'),
-      boardBg: readCssVar('--canvas-board-bg', '#e8ecf0'),
-      textLabel: readCssVar('--canvas-text-label', '#6b7280'),
-      textDark: readCssVar('--canvas-text-dark', '#1f2937'),
-      activeActor: readCssVar('--canvas-active-actor', '#3498db'),
-      seat0: readCssVar('--seat-0', '#e74c3c'),
-      seat1: readCssVar('--seat-1', '#3498db'),
-      seat2: readCssVar('--seat-2', '#8e44ad'),
-      seat3: readCssVar('--seat-3', '#27ae60'),
+      tileFace: readCssVar('--canvas-tile-face', '#f0ebe0'),
+      tileStroke: readCssVar('--canvas-tile-stroke', '#b8b0a0'),
+      tileBackStart: readCssVar('--canvas-tile-back-start', '#1a2c48'),
+      tileBackEnd: readCssVar('--canvas-tile-back-end', '#101d30'),
+      highlightRed: readCssVar('--canvas-highlight-red', '#f87171'),
+      highlightGreen: readCssVar('--canvas-highlight-green', '#5fce9a'),
+      highlightPurple: readCssVar('--canvas-highlight-purple', '#b49ae8'),
+      boardBg: readCssVar('--canvas-board-bg', '#1e3527'),
+      textLabel: readCssVar('--canvas-text-label', 'rgba(240,234,217,0.50)'),
+      textDark: readCssVar('--canvas-text-dark', '#f0ead9'),
+      activeActor: readCssVar('--canvas-active-actor', '#e2bc6d'),
+      seat0: readCssVar('--seat-0', '#f87171'),
+      seat1: readCssVar('--seat-1', '#7fb3f0'),
+      seat2: readCssVar('--seat-2', '#b49ae8'),
+      seat3: readCssVar('--seat-3', '#5fce9a'),
     };
   }, []);
 
@@ -436,8 +436,8 @@ export function GameBoard({
       className="w-full h-full rounded-2xl"
       style={{
         minHeight: '400px',
-        backgroundColor: 'var(--canvas-board-bg, #e8ecf0)',
-        border: '1px solid var(--table-border, #e5e7eb)',
+        backgroundColor: 'var(--canvas-board-bg, #1e3527)',
+        border: '1px solid var(--table-border, rgba(232,220,200,0.10))',
       }}
     />
   );

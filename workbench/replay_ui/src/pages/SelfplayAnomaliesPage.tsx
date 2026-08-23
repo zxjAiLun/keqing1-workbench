@@ -112,7 +112,7 @@ export function SelfplayAnomaliesPage() {
                     style={{
                       ...runButtonStyle,
                       borderColor: active ? 'var(--accent)' : 'var(--border)',
-                      background: active ? 'rgba(52, 152, 219, 0.10)' : 'var(--card-bg)',
+                      background: active ? 'var(--accent-bg)' : 'var(--card-bg)',
                       color: active ? 'var(--accent)' : 'var(--text-primary)',
                     }}
                   >

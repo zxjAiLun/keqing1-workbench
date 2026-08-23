@@ -8,7 +8,7 @@ interface PlayerBarProps {
 
 const SEAT_CN = ['自家', '下家', '对面', '上家'];
 const JIKAZE_CN = ['東', '南', '西', '北'];
-const PLAYER_COLORS = ['#e74c3c', '#3498db', '#9b59b6', '#27ae60'];
+const PLAYER_COLORS = ['var(--seat-0)', 'var(--seat-1)', 'var(--seat-2)', 'var(--seat-3)'];
 
 export function PlayerBar({ entry, playerId }: PlayerBarProps) {
   if (!entry) {

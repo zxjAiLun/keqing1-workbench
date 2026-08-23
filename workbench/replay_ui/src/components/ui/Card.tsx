@@ -6,13 +6,12 @@ import type { ReactNode, CSSProperties } from 'react';
  * 用法:
  *   <Card>内容</Card>
  *   <Card padding="sm">紧凑卡片</Card>
- *   <Card glass>玻璃拟态 (modern 主题)</Card>
  */
 interface CardProps {
   children: ReactNode;
   /** 'none' | 'sm' | 'md' | 'lg' */
   padding?: 'none' | 'sm' | 'md' | 'lg';
-  /** 玻璃拟态效果 (modern 主题下自动启用) */
+  /** @deprecated 设计系统 v2 已移除玻璃拟态，此参数不再生效 */
   glass?: boolean;
   style?: CSSProperties;
   className?: string;
@@ -29,7 +28,6 @@ const paddingMap = {
 export function Card({
   children,
   padding = 'md',
-  glass = false,
   style,
   className,
   onClick,
@@ -39,7 +37,6 @@ export function Card({
     border: '1px solid var(--card-border)',
     borderRadius: 'var(--radius-md)',
     boxShadow: 'var(--card-shadow)',
-    backdropFilter: glass ? 'blur(12px)' : undefined,
     padding: typeof padding === 'string' ? paddingMap[padding] : padding,
     transition: 'background var(--transition), border-color var(--transition), box-shadow var(--transition)',
     cursor: onClick ? 'pointer' : undefined,
@@ -73,6 +70,7 @@ interface PanelProps {
   children: ReactNode;
   actions?: ReactNode;
   padding?: 'none' | 'sm' | 'md' | 'lg';
+  /** @deprecated 设计系统 v2 已移除玻璃拟态，此参数不再生效 */
   glass?: boolean;
   style?: CSSProperties;
   className?: string;
@@ -83,12 +81,11 @@ export function Panel({
   children,
   actions,
   padding = 'md',
-  glass = false,
   style,
   className,
 }: PanelProps) {
   return (
-    <Card padding="none" glass={glass} style={style} className={className}>
+    <Card padding="none" style={style} className={className}>
       {title && (
         <div
           style={{
@@ -133,7 +130,7 @@ const toneColors: Record<NonNullable<StatBlockProps['tone']>, string> = {
   accent: 'var(--accent)',
   success: 'var(--success)',
   warning: 'var(--warning)',
-  error: 'var(--error)',
+  error: 'var(--negative)',
   gold: 'var(--gold)',
 };
 
@@ -163,6 +160,7 @@ export function StatBlock({ label, value, tone = 'accent', icon, style }: StatBl
             fontWeight: 800,
             color,
             fontFamily: 'Menlo, monospace',
+            fontVariantNumeric: 'tabular-nums',
             lineHeight: 1.2,
           }}
         >

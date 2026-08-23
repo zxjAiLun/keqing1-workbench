@@ -143,3 +143,86 @@ def test_search_authoritative_missing_family_path_does_not_cross_resolve(
     monkeypatch.setattr(br, "data_root", lambda: root)
 
     assert br._search_authoritative_checkpoint("V2_74000/mortal_74000.pth") is None
+
+
+def test_search_authoritative_linux_absolute_legacy_path_uses_unique_basename(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = _make_authoritative(
+        tmp_path,
+        ("D3_gen", ["ext_mortal/external_mortal_20240308_best_min.pth"]),
+    )
+    monkeypatch.setattr(br, "data_root", lambda: root)
+
+    hit = br.resolve_model_checkpoint(
+        "/media/bailan/DISK/AUbuntuProject/project/keqing-workbench/artifacts/external_mortal_20240308_best_min.pth",
+        "/tmp/project",
+    )
+    assert hit == (
+        root
+        / "mortal"
+        / "authoritative"
+        / "D3_gen"
+        / "models"
+        / "ext_mortal"
+        / "external_mortal_20240308_best_min.pth"
+    ).resolve()
+
+
+def test_search_authoritative_ambiguous_basename_fails_closed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import pytest
+    root = _make_authoritative(
+        tmp_path,
+        (
+            "D3_gen",
+            ["V2_74000/mortal_74000.pth", "V3_74000/mortal_74000.pth"],
+        ),
+    )
+    monkeypatch.setattr(br, "data_root", lambda: root)
+
+    with pytest.raises(RuntimeError, match="ambiguous authoritative checkpoint"):
+        br.resolve_model_checkpoint(
+            "artifacts/mortal_training/checkpoints/mortal_74000.pth",
+            "/tmp/project",
+        )
+
+
+def test_review_bot_spec_resolution(tmp_path: Path, monkeypatch) -> None:
+    root = _make_authoritative(
+        tmp_path,
+        (
+            "D3_gen",
+            [
+                "K0_70k/mortal_default_70k_promoted_candidate.pth",
+                "ext_mortal/external_mortal_20240308_best_min.pth",
+                "V2_74000/mortal_74000.pth",
+            ],
+        ),
+    )
+    monkeypatch.setattr(br, "data_root", lambda: root)
+
+    kind, ext_cp = br.resolve_bot_spec("ext_mortal", "/tmp/project")
+    assert kind == "mortal"
+    assert ext_cp == (
+        root / "mortal" / "authoritative" / "D3_gen" / "models" / "ext_mortal" / "external_mortal_20240308_best_min.pth"
+    ).resolve()
+
+    kind, k70_cp = br.resolve_bot_spec("70k", "/tmp/project")
+    assert kind == "mortal"
+    assert k70_cp == (
+        root / "mortal" / "authoritative" / "D3_gen" / "models" / "K0_70k" / "mortal_default_70k_promoted_candidate.pth"
+    ).resolve()
+
+    kind, v2_cp = br.resolve_bot_spec("mortal", "/tmp/project")
+    assert kind == "mortal"
+    assert v2_cp == (
+        root / "mortal" / "authoritative" / "D3_gen" / "models" / "V2_74000" / "mortal_74000.pth"
+    ).resolve()
+
+    kind, rb_cp = br.resolve_bot_spec("rulebase", "/tmp/project")
+    assert kind == "rulebase"
+    assert rb_cp is None
+
+

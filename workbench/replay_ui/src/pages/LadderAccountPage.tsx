@@ -170,7 +170,7 @@ export function LadderAccountPage() {
               <TrendChart title="PT 曲线" points={detail.curve.map((point) => point.pt)} formatValue={fmtPt} />
             </section>
             <section className="card" style={{ padding: 12 }}>
-              <TrendChart title="Rating 曲线" points={detail.curve.map((point) => point.rating)} formatValue={fmtRating} color="#8e44ad" />
+              <TrendChart title="Rating 曲线" points={detail.curve.map((point) => point.rating)} formatValue={fmtRating} color="var(--seat-2)" />
             </section>
           </div>
 
@@ -299,20 +299,20 @@ const actionButtonStyle: CSSProperties = {
 };
 
 const rankBadgeStyle: CSSProperties = {
-  border: '1px solid rgba(142,68,173,0.5)',
+  border: '1px solid var(--accent-border)',
   borderRadius: 4,
-  background: 'rgba(142,68,173,0.1)',
-  color: '#8e44ad',
+  background: 'var(--accent-bg)',
+  color: 'var(--accent)',
   fontSize: 11,
   fontWeight: 800,
   padding: '2px 6px',
 };
 
 const progressionBadgeStyle = (kind: 'promotion' | 'demotion'): CSSProperties => ({
-  border: `1px solid ${kind === 'promotion' ? 'rgba(39,174,96,0.5)' : 'rgba(231,76,60,0.5)'}`,
+  border: `1px solid ${kind === 'promotion' ? 'rgba(79,195,138,0.45)' : 'rgba(240,112,112,0.45)'}`,
   borderRadius: 4,
-  background: kind === 'promotion' ? 'rgba(39,174,96,0.08)' : 'rgba(231,76,60,0.08)',
-  color: kind === 'promotion' ? '#27ae60' : '#e74c3c',
+  background: kind === 'promotion' ? 'rgba(79,195,138,0.10)' : 'rgba(240,112,112,0.10)',
+  color: kind === 'promotion' ? 'var(--success)' : 'var(--negative)',
   fontSize: 11,
   fontWeight: 700,
   padding: '2px 6px',

@@ -567,11 +567,11 @@ export function GameBoardReplayPage() {
                   zIndex: 35,
                   padding: '8px 10px',
                   borderRadius: 8,
-                  border: '1px solid rgba(255,255,255,0.16)',
-                  background: 'rgba(17,24,39,0.82)',
-                  color: '#f3f4f6',
+                  border: '1px solid var(--overlay-border)',
+                  background: 'var(--overlay-bg)',
+                  color: 'var(--text-primary)',
                   fontSize: 12,
-                  boxShadow: '0 10px 28px rgba(0,0,0,0.25)',
+                  boxShadow: 'var(--elev-2)',
                 }}
               >
                 {focusResolution === 'nearest' ? '已跳到最近的回放决策步' : '未找到可定位的焦点步'}
@@ -1001,7 +1001,7 @@ function ReplayResultOverlay({ summary, playerNames }: { summary: ResultSummary;
         justifyContent: 'center',
         pointerEvents: 'none',
         zIndex: 40,
-        background: 'rgba(0, 0, 0, 0.34)',
+        background: 'var(--result-overlay-bg)',
       }}
     >
       <div
@@ -1009,11 +1009,11 @@ function ReplayResultOverlay({ summary, playerNames }: { summary: ResultSummary;
           width: 640,
           maxWidth: '78%',
           minHeight: 360,
-          background: 'rgba(2, 8, 14, 0.86)',
-          border: '2px solid rgba(230, 237, 245, 0.65)',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.45)',
+          background: 'var(--result-panel-bg)',
+          border: '1px solid var(--result-panel-border)',
+          boxShadow: 'var(--result-panel-shadow)',
           padding: '30px 42px 28px',
-          color: '#f8fafc',
+          color: 'var(--result-title)',
           display: 'grid',
           gridTemplateRows: 'auto auto auto 1fr',
           gap: 18,
@@ -1023,7 +1023,7 @@ function ReplayResultOverlay({ summary, playerNames }: { summary: ResultSummary;
           <div style={{ fontSize: 40, fontWeight: 500, lineHeight: 1.08, letterSpacing: 0 }}>
             {summary.title}
           </div>
-          <div style={{ textAlign: 'right', color: 'rgba(226,232,240,0.82)', fontSize: 15, lineHeight: 1.5, paddingTop: 5 }}>
+          <div style={{ textAlign: 'right', color: 'var(--result-subtitle)', fontSize: 15, lineHeight: 1.5, paddingTop: 5 }}>
             <div>{summary.honba}本場</div>
             <div>供託:{summary.kyotaku}</div>
           </div>
@@ -1031,24 +1031,24 @@ function ReplayResultOverlay({ summary, playerNames }: { summary: ResultSummary;
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           <div style={{ display: 'flex', gap: 4, alignItems: 'center', minWidth: 0 }}>
-            <span style={{ fontSize: 18, color: '#f8fafc', marginRight: 2 }}>ドラ</span>
+            <span style={{ fontSize: 18, color: 'var(--result-title)', marginRight: 2 }}>ドラ</span>
             {summary.doraMarkers.length > 0
               ? summary.doraMarkers.map((tile, idx) => <Tile key={`d-${tile}-${idx}`} tile={tile} size="small" />)
-              : <span style={{ fontSize: 16, color: 'rgba(226,232,240,0.72)' }}>-</span>
+              : <span style={{ fontSize: 16, color: 'var(--result-muted)' }}>-</span>
             }
           </div>
           <div style={{ display: 'flex', gap: 4, alignItems: 'center', minWidth: 0 }}>
-            <span style={{ fontSize: 18, color: '#f8fafc', marginRight: 2 }}>裏</span>
+            <span style={{ fontSize: 18, color: 'var(--result-title)', marginRight: 2 }}>裏</span>
             {summary.uraMarkers.length > 0
               ? summary.uraMarkers.map((tile, idx) => <Tile key={`u-${tile}-${idx}`} tile={tile} size="small" />)
-              : <span style={{ fontSize: 16, color: 'rgba(226,232,240,0.72)' }}>-</span>
+              : <span style={{ fontSize: 16, color: 'var(--result-muted)' }}>-</span>
             }
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1.05fr 1fr', gap: 20, alignItems: 'start' }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 22, color: '#f8fafc', marginBottom: 8 }}>
+            <div style={{ fontSize: 22, color: 'var(--result-title)', marginBottom: 8 }}>
               {winnerName ? `${winnerName}` : summary.subtitle}
             </div>
             {summary.winner !== null ? (
@@ -1063,18 +1063,18 @@ function ReplayResultOverlay({ summary, playerNames }: { summary: ResultSummary;
                 ))}
               </div>
             ) : (
-              <div style={{ fontSize: 24, color: '#f8fafc' }}>流局</div>
+              <div style={{ fontSize: 24, color: 'var(--result-title)' }}>流局</div>
             )}
           </div>
           <div>
             {summary.yakuLines.length > 0 ? (
               <div style={{ display: 'grid', gap: 4 }}>
                 {summary.yakuLines.map((line, idx) => (
-                  <div key={`y-${idx}`} style={{ fontSize: 20, color: '#f8fafc', lineHeight: 1.15 }}>{line}</div>
+                  <div key={`y-${idx}`} style={{ fontSize: 20, color: 'var(--result-title)', lineHeight: 1.15 }}>{line}</div>
                 ))}
               </div>
             ) : (
-              <div style={{ fontSize: 20, color: 'rgba(226,232,240,0.72)' }}>-</div>
+              <div style={{ fontSize: 20, color: 'var(--result-muted)' }}>-</div>
             )}
           </div>
         </div>
@@ -1089,16 +1089,16 @@ function ReplayResultOverlay({ summary, playerNames }: { summary: ResultSummary;
               fontSize: 24,
               lineHeight: 1.1,
             }}>
-              <span style={{ color: 'rgba(226,232,240,0.82)', textAlign: 'right' }}>{row.label}</span>
-              <span style={{ color: '#f8fafc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ color: 'var(--result-subtitle)', textAlign: 'right' }}>{row.label}</span>
+              <span style={{ color: 'var(--result-title)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {row.name}
               </span>
-              <span style={{ fontFamily: 'Menlo, Consolas, monospace', color: '#f8fafc', textAlign: 'right' }}>
+              <span style={{ fontFamily: 'Menlo, Consolas, monospace', color: 'var(--result-title)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                 {row.after.toLocaleString()}
               </span>
               <span style={{
                 fontFamily: 'Menlo, Consolas, monospace',
-                color: row.delta > 0 ? '#22d3ee' : row.delta < 0 ? '#ff2b2b' : 'rgba(226,232,240,0.64)',
+                color: row.delta > 0 ? 'var(--result-positive)' : row.delta < 0 ? 'var(--result-negative)' : 'var(--result-muted)',
                 textAlign: 'right',
               }}>
                 {row.delta >= 0 ? '+' : ''}{row.delta.toLocaleString()}

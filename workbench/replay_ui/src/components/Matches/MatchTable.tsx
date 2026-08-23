@@ -54,7 +54,7 @@ export function MatchTable({
               <span key={i}>{SEAT_WINDS[i]}{rank + 1}位</span>
             ))}
           </div>
-          <div style={{ fontSize: 12, color: match.status === 'void' ? '#e74c3c' : 'var(--text-secondary)' }}>
+          <div style={{ fontSize: 12, color: match.status === 'void' ? 'var(--negative)' : 'var(--text-secondary)' }}>
             {SOURCE_LABELS[match.source]}{match.status === 'void' ? ' · 作废' : ''}
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>rev {match.revision}</div>

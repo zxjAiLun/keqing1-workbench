@@ -24,7 +24,7 @@ const variantStyles: Record<Variant, CSSProperties> = {
     border: 'none',
   },
   secondary: {
-    background: 'var(--card-bg)',
+    background: 'transparent',
     color: 'var(--text-primary)',
     border: '1px solid var(--border)',
   },
@@ -34,16 +34,17 @@ const variantStyles: Record<Variant, CSSProperties> = {
     border: '1px solid transparent',
   },
   danger: {
-    background: 'var(--error)',
-    color: '#fff',
-    border: 'none',
+    background: 'transparent',
+    color: 'var(--negative)',
+    border: '1px solid var(--negative)',
   },
 };
 
+// 设计系统 v2 §6.1：高度 26/32/38
 const sizeStyles: Record<Size, CSSProperties> = {
-  sm: { height: 32, padding: '0 12px', fontSize: 13, gap: 6 },
-  md: { height: 40, padding: '0 20px', fontSize: 14, gap: 8 },
-  lg: { height: 48, padding: '0 28px', fontSize: 15, gap: 10 },
+  sm: { height: 26, padding: '0 10px', fontSize: 12, gap: 5 },
+  md: { height: 32, padding: '0 16px', fontSize: 13, gap: 6 },
+  lg: { height: 38, padding: '0 22px', fontSize: 14, gap: 8 },
 };
 
 export function Button({
@@ -93,7 +94,7 @@ export function Button({
             width: 14,
             height: 14,
             border: '2px solid rgba(255,255,255,0.4)',
-            borderTopColor: '#fff',
+            borderTopColor: 'currentColor',
             borderRadius: '50%',
             animation: 'spin 0.7s linear infinite',
           }}

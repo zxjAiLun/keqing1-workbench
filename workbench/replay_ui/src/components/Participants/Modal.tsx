@@ -7,7 +7,7 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
       onClick={onClose}
       style={{
         position: 'fixed', inset: 0, zIndex: 200,
-        background: 'rgba(0,0,0,0.45)',
+        background: 'var(--result-overlay-bg)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}
     >
@@ -19,7 +19,7 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
           border: '1px solid var(--border)',
           borderRadius: 10,
           padding: 16,
-          boxShadow: '0 12px 32px rgba(0,0,0,0.3)',
+          boxShadow: 'var(--elev-3)',
           maxHeight: '86vh',
           overflow: 'auto',
         }}

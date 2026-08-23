@@ -57,7 +57,7 @@ export function MatchesPage() {
             <button
               onClick={() => navigate(routes.matchEntry)}
               style={{
-                border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff',
+                border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--accent-text)',
                 borderRadius: 6, fontSize: 13, fontWeight: 700, padding: '8px 16px', cursor: 'pointer',
               }}
             >
@@ -86,7 +86,7 @@ export function MatchesPage() {
       </div>
 
       {error ? (
-        <div style={{ padding: 24, color: '#e74c3c' }}>{error}</div>
+        <div style={{ padding: 24, color: 'var(--negative)' }}>{error}</div>
       ) : (
         <MatchTable matches={data?.matches ?? []} accounts={accounts} onOpen={openMatch} />
       )}

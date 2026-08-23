@@ -17,14 +17,14 @@ export function ValidationNotice({
 }) {
   return (
     <div style={{
-      border: '1px solid #e74c3c',
-      background: 'rgba(231, 76, 60, 0.08)',
+      border: '1px solid var(--negative)',
+      background: 'rgba(240,112,112,0.10)',
       borderRadius: 8,
       padding: 12,
       display: 'grid',
       gap: 8,
     }}>
-      <div style={{ fontWeight: 800, color: '#e74c3c', fontSize: 13 }}>校验未通过</div>
+      <div style={{ fontWeight: 800, color: 'var(--negative)', fontSize: 13 }}>校验未通过</div>
       <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-secondary)', fontSize: 12 }}>
         {issues.map((issue) => (
           <li key={issue.code}>{issue.message}</li>

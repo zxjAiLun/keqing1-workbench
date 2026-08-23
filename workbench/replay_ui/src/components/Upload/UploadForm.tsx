@@ -458,9 +458,9 @@ function ModelSelector({
                 minHeight: 36,
                 padding: '7px 9px',
                 borderRadius: 7,
-                border: `1px solid ${active ? '#8e44ad' : 'var(--border)'}`,
-                background: active ? 'rgba(142,68,173,0.10)' : 'var(--card-bg)',
-                color: active ? '#8e44ad' : 'var(--text-primary)',
+                border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                background: active ? 'var(--accent-bg)' : 'var(--card-bg)',
+                color: active ? 'var(--accent)' : 'var(--text-primary)',
                 cursor: disabled ? 'not-allowed' : 'pointer',
                 textAlign: 'left',
               }}
@@ -473,18 +473,18 @@ function ModelSelector({
                 <span
                   style={{
                     display: 'inline-block',
-                    border: `1px solid ${active ? 'rgba(142,68,173,0.5)' : 'var(--border)'}`,
+                    border: `1px solid ${active ? 'var(--accent-border)' : 'var(--border)'}`,
                     borderRadius: 4,
                     padding: '1px 5px',
                     fontSize: 10,
                     fontWeight: 700,
-                    color: active ? '#8e44ad' : 'var(--text-muted)',
+                    color: active ? 'var(--accent)' : 'var(--text-muted)',
                   }}
                 >
                   {bot.badge}
                 </span>
               </div>
-              <div style={{ marginTop: 4, fontSize: 11, lineHeight: 1.45, color: active ? '#8e44ad' : 'var(--text-muted)' }}>
+              <div style={{ marginTop: 4, fontSize: 11, lineHeight: 1.45, color: active ? 'var(--accent)' : 'var(--text-muted)' }}>
                 {bot.description}
               </div>
             </button>
@@ -655,7 +655,7 @@ export function UploadForm({ onDataLoaded, onUploadStart }: UploadFormProps) {
     padding: '7px 20px',
     fontSize: 13,
     fontWeight: active ? 600 : 400,
-    color: active ? '#fff' : 'var(--text-secondary)',
+    color: active ? 'var(--accent-text)' : 'var(--text-secondary)',
     background: active ? 'var(--accent)' : 'transparent',
     border: '1px solid',
     borderColor: active ? 'var(--accent)' : 'var(--border)',
@@ -775,7 +775,7 @@ export function UploadForm({ onDataLoaded, onUploadStart }: UploadFormProps) {
           }}
         >
           {loading ? (
-            <><span style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />正在生成 Review…</>
+            <><span style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: 'currentColor', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />正在生成 Review…</>
           ) : '创建 Review'}
         </button>
       </div>

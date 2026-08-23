@@ -1,6 +1,11 @@
 import { createContext, useContext } from 'react';
 
-export type Theme = 'white' | 'modern';
+/**
+ * 设计系统 v2：深色为默认主题（dark = 雀馆分析台），
+ * light 为旧白色主题的兼容层（deprecated，不再新增设计）。
+ * 旧存储值自动迁移：modern → dark，white → light。
+ */
+export type Theme = 'dark' | 'light';
 
 export interface TileBackColor {
   r: number;
@@ -28,8 +33,8 @@ export const STORAGE_KEY_THEME = 'keqing-theme';
 export const STORAGE_KEY_TILE_BACK = 'keqing-tile-back';
 export const STORAGE_KEY_TABLE_CLOTH = 'keqing-table-cloth';
 
-export const DEFAULT_TILE_BACK: TileBackColor = { r: 15, g: 30, b: 60 };
-export const DEFAULT_TABLE_CLOTH: TableClothColor = { r: 232, g: 224, b: 208 }; // #e8e0d0
+export const DEFAULT_TILE_BACK: TileBackColor = { r: 16, g: 29, b: 48 }; // #101d30 墨蓝黑
+export const DEFAULT_TABLE_CLOTH: TableClothColor = { r: 30, g: 53, b: 39 }; // #1e3527 深绒绿
 
 export const ThemeContext = createContext<ThemeContextValue | null>(null);
 

@@ -121,10 +121,10 @@ const containerStyle: React.CSSProperties = {
   maxWidth: 1080,
   padding: '14px 18px',
   borderRadius: 16,
-  background: 'linear-gradient(180deg, rgba(14,20,30,0.78) 0%, rgba(14,20,30,0.62) 100%)',
-  border: '1px solid rgba(255,255,255,0.14)',
+  background: 'var(--overlay-bg)',
+  border: '1px solid var(--overlay-border)',
   backdropFilter: 'blur(16px)',
-  boxShadow: '0 14px 40px rgba(0,0,0,0.32)',
+  boxShadow: 'var(--elev-2)',
   transition: 'background var(--transition), border-color var(--transition), transform var(--transition)',
 };
 
@@ -145,32 +145,32 @@ function btnStyle(type: string): React.CSSProperties {
   };
   switch (type) {
     case "hora":
-      return { ...base, background: 'linear-gradient(135deg, #e74c3c 0%, #c0392b 100%)', color: '#fff' };
+      return { ...base, background: 'linear-gradient(135deg, var(--negative) 0%, #c05046 100%)', color: '#fff' };
     case "reach":
-      return { ...base, background: 'linear-gradient(135deg, var(--gold) 0%, #c49843 100%)', color: '#1a1a1a' };
+      return { ...base, background: 'linear-gradient(135deg, var(--gold) 0%, var(--accent-hover) 100%)', color: 'var(--accent-text)' };
     case "pon":
-      return { ...base, background: 'linear-gradient(135deg, #e67e22 0%, #d35400 100%)', color: '#fff' };
+      return { ...base, background: 'linear-gradient(135deg, var(--warning) 0%, #c47f35 100%)', color: '#fff' };
     case "chi":
-      return { ...base, background: 'linear-gradient(135deg, var(--success) 0%, #219a52 100%)', color: '#fff' };
+      return { ...base, background: 'linear-gradient(135deg, var(--success) 0%, #3a9e6f 100%)', color: '#fff' };
     case "daiminkan":
     case "ankan":
     case "kakan":
-      return { ...base, background: 'linear-gradient(135deg, #8e44ad 0%, #7d3c9e 100%)', color: '#fff' };
+      return { ...base, background: 'linear-gradient(135deg, var(--seat-2) 0%, #9a7fd0 100%)', color: '#fff' };
     case "none":
       return {
         ...base,
-        background: 'linear-gradient(135deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.10) 100%)',
-        color: '#ffffff',
-        border: '1px solid rgba(255,255,255,0.22)',
+        background: 'var(--surface-3)',
+        color: 'var(--text-primary)',
+        border: '1px solid var(--border-strong)',
         fontWeight: 700,
         minWidth: 112,
       };
     default:
       return {
         ...base,
-        background: 'rgba(255,255,255,0.08)',
-        color: '#fff',
-        border: '1px solid rgba(255,255,255,0.14)',
+        background: 'var(--surface-2)',
+        color: 'var(--text-primary)',
+        border: '1px solid var(--border)',
       };
   }
 }

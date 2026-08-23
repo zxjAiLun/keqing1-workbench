@@ -9,6 +9,7 @@ import { legacyRoutes, routes } from '../routes';
 import { actionLabel, isReplayReviewDiffForPlayer, sameReplayAction } from '../utils/tileUtils';
 import { ReplayStatsDialog } from '../components/ReviewWorkspace/ReplayStatsDialog';
 import { CN_BAKAZE, SEAT_NAMES_CN } from '../utils/constants';
+import { decisionColors, decisionBg } from '../components/BattleBoard/tableStyles';
 import { normalizeReplayPlayerNames, replayPlayerDisplayName } from '../utils/replayNames';
 
 const TILE_BASE = '/tiles';
@@ -104,9 +105,9 @@ function barHeight(tile: TileWithMeta): number {
 
 function barColor(tile: TileWithMeta, entry: DecisionLogEntry) {
   const c = entry.chosen, g = entry.gt_action;
-  if (tile.name === c?.pai && tile.name === g?.pai) return '#8e44ad';
-  if (tile.name === c?.pai) return '#e74c3c';
-  if (tile.name === g?.pai) return '#27ae60';
+  if (tile.name === c?.pai && tile.name === g?.pai) return decisionColors.both;
+  if (tile.name === c?.pai) return decisionColors.bot;
+  if (tile.name === g?.pai) return decisionColors.gt;
   return 'var(--accent)';
 }
 
@@ -138,13 +139,13 @@ function CandidateTable({
     <div style={{ marginTop: 6, fontSize: 11, overflowX: 'auto' }}>
       <table style={{ borderCollapse: 'collapse', width: '100%' }}>
         <thead>
-          <tr style={{ background: '#f1f5f9' }}>
-            <th style={{ padding: '2px 8px', textAlign: 'left', color: '#475569', borderBottom: '1px solid #e2e8f0' }}>动作</th>
-            <th style={{ padding: '2px 8px', textAlign: 'right', color: '#475569', borderBottom: '1px solid #e2e8f0', fontFamily: 'monospace' }}>Logit</th>
-            {hasFinal && <th style={{ padding: '2px 8px', textAlign: 'right', color: '#475569', borderBottom: '1px solid #e2e8f0', fontFamily: 'monospace' }}>Final</th>}
-            {hasBeam && <th style={{ padding: '2px 8px', textAlign: 'right', color: '#475569', borderBottom: '1px solid #e2e8f0', fontFamily: 'monospace' }}>Beam</th>}
-            <th style={{ padding: '2px 8px', textAlign: 'right', color: '#475569', borderBottom: '1px solid #e2e8f0', fontFamily: 'monospace' }}>P</th>
-            <th style={{ padding: '2px 8px', borderBottom: '1px solid #e2e8f0' }}></th>
+          <tr style={{ background: 'var(--surface-2)' }}>
+            <th style={{ padding: '2px 8px', textAlign: 'left', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>动作</th>
+            <th style={{ padding: '2px 8px', textAlign: 'right', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', fontFamily: 'monospace' }}>Logit</th>
+            {hasFinal && <th style={{ padding: '2px 8px', textAlign: 'right', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', fontFamily: 'monospace' }}>Final</th>}
+            {hasBeam && <th style={{ padding: '2px 8px', textAlign: 'right', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', fontFamily: 'monospace' }}>Beam</th>}
+            <th style={{ padding: '2px 8px', textAlign: 'right', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', fontFamily: 'monospace' }}>P</th>
+            <th style={{ padding: '2px 8px', borderBottom: '1px solid var(--border)' }}></th>
           </tr>
         </thead>
         <tbody>
@@ -152,17 +153,17 @@ function CandidateTable({
             const isBot = sameReplayAction(c.action, chosen);
             const isGt  = sameReplayAction(c.action, gtAction);
             const isBoth = isBot && isGt;
-            const bg = isBoth ? '#fdf4ff' : isBot ? '#fff0f0' : isGt ? '#f0fff4' : (i % 2 === 0 ? '#fff' : '#f9fafb');
-            const color = isBoth ? '#6b21a8' : isBot ? '#c0392b' : isGt ? '#166534' : '#374151';
+            const bg = isBoth ? decisionBg.both : isBot ? decisionBg.bot : isGt ? decisionBg.gt : (i % 2 === 0 ? 'transparent' : decisionBg.zebra);
+            const color = isBoth ? decisionColors.both : isBot ? decisionColors.bot : isGt ? decisionColors.gt : 'var(--text-primary)';
             const marks = (isBot ? '✓Bot ' : '') + (isGt ? '★玩家' : '');
             return (
               <tr key={i} style={{ background: bg, color, fontWeight: isBot || isBoth ? 600 : 400 }}>
-                <td style={{ padding: '2px 8px', borderBottom: '1px solid #f1f5f9' }}>{actionLabel(c.action)}</td>
-                <td style={{ padding: '2px 8px', textAlign: 'right', fontFamily: 'monospace', borderBottom: '1px solid #f1f5f9' }}>{c.logit >= 0 ? '+' : ''}{c.logit.toFixed(3)}</td>
-                {hasFinal && <td style={{ padding: '2px 8px', textAlign: 'right', fontFamily: 'monospace', borderBottom: '1px solid #f1f5f9' }}>{c.final_score !== undefined ? (c.final_score >= 0 ? '+' : '') + c.final_score.toFixed(3) : '—'}</td>}
-                {hasBeam && <td style={{ padding: '2px 8px', textAlign: 'right', fontFamily: 'monospace', borderBottom: '1px solid #f1f5f9' }}>{c.beam_score !== undefined ? (c.beam_score >= 0 ? '+' : '') + c.beam_score.toFixed(3) : '—'}</td>}
-                <td style={{ padding: '2px 8px', textAlign: 'right', fontFamily: 'monospace', borderBottom: '1px solid #f1f5f9' }}>{((probs[i] ?? 0) * 100).toFixed(1)}%</td>
-                <td style={{ padding: '2px 8px', fontSize: 10, color: '#666', borderBottom: '1px solid #f1f5f9', whiteSpace: 'nowrap' }}>{marks}</td>
+                <td style={{ padding: '2px 8px', borderBottom: '1px solid var(--border)' }}>{actionLabel(c.action)}</td>
+                <td style={{ padding: '2px 8px', textAlign: 'right', fontFamily: 'monospace', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums' }}>{c.logit >= 0 ? '+' : ''}{c.logit.toFixed(3)}</td>
+                {hasFinal && <td style={{ padding: '2px 8px', textAlign: 'right', fontFamily: 'monospace', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums' }}>{c.final_score !== undefined ? (c.final_score >= 0 ? '+' : '') + c.final_score.toFixed(3) : '—'}</td>}
+                {hasBeam && <td style={{ padding: '2px 8px', textAlign: 'right', fontFamily: 'monospace', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums' }}>{c.beam_score !== undefined ? (c.beam_score >= 0 ? '+' : '') + c.beam_score.toFixed(3) : '—'}</td>}
+                <td style={{ padding: '2px 8px', textAlign: 'right', fontFamily: 'monospace', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums' }}>{((probs[i] ?? 0) * 100).toFixed(1)}%</td>
+                <td style={{ padding: '2px 8px', fontSize: 10, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>{marks}</td>
               </tr>
             );
           })}
@@ -183,7 +184,7 @@ function StepCard({ entry, playerNames }: { entry: DecisionLogEntry; playerNames
     const kyokuLabel = `${CN_BAKAZE[k.bakaze] || k.bakaze}${k.kyoku}局 ${k.honba}本场`;
     const actor = entry.actor_to_move ?? entry.chosen?.actor ?? '?';
     return (
-      <div className="step-card" style={{ opacity: 0.6, borderLeft: '3px solid #3498db' }}>
+      <div className="step-card" style={{ opacity: 0.6, borderLeft: '3px solid var(--info)' }}>
         <div className="step-top">
           <div className="step-header">{kyokuLabel} · Step {entry.step}</div>
           <div className="step-meta-right">
@@ -242,7 +243,7 @@ function StepCard({ entry, playerNames }: { entry: DecisionLogEntry; playerNames
             </span>
           ))}
           {entry.dora_markers?.length > 0 && (
-            <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 4 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 4 }}>
               宝:{entry.dora_markers.map(d => (
                 <img key={d} src={tileUrl(d)} width={20} className="dora" style={{ marginRight: 3 }} />
               ))}
@@ -302,7 +303,7 @@ function StepCard({ entry, playerNames }: { entry: DecisionLogEntry; playerNames
                   style={{
                     display: 'block',
                     borderRadius: 3,
-                    border: cls ? `2px solid ${cls === 'is-bot' ? '#e74c3c' : cls === 'is-gt' ? '#27ae60' : '#8e44ad'}` : '1px solid #9ca3af',
+                    border: cls ? `2px solid ${cls === 'is-bot' ? decisionColors.bot : cls === 'is-gt' ? decisionColors.gt : decisionColors.both}` : '1px solid var(--text-muted)',
                   }}
                 />
               </div>
@@ -321,7 +322,7 @@ function StepCard({ entry, playerNames }: { entry: DecisionLogEntry; playerNames
         <div className="nondahai-box">
           <div>Bot: <b>{entry.chosen?.type === 'none' ? '过' : actionLabel(entry.chosen)}</b></div>
           {entry.gt_action && (
-            <div style={{ color: '#166534' }}>实际: <b>{entry.gt_action.type === 'none' ? '过' : actionLabel(entry.gt_action)}</b></div>
+            <div style={{ color: decisionColors.gt }}>实际: <b>{entry.gt_action.type === 'none' ? '过' : actionLabel(entry.gt_action)}</b></div>
           )}
         </div>
       )}
@@ -522,7 +523,7 @@ export function ReplayViewPage() {
         >
           ◀ 上一局
         </button>
-        <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: 600, minWidth: 180, textAlign: 'center' }}>
+        <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 600, minWidth: 180, textAlign: 'center' }}>
           {kyokuLabel}
         </span>
         <button
@@ -550,7 +551,7 @@ export function ReplayViewPage() {
         </span>
 
         <button className="btn" onClick={() => navigate(routes.home)}>🏠</button>
-        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginLeft: 8, display: 'none' }}>←/→ 换局</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8, display: 'none' }}>←/→ 换局</span>
       </div>
 
       {/* 统计面板 */}
@@ -566,7 +567,7 @@ export function ReplayViewPage() {
               </div>
             ))}
             {visibleSteps.length === 0 && (
-              <p style={{ textAlign: 'center', color: '#9ca3af', fontSize: 14, padding: '48px 0' }}>
+              <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 14, padding: '48px 0' }}>
                 该局暂无数据
               </p>
             )}
@@ -597,7 +598,7 @@ export function ReplayViewPage() {
                   justifyContent: 'flex-start',
                   opacity: active ? 1 : 0.92,
                   fontWeight: active ? 700 : 500,
-                  outline: active ? '2px solid rgba(255,255,255,0.25)' : 'none',
+                  outline: active ? '2px solid var(--accent-border)' : 'none',
                 }}
                 title={`切换到 ${name}`}
               >

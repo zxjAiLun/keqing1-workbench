@@ -277,7 +277,7 @@ def delete_season(
         path = _season_path(configs_dir, season_id)
         path.unlink(missing_ok=True)
 
-        from project_data import data_path as _data_path, ladder_data_root
+        from workbench.runtime.resolver import data_path as _data_path, ladder_data_root
 
         participants_root = participants_data_root or _data_path("participants")
         dirty = participants_root / f"ladder_dirty_{season_id}.json"

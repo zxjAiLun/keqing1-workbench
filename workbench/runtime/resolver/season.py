@@ -5,26 +5,35 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from project_data import REPO_ROOT
+from .base import REPO_ROOT
 from .ladder import ladder_registry_root, ladder_data_root
 
 _DEFAULT_SEASONS_DIR = REPO_ROOT / "workbench" / "configs" / "ladder" / "seasons"
 
 
-def resolve_season_config_dir(project_root: str | Path | None = None) -> Path:
-    """Resolve the canonical season configuration directory.
+def resolve_season_config_dir(
+    project_root: str | Path | None = None,
+    *,
+    allow_repo_seed: bool = False,
+) -> Path:
+    """Canonical runtime season-registry directory.
 
-    Prefers runtime `ladder_registry_root()` if it exists, otherwise falls back
-    to the repo-local `workbench/configs/ladder/seasons` directory.
+    All runtime operations strictly target ladder_registry_root().
+    Repository configs under workbench/configs/ladder/seasons are seed/example
+    templates only and will NOT be automatically fallen back to in production
+    unless explicitly requested with allow_repo_seed=True.
     """
-    runtime_root = ladder_registry_root()
-    if runtime_root.is_dir():
-        return runtime_root
-    if project_root is not None:
-        cand = Path(project_root) / "workbench" / "configs" / "ladder" / "seasons"
-        if cand.is_dir():
-            return cand
-    return _DEFAULT_SEASONS_DIR
+    if allow_repo_seed:
+        runtime_root = ladder_registry_root()
+        if runtime_root.is_dir():
+            return runtime_root
+        if project_root is not None:
+            cand = Path(project_root) / "workbench" / "configs" / "ladder" / "seasons"
+            if cand.is_dir():
+                return cand
+        return _DEFAULT_SEASONS_DIR
+    del project_root
+    return ladder_registry_root()
 
 
 def resolve_season_config_path(

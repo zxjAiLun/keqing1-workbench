@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from project_data import data_path
+from workbench.runtime.resolver import data_path
 
 
 STORAGE_DIR = data_path("replays")

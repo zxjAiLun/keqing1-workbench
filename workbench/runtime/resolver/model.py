@@ -27,3 +27,7 @@ def resolve_bot_spec(
     spec: str, project_root: str | Path
 ) -> tuple[str, Path | None]:
     return br.resolve_bot_spec(spec, project_root)
+
+
+def create_runtime_bot(*args, **kwargs) -> Any:
+    return br.create_runtime_bot(*args, **kwargs)

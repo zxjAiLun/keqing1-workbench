@@ -268,7 +268,7 @@ def _session_frozen_model_map(session_id: str | None) -> dict[str, tuple[str, st
     """
     if not session_id:
         return {}
-    from project_data import ladder_capture_root
+    from workbench.runtime.resolver import ladder_capture_root
 
     binding_path = ladder_capture_root() / session_id / "binding.json"
     if not binding_path.exists():
@@ -323,10 +323,10 @@ def _session_id_for_log_id(log_id: str) -> str | None:
     log_id 与该局一致即返回对应 session_id。这样 Import 只需要
     ``?url=<tenhou-url>``，地址栏与表单都不再暴露 session_id。
 
-    capture 根与 writer（gateway 侧）共用 ``project_data.ladder_capture_root()``，
+    capture 根与 writer（gateway 侧）共用 ``workbench.runtime.resolver.ladder_capture_root()``，
     两端不得各自拼接路径。
     """
-    from project_data import ladder_capture_root
+    from workbench.runtime.resolver import ladder_capture_root
 
     root = ladder_capture_root()
     if not root.is_dir():

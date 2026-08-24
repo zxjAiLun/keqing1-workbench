@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from project_data import REPO_ROOT, data_path, _override_path
+from .base import REPO_ROOT, data_path, _override_path
 
 
 def ladder_data_root() -> Path:

@@ -96,7 +96,7 @@ class ModelArtifact(BaseModel):
 
     @model_validator(mode="after")
     def populate_stage_and_capabilities(self) -> ModelArtifact:
-        if not self.capabilities:
+        if self.capabilities is None:
             self.capabilities = _DEFAULT_CAPABILITIES_BY_STAGE.get(self.stage, ["review_allowed"])[:]
         return self
 

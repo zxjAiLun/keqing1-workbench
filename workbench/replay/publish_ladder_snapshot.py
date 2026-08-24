@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from project_data import encode_ladder_path, ladder_data_root, resolve_ladder_path
+from workbench.runtime.resolver import encode_ladder_path, ladder_data_root, resolve_ladder_path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:

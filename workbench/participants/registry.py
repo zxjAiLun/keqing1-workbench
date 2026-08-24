@@ -360,16 +360,26 @@ def update_model_artifact(
             raise KeyError(f"model artifact not found: {artifact_id}")
 
         raw_fields = payload.model_dump(exclude_unset=True)
+        cur_stage = target.get("stage", "promoted")
+        new_stage = raw_fields.get("stage")
+
+        if cur_stage == "retired":
+            if new_stage is not None and new_stage != "retired":
+                raise ValueError(f"已退役 (retired) 的模型产物 {artifact_id} 已封存，不可变更阶段")
+            if raw_fields.get("is_current"):
+                raise ValueError(f"已退役 (retired) 的模型产物 {artifact_id} 不可设为当前版本")
+
         if raw_fields.get("is_current"):
             for raw in store["artifacts"]:
                 if raw.get("model_identity_id") == identity_id:
                     raw["is_current"] = raw.get("model_artifact_id") == artifact_id
         if "stage" in raw_fields:
-            new_stage = raw_fields["stage"]
             target["stage"] = new_stage
-            if new_stage == "retired" and not target.get("retired_at"):
-                target["retired_at"] = now_iso()
+            if new_stage == "retired":
+                target["retired_at"] = target.get("retired_at") or now_iso()
                 target["is_current"] = False
+            elif new_stage == "promoted":
+                target["retired_at"] = None
         if "label" in raw_fields:
             target["label"] = raw_fields["label"]
         if "capabilities" in raw_fields:
@@ -417,6 +427,8 @@ def set_current_model_artifact(identity_id: str, artifact_id: str) -> ModelArtif
         )
         if target is None:
             raise KeyError(f"model artifact not found: {artifact_id}")
+        if target.get("stage") == "retired":
+            raise ValueError(f"无法将已退役 (retired) 的产物 {artifact_id} 设为当前版本")
         for raw in store["artifacts"]:
             if raw.get("model_identity_id") == identity_id:
                 raw["is_current"] = raw.get("model_artifact_id") == artifact_id

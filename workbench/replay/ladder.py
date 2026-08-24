@@ -18,7 +18,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from project_data import ladder_registry_root, resolve_ladder_path
+from workbench.runtime.resolver import ladder_registry_root, resolve_ladder_path
 
 SEASON_SCHEMA = "keqing.ladder.season.v1"
 REPORT_SCHEMA = "keqing.mortal.platform_account_report.v1"

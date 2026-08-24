@@ -18,7 +18,8 @@ sys.path.insert(
 from gateway.battle import BattleConfig, BattleManager, BattleRoom, get_manager
 from gateway.bot_driver import BotDriver
 from gateway.rating import RatingStore, battle_player_identity
-from inference.bot_registry import SUPPORTED_BOT_NAMES, create_runtime_bot
+from workbench.runtime.resolver import SUPPORTED_BOT_NAMES
+from workbench.runtime.resolver.model import create_runtime_bot
 from mahjong_env.legal_actions import enumerate_legal_actions
 
 app = FastAPI()

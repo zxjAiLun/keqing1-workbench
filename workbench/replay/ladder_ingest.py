@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Protocol, Sequence
 
-from project_data import resolve_ladder_path
+from workbench.runtime.resolver import resolve_ladder_path
 from replay.rank_systems import create_rank_system
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]

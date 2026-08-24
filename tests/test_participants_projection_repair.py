@@ -575,7 +575,7 @@ def test_two_process_reclaimers_single_winner_with_stale_reclaim(participants_ro
     env = {
         **_os.environ,
         # R10 layout split：participants 已迁至 workbench/（pyproject pythonpath 同规则）
-        "PYTHONPATH": str(root / "workbench") + _os.pathsep + str(root / "src"),
+        "PYTHONPATH": str(root / "workbench") + _os.pathsep + str(root / "src") + _os.pathsep + _os.environ.get("PYTHONPATH", ""),
         "KEQING_PARTICIPANT_DATA_ROOT": str(participants_root),
     }
     procs = [
@@ -586,8 +586,10 @@ def test_two_process_reclaimers_single_winner_with_stale_reclaim(participants_ro
         for _ in range(2)
     ]
     go.write_text("go", encoding="utf-8")
-    outputs = [p.communicate(timeout=15)[0].strip() for p in procs]
-    assert outputs.count("ACQUIRED") == 1, f"应恰好一个 winner，得到 {outputs}"
+    results = [p.communicate(timeout=15) for p in procs]
+    outputs = [r[0].strip() for r in results]
+    errs = [r[1].strip() for r in results]
+    assert outputs.count("ACQUIRED") == 1, f"应恰好一个 winner，得到 outputs={outputs}, errs={errs}"
     assert outputs.count("NOT_ACQUIRED") == 1
 
 

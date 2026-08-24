@@ -38,7 +38,7 @@ def _sleep_interruptible(seconds: float, stop_event: threading.Event | None) -> 
 
 
 def create_runtime_bot_for_gateway(**kwargs):
-    from inference.bot_registry import create_runtime_bot
+    from workbench.runtime.resolver.model import create_runtime_bot
 
     return create_runtime_bot(
         bot_name=kwargs["bot_name"],

@@ -1394,9 +1394,9 @@ export function MahjongTable({
           transition: "background 0.3s ease",
         }}>
 
-          {/* 桌面质感层（§3.1：呢绒纹理 + 四边暗角；zIndex 0 垫在所有牌/控件之下） */}
-          <div style={{ ...tableTextureLayer, zIndex: 0 }} />
-          <div style={{ ...tableVignetteLayer, zIndex: 0 }} />
+          {/* 桌面质感层（§3.1：呢绒纹理 + 四边暗角） */}
+          <div style={{ ...tableTextureLayer, zIndex: 1 }} />
+          <div style={{ ...tableVignetteLayer, zIndex: 1 }} />
 
           <BoardInfoCorner dora_markers={dora_markers} honba={honba} />
 

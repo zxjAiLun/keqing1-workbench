@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from project_data import data_path
+from workbench.runtime.resolver import data_path
 
 # workbench/participants/paths.py -> workbench -> repo root
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent

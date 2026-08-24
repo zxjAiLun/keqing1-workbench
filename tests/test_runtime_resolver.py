@@ -134,3 +134,17 @@ def test_season_resolver_paths(tmp_path: Path, monkeypatch) -> None:
 
     report_dir = resolve_season_report_dir("official-v1")
     assert report_dir == (tmp_path / "ladder" / "reports" / "official-v1").resolve()
+
+
+def test_season_resolver_strict_no_auto_fallback_to_repo_seed(tmp_path, monkeypatch) -> None:
+    missing_dir = tmp_path / "non_existent_registries"
+    monkeypatch.setenv("KEQING_LADDER_CONFIG_DIR", str(missing_dir))
+
+    # Production default: strictly points to missing_dir (fail closed) without repo seed fallback
+    assert resolve_season_config_dir() == missing_dir.resolve()
+
+    # Explicit allow_repo_seed=True falls back to repo template seed
+    repo_seed = resolve_season_config_dir(allow_repo_seed=True)
+    assert repo_seed.is_dir()
+    assert "workbench" in str(repo_seed)
+

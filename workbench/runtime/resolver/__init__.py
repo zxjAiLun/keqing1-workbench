@@ -2,12 +2,17 @@
 """Unified runtime resolver package."""
 from __future__ import annotations
 
-from .model import (
-    MORTAL_CHECKPOINTS,
-    SUPPORTED_BOT_NAMES,
-    resolve_bot_spec,
-    resolve_model_checkpoint,
-    search_authoritative_checkpoint,
+from .base import (
+    REPO_ROOT,
+    _override_path,
+    data_path,
+    data_root,
+)
+from .capture import (
+    ladder_capture_root,
+    resolve_capture_file,
+    resolve_raw_tenhou_file,
+    resolve_session_state_file,
 )
 from .ladder import (
     encode_ladder_path,
@@ -20,11 +25,12 @@ from .ladder import (
     resolve_ladder_snapshot_path,
     resolve_ledger_path,
 )
-from .capture import (
-    ladder_capture_root,
-    resolve_capture_file,
-    resolve_raw_tenhou_file,
-    resolve_session_state_file,
+from .model import (
+    MORTAL_CHECKPOINTS,
+    SUPPORTED_BOT_NAMES,
+    resolve_bot_spec,
+    resolve_model_checkpoint,
+    search_authoritative_checkpoint,
 )
 from .season import (
     list_season_config_paths,
@@ -34,6 +40,10 @@ from .season import (
 )
 
 __all__ = [
+    "REPO_ROOT",
+    "data_root",
+    "data_path",
+    "_override_path",
     "MORTAL_CHECKPOINTS",
     "SUPPORTED_BOT_NAMES",
     "resolve_model_checkpoint",

@@ -78,3 +78,22 @@ def test_workbench_never_imports_training() -> None:
         if tops & TRAINING_TOPS
     ]
     assert not offenders, f"workbench/ must not import training/: {offenders}"
+
+
+def test_workbench_never_directly_imports_project_data_or_bot_registry() -> None:
+    """Workbench business code must use workbench.runtime.resolver instead of direct imports."""
+    offenders: list[str] = []
+    for py in sorted((_REPO_ROOT / "workbench").rglob("*.py")):
+        if "__pycache__" in py.parts or "runtime/resolver" in str(py):
+            continue
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in ("project_data", "inference.bot_registry"):
+                        offenders.append(f"{py.relative_to(_REPO_ROOT)}: import {alias.name}")
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                if node.module in ("project_data", "inference.bot_registry"):
+                    offenders.append(f"{py.relative_to(_REPO_ROOT)}: from {node.module} import ...")
+    assert not offenders, f"workbench/ must use workbench.runtime.resolver instead of direct imports: {offenders}"
+

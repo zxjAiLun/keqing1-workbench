@@ -286,6 +286,8 @@ def create_model_identity(payload: ModelIdentityCreate) -> ModelIdentity:
         store = _read_models()
         if any(raw.get("model_identity_id") == identity_id for raw in store["identities"]):
             raise ValueError(f"model_identity_id 已存在: {identity_id}")
+        if payload.artifact_path and payload.kind != "local_model":
+            raise ValueError(f"仅 local_model 模型身份可在创建时绑定本地 artifact_path (当前 kind={payload.kind})")
         identity_raw = {
             "model_identity_id": identity_id,
             "label": payload.label,
@@ -326,8 +328,8 @@ def add_model_artifact(identity_id: str, payload: ModelArtifactCreate) -> ModelA
         ident_raw = next((raw for raw in store["identities"] if raw.get("model_identity_id") == identity_id), None)
         if ident_raw is None:
             raise KeyError(f"model identity not found: {identity_id}")
-        if ident_raw.get("kind") == "external_agent":
-            raise ValueError(f"external_agent 模型身份 {identity_id} 禁止挂载本地 ModelArtifact")
+        if ident_raw.get("kind") != "local_model":
+            raise ValueError(f"仅 local_model 模型身份可挂载 ModelArtifact，当前身份类型为 {ident_raw.get('kind')}")
         if any(raw.get("model_artifact_id") == art_id for raw in store["artifacts"]):
             raise ValueError(f"model_artifact_id 已存在: {art_id}")
         # 新增产物设为 current，其余降级
@@ -434,10 +436,7 @@ def update_external_revision(
         new_stage = raw_fields.get("stage")
 
         if cur_stage == "retired":
-            if new_stage is not None and new_stage != "retired":
-                raise ValueError(f"已退役 (retired) 的外部版本 {revision_id} 已封存，不可变更阶段")
-            if raw_fields.get("is_current"):
-                raise ValueError(f"已退役 (retired) 的外部版本 {revision_id} 不可设为当前版本")
+            raise ValueError(f"已退役 (retired) 的外部版本 {revision_id} 已封存，不可变更任何字段")
 
         if raw_fields.get("is_current"):
             for raw in store["external_revisions"]:
@@ -450,12 +449,6 @@ def update_external_revision(
                 target["is_current"] = False
             elif new_stage == "promoted":
                 target["retired_at"] = None
-        if "provider" in raw_fields:
-            target["provider"] = raw_fields["provider"]
-        if "version" in raw_fields:
-            target["version"] = raw_fields["version"]
-        if "external_ref" in raw_fields:
-            target["external_ref"] = raw_fields["external_ref"]
         if "capabilities" in raw_fields:
             target["capabilities"] = raw_fields["capabilities"]
 
@@ -618,6 +611,10 @@ def update_model_identity(identity_id: str, payload: ModelIdentityUpdate) -> Mod
             # R11-D Repair：global identity 已被多个 Account 反向引用时，禁止
             # 转成 account-scoped——否则其他绑定账号会瞬间失效。
             raw_fields = payload.model_dump(exclude_unset=True)
+            if "kind" in raw_fields and raw_fields["kind"] != raw.get("kind"):
+                raise ValueError(
+                    f"ModelIdentity.kind 创建后不可变更 (当前: {raw.get('kind')}, 试图变更为: {raw_fields['kind']})"
+                )
             new_account_id = raw_fields.get("account_id", None)
             if "account_id" in raw_fields and new_account_id is not None and raw.get("account_id") is None:
                 referencing = [

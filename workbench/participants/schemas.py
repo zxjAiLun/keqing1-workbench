@@ -155,9 +155,7 @@ class ExternalModelRevisionCreate(BaseModel):
 
 
 class ExternalModelRevisionUpdate(BaseModel):
-    provider: str | None = None
-    version: str | None = None
-    external_ref: str | None = None
+    model_config = ConfigDict(extra="forbid")
     stage: ArtifactStage | None = None
     capabilities: list[ArtifactCapability] | None = None
     is_current: bool | None = None
@@ -187,8 +185,8 @@ class ModelIdentityCreate(BaseModel):
 
 
 class ModelIdentityUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     label: str | None = None
-    kind: Literal["local_model", "external_agent", "none"] | None = None
     account_id: str | None = None
     is_current: bool | None = None
     note: str | None = None

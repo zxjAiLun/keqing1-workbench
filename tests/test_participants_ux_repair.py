@@ -218,29 +218,29 @@ def test_gate_rejects_human_not_under_human_model(env, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_external_agent_launched_allowed_with_artifact():
-    """ext_mortal：external_agent + launched + artifact → 启动校验通过。"""
+    """ext_mortal：local_model + launched + artifact → 启动校验通过。"""
     from gateway.api import playwithyou as pw
 
     identity = registry.create_model_identity(
         ModelIdentityCreate(
             model_identity_id="ext_mortal",
             label="External Mortal",
-            kind="external_agent",
+            kind="local_model",
             artifact_path="artifacts/external_mortal_20240308_best_min.pth",
         )
     )
     for aid in ("ext_mortal@01", "ext_mortal@02", "ext_mortal@03", "ext_mortal@04"):
         registry.create_account(
-            AccountCreate(account_id=aid, display_name=aid, account_type="external_bot", model_identity_id="ext_mortal")
+            AccountCreate(account_id=aid, display_name=aid, account_type="managed_bot", model_identity_id="ext_mortal")
         )
     art = identity.artifacts[0]
     bindings = [
-        {"account_id": "ext_mortal@01", "controller_type": "external_agent", "model_identity_id": identity.model_identity_id, "model_artifact_id": art.model_artifact_id, "launcher_slot": 0, "expected_raw_name": "NoName-1"},
-        {"account_id": "ext_mortal@02", "controller_type": "external_agent", "model_identity_id": None, "model_artifact_id": None, "launcher_slot": None},
-        {"account_id": "ext_mortal@03", "controller_type": "external_agent", "model_identity_id": None, "model_artifact_id": None, "launcher_slot": None},
-        {"account_id": "ext_mortal@04", "controller_type": "external_agent", "model_identity_id": None, "model_artifact_id": None, "launcher_slot": None},
+        {"account_id": "ext_mortal@01", "controller_type": "local_model", "model_identity_id": identity.model_identity_id, "model_artifact_id": art.model_artifact_id, "launcher_slot": 0, "expected_raw_name": "NoName-1"},
+        {"account_id": "ext_mortal@02", "controller_type": "local_model", "model_identity_id": None, "model_artifact_id": None, "launcher_slot": None},
+        {"account_id": "ext_mortal@03", "controller_type": "local_model", "model_identity_id": None, "model_artifact_id": None, "launcher_slot": None},
+        {"account_id": "ext_mortal@04", "controller_type": "local_model", "model_identity_id": None, "model_artifact_id": None, "launcher_slot": None},
     ]
-    # 不抛错：external_agent + artifact 合法（specs 数 = launched 数）
+    # 不抛错：local_model + artifact 合法（specs 数 = launched 数）
     pw._validate_roster_bindings(bindings, ["artifacts/external_mortal_20240308_best_min.pth"])
 
     # 无 artifact 的真实远程 agent 拒绝本地 launcher
@@ -251,7 +251,7 @@ def test_external_agent_launched_allowed_with_artifact():
         {"account_id": "ext_mortal@04", "controller_type": "external_agent", "model_identity_id": None, "model_artifact_id": None, "launcher_slot": None},
     ]
     with pytest.raises(ValueError, match="可启动的模型产物"):
-        pw._validate_roster_bindings(bad, [])
+        pw._validate_roster_bindings(bad, ["artifacts/external_mortal_20240308_best_min.pth"])
 
 
 def test_gate_rejects_rating_eligible_without_season(env):

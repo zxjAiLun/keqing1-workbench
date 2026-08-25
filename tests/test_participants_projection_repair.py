@@ -497,11 +497,16 @@ def test_two_reclaimers_single_winner(participants_root):
 
     results: dict[str, bool] = {}
     barrier = threading.Barrier(2)
+    hold_event = threading.Event()
 
     def _contender(name):
         barrier.wait()
         with try_lease_lock(lock_path, lease_seconds=5, heartbeat_interval=0) as ok:
             results[name] = ok
+            if ok:
+                hold_event.wait(0.5)
+            else:
+                hold_event.set()
 
     threads = [threading.Thread(target=_contender, args=(name,)) for name in ("B", "C")]
     for t in threads:

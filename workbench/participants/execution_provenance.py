@@ -96,9 +96,13 @@ def resolve_execution_provenance(
     # 1. Human branch
     # -------------------------------------------------------------------------
     if account.account_type == "human":
+        if purpose == "ladder_eligible" and effective_controller != "human_ui":
+            raise ValueError(
+                f"正式天梯人类账号 {account_id} 控制器必须为 human_ui (当前为 {effective_controller})"
+            )
         if effective_controller not in ("human_ui", "manual_only"):
             raise ValueError(
-                f"人类账号 {account_id} 控制器类型不匹配: {effective_controller} (期望 human_ui)"
+                f"人类账号 {account_id} 控制器类型不匹配: {effective_controller} (期望 human_ui 或 manual_only)"
             )
         if identity_id is not None:
             raise ValueError(f"人类账号 {account_id} 禁止携带模型身份证据 (identity_id={identity_id})")
@@ -190,34 +194,45 @@ def resolve_execution_provenance(
         if not registry.identity_belongs_to_account(target_identity_id, account_id):
             raise ValueError(f"模型身份 {target_identity_id} 与账号 {account_id} 绑定不兼容")
 
-        # Exact match on ExternalModelRevision (NO filesystem / NO checkpoint access)
-        candidates: list[ExternalModelRevision] = []
-        for rev in ident.external_revisions:
-            if external_revision_id is not None and rev.external_revision_id != external_revision_id:
-                continue
-
-            if purpose == "ladder_eligible" and not rev.is_ladder_eligible:
-                continue
-            if purpose == "playwithyou_allowed" and not rev.is_playwithyou_allowed:
-                continue
-            if purpose == "review_allowed" and not rev.is_review_allowed:
-                continue
-
-            candidates.append(rev)
-
-        if len(candidates) == 0:
-            raise ValueError(
-                f"未找到匹配的外部版本 (0 match, criteria: account={account_id}, "
-                f"identity={target_identity_id}, revision={external_revision_id}, purpose={purpose})"
+        # Step 1: Identify the exact ExternalModelRevision (NO lifecycle disambiguation!)
+        if external_revision_id is not None:
+            selected_rev = next(
+                (r for r in ident.external_revisions if r.external_revision_id == external_revision_id),
+                None,
             )
-        if len(candidates) > 1:
-            cand_ids = [c.external_revision_id for c in candidates]
+            if selected_rev is None:
+                raise ValueError(
+                    f"外部版本不存在或不属于模型 {target_identity_id}: {external_revision_id}"
+                )
+        else:
+            total_revisions = ident.external_revisions
+            if len(total_revisions) == 0:
+                raise ValueError(
+                    f"未找到匹配的外部版本 (0 match, criteria: account={account_id}, identity={target_identity_id})"
+                )
+            if len(total_revisions) > 1:
+                rev_ids = [r.external_revision_id for r in total_revisions]
+                raise ValueError(
+                    f"外部版本匹配存在歧义 (>1 matches: {rev_ids}, criteria: account={account_id}, "
+                    f"identity={target_identity_id})，必须显式指定 external_revision_id"
+                )
+            selected_rev = total_revisions[0]
+
+        # Step 2: Validate capability and stage for purpose on the identified revision
+        if purpose == "ladder_eligible" and not selected_rev.is_ladder_eligible:
             raise ValueError(
-                f"外部版本匹配存在歧义 (>1 matches: {cand_ids}, criteria: account={account_id}, "
-                f"identity={target_identity_id}, purpose={purpose})"
+                f"外部版本 {selected_rev.external_revision_id} 不具备天梯资格 "
+                f"(stage={selected_rev.stage}, capabilities={selected_rev.capabilities})"
+            )
+        if purpose == "playwithyou_allowed" and not selected_rev.is_playwithyou_allowed:
+            raise ValueError(
+                f"外部版本 {selected_rev.external_revision_id} 不具备 Play-with-you 权限 (stage={selected_rev.stage})"
+            )
+        if purpose == "review_allowed" and not selected_rev.is_review_allowed:
+            raise ValueError(
+                f"外部版本 {selected_rev.external_revision_id} 不具备 Review 权限"
             )
 
-        selected_rev = candidates[0]
         return CanonicalExecutionProvenance(
             kind="external_revision",
             account_id=account.account_id,

@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for Execution-Provenance-First Resolver (R13-A).
+"""Tests for Execution-Provenance-First Resolver (R13-A Repair 1).
 
 Verifies the unified execution provenance control plane:
-- Human participant provenance (human_ui, no model evidence)
+- Human participant provenance (human_ui, no model evidence; ladder_eligible strictly requires human_ui)
 - Managed local model provenance (local_model, ModelArtifact exact match, physical checkpoint)
 - External agent provenance (external_agent, ExternalModelRevision exact match, NO checkpoint required)
-- Strict type isolation and mismatch rejection
+- Strict type isolation, immutability, and zero lifecycle-based disambiguation
 """
 from __future__ import annotations
 
@@ -105,23 +105,32 @@ def test_human_provenance_rejects_model_evidence(forbidden_kwarg):
         )
 
 
-def test_human_provenance_rejects_mismatched_controller():
+def test_human_ladder_requires_human_ui():
     acc = Account(
         account_id="account:human01",
         display_name="Human Player",
         account_type="human",
-        default_controller="human_ui",
+        default_controller="manual_only",
         created_at="2026-08-01T00:00:00+08:00",
         updated_at="2026-08-01T00:00:00+08:00",
     )
     reg = MockRegistry([acc], [])
 
-    with pytest.raises(ValueError, match="控制器类型不匹配"):
+    # Ladder eligible requires strictly human_ui
+    with pytest.raises(ValueError, match="正式天梯人类账号.*控制器必须为 human_ui"):
         resolve_execution_provenance(
             account_id="account:human01",
-            controller_type="local_model",
+            purpose="ladder_eligible",
             registry=reg,
         )
+
+    # Review allowed accepts manual_only
+    prov = resolve_execution_provenance(
+        account_id="account:human01",
+        purpose="review_allowed",
+        registry=reg,
+    )
+    assert prov.kind == "human"
 
 
 # -----------------------------------------------------------------------------
@@ -268,7 +277,7 @@ def test_local_model_rejects_external_revision_id():
 
 
 # -----------------------------------------------------------------------------
-# 3. External Agent Provenance Tests (Mortal 4.1b Core)
+# 3. External Agent Provenance Tests (Mortal 4.1b Core & Strict Exact Match)
 # -----------------------------------------------------------------------------
 
 def test_external_revision_promoted_pass_without_any_checkpoint():
@@ -315,6 +324,50 @@ def test_external_revision_promoted_pass_without_any_checkpoint():
     assert prov.external_revision == rev
 
 
+def test_external_resolver_spy_verifies_zero_checkpoint_lookups(monkeypatch):
+    """Ensure external agent resolution never invokes checkpoint lookup machinery."""
+    def bomb(*args, **kwargs):
+        raise AssertionError("resolve_model_checkpoint must not be called for external agent")
+
+    monkeypatch.setattr("workbench.runtime.resolver.resolve_model_checkpoint", bomb)
+    monkeypatch.setattr("workbench.runtime.resolver.resolve_bot_spec", bomb)
+
+    rev = ExternalModelRevision(
+        external_revision_id="external:mortal41b:4.1b",
+        model_identity_id="model:mortal41b",
+        provider="mortal",
+        version="4.1b",
+        stage="promoted",
+        capabilities=["ladder_eligible"],
+        is_current=True,
+        created_at="2026-08-01T00:00:00+08:00",
+    )
+    ident = ModelIdentity(
+        model_identity_id="model:mortal41b",
+        label="Mortal 4.1b",
+        kind="external_agent",
+        external_revisions=[rev],
+        created_at="2026-08-01T00:00:00+08:00",
+    )
+    acc = Account(
+        account_id="account:mortal41b",
+        display_name="mortal4.1b",
+        account_type="external_bot",
+        default_controller="external_agent",
+        model_identity_id="model:mortal41b",
+        created_at="2026-08-01T00:00:00+08:00",
+        updated_at="2026-08-01T00:00:00+08:00",
+    )
+    reg = MockRegistry([acc], [ident])
+
+    prov = resolve_execution_provenance(
+        account_id="account:mortal41b",
+        purpose="ladder_eligible",
+        registry=reg,
+    )
+    assert prov.external_revision_id == "external:mortal41b:4.1b"
+
+
 def test_external_zero_revision_reject():
     ident = ModelIdentity(
         model_identity_id="model:mortal41b",
@@ -342,32 +395,33 @@ def test_external_zero_revision_reject():
         )
 
 
-def test_external_ambiguous_revisions_fail_closed():
-    rev1 = ExternalModelRevision(
-        external_revision_id="external:mortal41b:4.1b-r1",
+def test_external_ambiguity_no_lifecycle_disambiguation():
+    """P1-3: Lifecycle (promoted vs deprecated) must NOT be used to disambiguate identity without explicit revision_id."""
+    rev_promoted = ExternalModelRevision(
+        external_revision_id="external:mortal41b:4.1b",
         model_identity_id="model:mortal41b",
         provider="mortal",
-        version="4.1b-r1",
-        stage="promoted",
-        capabilities=["ladder_eligible"],
-        is_current=False,
-        created_at="2026-08-01T00:00:00+08:00",
-    )
-    rev2 = ExternalModelRevision(
-        external_revision_id="external:mortal41b:4.1b-r2",
-        model_identity_id="model:mortal41b",
-        provider="mortal",
-        version="4.1b-r2",
+        version="4.1b",
         stage="promoted",
         capabilities=["ladder_eligible"],
         is_current=True,
         created_at="2026-08-02T00:00:00+08:00",
     )
+    rev_deprecated = ExternalModelRevision(
+        external_revision_id="external:mortal41b:4.0",
+        model_identity_id="model:mortal41b",
+        provider="mortal",
+        version="4.0",
+        stage="deprecated",
+        capabilities=["playwithyou_allowed", "review_allowed"],
+        is_current=False,
+        created_at="2026-08-01T00:00:00+08:00",
+    )
     ident = ModelIdentity(
         model_identity_id="model:mortal41b",
         label="Mortal 4.1b",
         kind="external_agent",
-        external_revisions=[rev1, rev2],
+        external_revisions=[rev_promoted, rev_deprecated],
         created_at="2026-08-01T00:00:00+08:00",
     )
     acc = Account(
@@ -381,7 +435,7 @@ def test_external_ambiguous_revisions_fail_closed():
     )
     reg = MockRegistry([acc], [ident])
 
-    # Multiple promoted revisions without explicit revision_id fails closed (strict exact match)
+    # 1. Without revision_id -> MUST fail closed with ambiguity (not silently pick promoted one!)
     with pytest.raises(ValueError, match="外部版本匹配存在歧义.*>1 matches"):
         resolve_execution_provenance(
             account_id="account:mortal41b",
@@ -389,18 +443,27 @@ def test_external_ambiguous_revisions_fail_closed():
             registry=reg,
         )
 
-    # Specifying explicit external_revision_id resolves ambiguity
+    # 2. With explicit promoted revision_id -> PASS
     prov = resolve_execution_provenance(
         account_id="account:mortal41b",
-        external_revision_id="external:mortal41b:4.1b-r2",
+        external_revision_id="external:mortal41b:4.1b",
         purpose="ladder_eligible",
         registry=reg,
     )
-    assert prov.external_revision_id == "external:mortal41b:4.1b-r2"
+    assert prov.external_revision_id == "external:mortal41b:4.1b"
+
+    # 3. With explicit deprecated revision_id -> REJECT (fails capability, not identity)
+    with pytest.raises(ValueError, match="不具备天梯资格"):
+        resolve_execution_provenance(
+            account_id="account:mortal41b",
+            external_revision_id="external:mortal41b:4.0",
+            purpose="ladder_eligible",
+            registry=reg,
+        )
 
 
 @pytest.mark.parametrize("stage", ["deprecated", "retired", "candidate"])
-def test_external_non_promoted_revision_rejects_ladder(stage):
+def test_external_single_non_promoted_revision_rejects_ladder(stage):
     rev = ExternalModelRevision(
         external_revision_id="external:mortal41b:4.1b",
         model_identity_id="model:mortal41b",
@@ -429,7 +492,7 @@ def test_external_non_promoted_revision_rejects_ladder(stage):
     )
     reg = MockRegistry([acc], [ident])
 
-    with pytest.raises(ValueError, match="未找到匹配的外部版本"):
+    with pytest.raises(ValueError, match="不具备天梯资格"):
         resolve_execution_provenance(
             account_id="account:mortal41b",
             purpose="ladder_eligible",
@@ -521,38 +584,102 @@ def test_managed_bot_with_external_identity_rejects():
 
 
 # -----------------------------------------------------------------------------
-# 5. Registry CRUD & Type Enforcement Tests
+# 5. Registry CRUD, Immutability & Hard Type Enforcement Tests
 # -----------------------------------------------------------------------------
 
-def test_registry_crud_external_revision(tmp_path: Path, monkeypatch):
+def test_registry_create_model_identity_rejects_artifact_path_for_non_local_kinds(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("KEQING_DATA_ROOT", str(tmp_path))
+    from workbench.participants import registry
+    from workbench.participants.schemas import ModelIdentityCreate
+
+    # external_agent with artifact_path -> reject
+    with pytest.raises(ValueError, match="仅 local_model 模型身份可在创建时绑定本地 artifact_path"):
+        registry.create_model_identity(
+            ModelIdentityCreate(
+                model_identity_id="model:ext_bad",
+                label="Ext Bad",
+                kind="external_agent",
+                artifact_path="/some/path.pth",
+            )
+        )
+
+    # none with artifact_path -> reject
+    with pytest.raises(ValueError, match="仅 local_model 模型身份可在创建时绑定本地 artifact_path"):
+        registry.create_model_identity(
+            ModelIdentityCreate(
+                model_identity_id="model:none_bad",
+                label="None Bad",
+                kind="none",
+                artifact_path="/some/path.pth",
+            )
+        )
+
+
+def test_registry_add_model_artifact_rejects_non_local_model_kinds(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("KEQING_DATA_ROOT", str(tmp_path))
+    from workbench.participants import registry
+    from workbench.participants.schemas import ModelArtifactCreate, ModelIdentityCreate
+
+    registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="model:ext_only", label="Ext Only", kind="external_agent")
+    )
+    registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="model:none_only", label="None Only", kind="none")
+    )
+
+    with pytest.raises(ValueError, match="仅 local_model 模型身份可挂载 ModelArtifact"):
+        registry.add_model_artifact(
+            "model:ext_only",
+            ModelArtifactCreate(label="test.pth", artifact_path="/test.pth"),
+        )
+
+    with pytest.raises(ValueError, match="仅 local_model 模型身份可挂载 ModelArtifact"):
+        registry.add_model_artifact(
+            "model:none_only",
+            ModelArtifactCreate(label="test.pth", artifact_path="/test.pth"),
+        )
+
+
+def test_registry_model_identity_kind_immutability(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("KEQING_DATA_ROOT", str(tmp_path))
+    from pydantic import ValidationError
+    from workbench.participants import registry
+    from workbench.participants.schemas import ModelIdentityCreate, ModelIdentityUpdate
+
+    ident = registry.create_model_identity(
+        ModelIdentityCreate(model_identity_id="model:orig_local", label="Orig Local", kind="local_model")
+    )
+    assert ident.kind == "local_model"
+
+    # Schema ModelIdentityUpdate forbids kind mutation (extra='forbid')
+    with pytest.raises(ValidationError):
+        ModelIdentityUpdate.model_validate({"label": "Renamed", "kind": "external_agent"})
+
+    # Updating other fields preserves kind
+    updated = registry.update_model_identity("model:orig_local", ModelIdentityUpdate(label="Renamed Local"))
+    assert updated.label == "Renamed Local"
+    assert updated.kind == "local_model"
+
+
+def test_registry_crud_external_revision_and_retired_immutability(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("KEQING_DATA_ROOT", str(tmp_path))
     from workbench.participants import registry
     from workbench.participants.schemas import (
-        AccountCreate,
         ExternalModelRevisionCreate,
         ExternalModelRevisionUpdate,
-        ModelArtifactCreate,
         ModelIdentityCreate,
     )
 
     # 1. Create external agent identity
-    ident = registry.create_model_identity(
+    registry.create_model_identity(
         ModelIdentityCreate(
             model_identity_id="model:mortal41b",
             label="Mortal 4.1b",
             kind="external_agent",
         )
     )
-    assert ident.kind == "external_agent"
 
-    # 2. Cannot add local ModelArtifact to external_agent identity
-    with pytest.raises(ValueError, match="external_agent 模型身份.*禁止挂载本地 ModelArtifact"):
-        registry.add_model_artifact(
-            "model:mortal41b",
-            ModelArtifactCreate(label="fake.pth", artifact_path="/fake/path.pth"),
-        )
-
-    # 3. Add ExternalModelRevision
+    # 2. Add ExternalModelRevision
     rev = registry.add_external_revision(
         "model:mortal41b",
         ExternalModelRevisionCreate(
@@ -565,32 +692,24 @@ def test_registry_crud_external_revision(tmp_path: Path, monkeypatch):
     assert rev.external_revision_id == "external:mortal41b:4.1b"
     assert rev.is_ladder_eligible is True
 
-    # 4. List external revisions
-    revs = registry.list_external_revisions("model:mortal41b")
-    assert len(revs) == 1
-    assert revs[0].version == "4.1b"
+    # 3. Retire revision
+    retired = registry.retire_external_revision("model:mortal41b", "external:mortal41b:4.1b")
+    assert retired.stage == "retired"
+    assert retired.is_current is False
 
-    # 5. Update external revision
-    updated = registry.update_external_revision(
-        "model:mortal41b",
-        "external:mortal41b:4.1b",
-        ExternalModelRevisionUpdate(stage="deprecated"),
-    )
-    assert updated.stage == "deprecated"
-    assert updated.is_ladder_eligible is False
-
-    # 6. Local identity cannot add ExternalModelRevision
-    local_ident = registry.create_model_identity(
-        ModelIdentityCreate(
-            model_identity_id="model:local70k",
-            label="Local 70k",
-            kind="local_model",
+    # 4. Attempting any update on retired revision -> REJECT (immutable seal)
+    with pytest.raises(ValueError, match="已退役.*已封存，不可变更任何字段"):
+        registry.update_external_revision(
+            "model:mortal41b",
+            "external:mortal41b:4.1b",
+            ExternalModelRevisionUpdate(stage="promoted"),
         )
-    )
-    with pytest.raises(ValueError, match="仅 external_agent 模型身份可挂载 ExternalModelRevision"):
-        registry.add_external_revision(
-            "model:local70k",
-            ExternalModelRevisionCreate(provider="local", version="v1"),
+
+    with pytest.raises(ValueError, match="已退役.*已封存，不可变更任何字段"):
+        registry.update_external_revision(
+            "model:mortal41b",
+            "external:mortal41b:4.1b",
+            ExternalModelRevisionUpdate(capabilities=["review_allowed"]),
         )
 
 
@@ -760,4 +879,3 @@ def test_ladder_eligibility_with_external_bot_zero_revision_rejects(tmp_path: Pa
             project_root=tmp_path,
             registry=registry,
         )
-

@@ -114,13 +114,15 @@ def seed_registries(state: dict, *, dry_run: bool) -> list[str]:
                 created_accounts += 1
             # 模型身份：全局（account_id=None），artifact 取 checkpoint
             if model_id and not registry.get_model_identity(model_id):
+                checkpoint_path = model.get("checkpoint")
+                kind = "local_model" if checkpoint_path else ("local_model" if account_type == "managed_bot" else "external_agent")
                 if not dry_run:
                     registry.create_model_identity(
                         ModelIdentityCreate(
                             model_identity_id=model_id,
                             label=model_id,
-                            kind="local_model" if account_type == "managed_bot" else "external_agent",
-                            artifact_path=model.get("checkpoint"),
+                            kind=kind,
+                            artifact_path=checkpoint_path if kind == "local_model" else None,
                         )
                     )
                 created_models += 1

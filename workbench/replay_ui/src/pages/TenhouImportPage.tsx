@@ -1,6 +1,6 @@
 // src/replay_ui/src/pages/TenhouImportPage.tsx
 // R10-D：天凤链接 → preview → 逐座身份解析 → 确认落账。
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { PageHeader, PageShell } from '../components/Layout/PageScaffold';
 import { SEAT_WINDS } from '../components/Matches/labels';
@@ -65,9 +65,10 @@ export function TenhouImportPage() {
   const [ladderSeason, setLadderSeason] = useState('');
   // R11-A1：该牌谱已存在（preview 检出或 confirm 返回 duplicate_match）时的已有对局 ID
   const [duplicateMatchId, setDuplicateMatchId] = useState<string | null>(null);
-  // R13-C：天梯准入评估 (Admission Assessment) 状态
+  // R13-C：天梯准入评估 (Admission Assessment) 状态与 Request Fingerprint
   const [assessment, setAssessment] = useState<IntakeAdmissionAssessment | null>(null);
   const [assessing, setAssessing] = useState(false);
+  const [completedAssessmentKey, setCompletedAssessmentKey] = useState<string | null>(null);
 
   const load = useCallback(async (signal: AbortSignal) => {
     try {
@@ -176,45 +177,74 @@ export function TenhouImportPage() {
     }));
   };
 
-  // R13-C: 响应式天梯准入评估
+  // R13-C: 响应式天梯准入评估与 Fingerprint 闭环
+  const currentResolutions: SeatResolution[] = useMemo(() => {
+    if (!preview) return [];
+    return drafts.map((d) => {
+      const base: SeatResolution = {
+        seat: d.seat,
+        action: d.action,
+        alias_scope: d.alias_scope,
+        confidence: d.confidence,
+      };
+      if (d.action === 'create') {
+        return {
+          ...base,
+          display_name: d.display_name || preview.raw_player_names[d.seat],
+          account_type: d.account_type,
+        };
+      }
+      return {
+        ...base,
+        account_id: d.account_id,
+        alias_id: d.alias_id || undefined,
+      };
+    });
+  }, [preview, drafts]);
+
+  const currentAssessmentKey = useMemo(() => {
+    if (!preview || !ladderEligible || !ladderSeason.trim()) return null;
+    return JSON.stringify({
+      log_id: preview.log_id,
+      session_id: sessionId ?? null,
+      season_id: ladderSeason.trim(),
+      rating_eligible: ladderEligible,
+      resolutions: currentResolutions,
+    });
+  }, [preview, ladderEligible, ladderSeason, sessionId, currentResolutions]);
+
   useEffect(() => {
-    if (!preview || !ladderEligible || !ladderSeason.trim()) {
+    if (!preview || !ladderEligible || !ladderSeason.trim() || !currentAssessmentKey) {
       setAssessment(null);
+      setAssessing(false);
+      setCompletedAssessmentKey(null);
       return;
     }
+
+    // Effect 触发时立即重置当前评估，进入 assessing 状态（杜绝 200ms debounce 期间的 stale 状态）
+    setAssessment(null);
+    setAssessing(true);
+    setCompletedAssessmentKey(null);
+
     const controller = new AbortController();
+    const reqKey = currentAssessmentKey;
+    const reqResolutions = currentResolutions;
+
     const timer = setTimeout(async () => {
-      setAssessing(true);
       try {
-        const resolutions: SeatResolution[] = drafts.map((d) => {
-          const base = {
-            seat: d.seat,
-            action: d.action,
-            alias_scope: d.alias_scope,
-            confidence: d.confidence,
-          };
-          if (d.action === 'create') {
-            return {
-              ...base,
-              display_name: d.display_name || preview.raw_player_names[d.seat],
-              account_type: d.account_type,
-            };
-          }
-          return {
-            ...base,
-            account_id: d.account_id,
-            alias_id: d.alias_id || undefined,
-          };
-        });
-        const res = await participantsApi.intakeAssessment({
-          log_id: preview.log_id,
-          resolutions,
-          session_id: sessionId,
-          season_id: ladderSeason.trim(),
-          rating_eligible: true,
-        });
+        const res = await participantsApi.intakeAssessment(
+          {
+            log_id: preview.log_id,
+            resolutions: reqResolutions,
+            session_id: sessionId,
+            season_id: ladderSeason.trim(),
+            rating_eligible: true,
+          },
+          controller.signal,
+        );
         if (!controller.signal.aborted) {
           setAssessment(res);
+          setCompletedAssessmentKey(reqKey);
         }
       } catch (err) {
         if (!controller.signal.aborted) {
@@ -226,6 +256,7 @@ export function TenhouImportPage() {
             issues: [{ code: 'assessment_error', message: err instanceof Error ? err.message : String(err) }],
             seats: [],
           });
+          setCompletedAssessmentKey(reqKey);
         }
       } finally {
         if (!controller.signal.aborted) {
@@ -238,22 +269,21 @@ export function TenhouImportPage() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [preview, drafts, ladderEligible, ladderSeason, sessionId]);
+  }, [preview, currentResolutions, currentAssessmentKey, ladderEligible, ladderSeason, sessionId]);
+
+  const assessmentIsCurrent =
+    assessment !== null &&
+    completedAssessmentKey !== null &&
+    completedAssessmentKey === currentAssessmentKey;
+
+  const canConfirmRated =
+    assessmentIsCurrent &&
+    assessment.state === 'ready' &&
+    !assessing;
 
   const confirmImport = async () => {
     if (!preview) return;
-    const resolutions: SeatResolution[] = drafts.map((d) => {
-      const base = {
-        seat: d.seat,
-        action: d.action,
-        alias_scope: d.alias_scope,
-        confidence: d.confidence,
-      };
-      if (d.action === 'create') {
-        return { ...base, display_name: d.display_name || preview.raw_player_names[d.seat], account_type: d.account_type };
-      }
-      return { ...base, account_id: d.account_id, alias_id: d.alias_id || undefined };
-    });
+    const resolutions = currentResolutions;
     if (resolutions.some((r) => r.action === 'assign' && !r.account_id)) {
       setError('仍有座位未指派账号');
       return;
@@ -261,6 +291,10 @@ export function TenhouImportPage() {
     // P1-2（UX Repair 2）：rating_eligible=true 必须指定非空赛季
     if (ladderEligible && !ladderSeason.trim()) {
       setError('计入正式天梯必须指定赛季（season_id 不能为空）');
+      return;
+    }
+    if (ladderEligible && !canConfirmRated) {
+      setError('当前天梯准入评估未通过或仍在评估中');
       return;
     }
     setConfirming(true);
@@ -628,22 +662,26 @@ export function TenhouImportPage() {
                   disabled={
                     confirming ||
                     Boolean(preview.duplicate_match_id) ||
-                    (ladderEligible && (assessing || assessment?.state === 'blocked'))
+                    (ladderEligible && !canConfirmRated)
                   }
                   style={{
                     border: '1px solid var(--accent)',
-                    background: ladderEligible && assessment?.state === 'blocked' ? 'var(--border)' : 'var(--accent)',
-                    color: ladderEligible && assessment?.state === 'blocked' ? 'var(--text-muted)' : 'var(--accent-text)',
+                    background: ladderEligible && !canConfirmRated ? 'var(--border)' : 'var(--accent)',
+                    color: ladderEligible && !canConfirmRated ? 'var(--text-muted)' : 'var(--accent-text)',
                     borderRadius: 6, fontSize: 13, fontWeight: 700, padding: '9px 18px',
-                    cursor: ladderEligible && assessment?.state === 'blocked' ? 'not-allowed' : 'pointer',
+                    cursor: ladderEligible && !canConfirmRated ? 'not-allowed' : 'pointer',
                   }}
                 >
                   {confirming ? '导入中…' : '确认导入'}
                 </button>
               </div>
-              {ladderEligible && assessment?.state === 'blocked' && (
+              {ladderEligible && !canConfirmRated && (
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                  当前天梯准入未通过。可调整身份/版本，或取消勾选「计入正式天梯」作为普通对局导入。
+                  {assessing
+                    ? '正在评估天梯准入资格…'
+                    : assessment?.state === 'blocked'
+                    ? '当前天梯准入未通过。可调整身份/版本，或取消勾选「计入正式天梯」作为普通对局导入。'
+                    : '等待准入评估完成…'}
                 </div>
               )}
             </div>

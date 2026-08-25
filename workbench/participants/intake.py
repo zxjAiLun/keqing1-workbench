@@ -771,6 +771,18 @@ def _build_alias(
     return None
 
 
+def _validate_intake_resolution_shape(resolutions: Any) -> None:
+    """校验 intake 决议的形状：必须是恰好覆盖 seat 0..3 且无重复的 4 个对象。"""
+    if not isinstance(resolutions, list) or len(resolutions) != 4:
+        raise ValueError("必须提供恰好 4 个座位的解析决议")
+    try:
+        seats = [r["seat"] if isinstance(r, dict) else r.seat for r in resolutions]
+    except Exception as exc:
+        raise ValueError("座位解析决议缺少有效的 seat 字段") from exc
+    if set(seats) != {0, 1, 2, 3} or len(seats) != 4:
+        raise ValueError("座位解析决议必须覆盖 seat 0..3")
+
+
 def resolve_and_create_match(
     *,
     log_id: str,
@@ -799,10 +811,7 @@ def resolve_and_create_match(
     names = preview["raw_player_names"]
     hands = hand_summaries(events)
 
-    if len(resolutions) != 4:
-        raise ValueError("必须提供恰好 4 个座位的解析决议")
-    if {r["seat"] for r in resolutions} != {0, 1, 2, 3}:
-        raise ValueError("座位解析决议必须覆盖 seat 0..3")
+    _validate_intake_resolution_shape(resolutions)
 
     # 在内存中准备好 artifact 数据（下载/解析已在 build_preview 完成）。
     # staging 文件的写入放在锁内（防重检查之后），避免并发 confirm 对同一
@@ -1023,14 +1032,30 @@ def assess_intake_admission(
     active_root = project_root or DEFAULT_PROJECT_ROOT
     active_registry = registry_override or registry
 
+    # 结构形状校验：严格与 confirm 保持一致（4 个不同 seat 0..3）
+    try:
+        _validate_intake_resolution_shape(resolutions)
+    except ValueError as exc:
+        return IntakeAdmissionAssessment(
+            state="blocked",
+            season_id=str(season_id).strip() if season_id else None,
+            rating_eligible=bool(rating_eligible),
+            issues=[AdmissionIssue(code="invalid_resolution_shape", message=str(exc))],
+            seats=[],
+        )
+
+    norm_res: list[dict] = [
+        r.model_dump() if hasattr(r, "model_dump") else dict(r)
+        for r in resolutions
+    ]
+    res_by_seat = {int(r["seat"]): r for r in norm_res}
+
     if not session_id:
         session_id = _session_id_for_log_id(log_id)
 
     # 下载/读取 player names（若失败让网络/解析错误抛出，走 transport 502）
     tenhou6 = download_tenhou6(log_id)
     names = tenhou6.get("name") or [f"Player {i+1}" for i in range(4)]
-
-    res_by_seat = {int(r["seat"]): r for r in resolutions if "seat" in r}
 
     if not rating_eligible or not season_id or not str(season_id).strip():
         # state = "not_requested"

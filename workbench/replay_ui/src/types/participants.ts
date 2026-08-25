@@ -270,6 +270,11 @@ export interface SeatResolution {
   display_name?: string | null;
   account_type?: AccountType | null;
   default_controller?: ControllerType | null;
+  alias_id?: string | null;
+  model_identity_id?: string | null;
+  model_artifact_id?: string | null;
+  external_revision_id?: string | null;
+  execution_provenance?: FrozenExecutionProvenance | null;
   alias_scope?: ExternalAliasScope | 'none';
   confidence?: 'confirmed' | 'unresolved';
 }
@@ -412,21 +417,7 @@ export interface AdmissionSeatAssessment {
 
 export interface IntakeAdmissionAssessmentRequest {
   log_id: string;
-  resolutions: Array<{
-    seat: SeatNo;
-    action?: 'assign' | 'create';
-    account_id?: string | null;
-    display_name?: string | null;
-    account_type?: AccountType | null;
-    default_controller?: ControllerType | null;
-    alias_id?: string | null;
-    model_identity_id?: string | null;
-    model_artifact_id?: string | null;
-    external_revision_id?: string | null;
-    execution_provenance?: FrozenExecutionProvenance | null;
-    alias_scope?: string;
-    confidence?: 'confirmed' | 'unresolved';
-  }>;
+  resolutions: SeatResolution[];
   session_id?: string | null;
   season_id?: string | null;
   rating_eligible: boolean;

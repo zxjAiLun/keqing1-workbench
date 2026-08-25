@@ -288,11 +288,14 @@ def test_assessment_is_pure_preflight_no_side_effects(setup_assessment_env):
     """Assessment executes without writing accounts, aliases, matches, revisions, staging or dirty markers."""
     data_dir = setup_assessment_env["data_dir"]
 
-    # Snapshot existing files and counts before assessment
-    initial_accounts_count = len(registry.list_accounts())
-    initial_aliases_count = len(aliases.list_aliases())
-    initial_matches_count = len(ledger.list_matches().matches)
-    initial_revisions_count = len(ledger.list_revision_summaries("dummy"))
+    # Snapshot existing files bytes before assessment
+    def _read_bytes_if_exists(p):
+        return p.read_bytes() if p.exists() else None
+
+    accounts_before = _read_bytes_if_exists(data_dir / "accounts.json")
+    aliases_before = _read_bytes_if_exists(data_dir / "aliases.json")
+    matches_before = _read_bytes_if_exists(data_dir / "matches.jsonl")
+    revisions_before = _read_bytes_if_exists(data_dir / "revisions.jsonl")
 
     resolutions = [
         {"seat": 0, "action": "create", "display_name": "NewPlayer0"},
@@ -309,12 +312,80 @@ def test_assessment_is_pure_preflight_no_side_effects(setup_assessment_env):
     )
     assert assessment.state == "blocked"
 
-    # Confirm zero state mutations
-    assert len(registry.list_accounts()) == initial_accounts_count
-    assert len(aliases.list_aliases()) == initial_aliases_count
-    assert len(ledger.list_matches().matches) == initial_matches_count
+    # Confirm zero state mutations (exact binary & file nonexistence verification)
+    assert _read_bytes_if_exists(data_dir / "accounts.json") == accounts_before
+    assert _read_bytes_if_exists(data_dir / "aliases.json") == aliases_before
+    assert _read_bytes_if_exists(data_dir / "matches.jsonl") == matches_before
+    assert _read_bytes_if_exists(data_dir / "revisions.jsonl") == revisions_before
+    assert not (data_dir / "replays_staging" / "20260804gm-test-pure").exists()
     assert not (data_dir / "staging").exists()
+    assert not (data_dir / "pending_transaction.json").exists()
     assert not (data_dir / "ladder_dirty_s_running.json").exists()
+
+
+def test_assessment_rejects_invalid_resolution_shape(setup_assessment_env):
+    """Assessment enforces exact 4-seat shape (0..3), returning state=blocked on duplicate/missing seats."""
+    # 5 seats with duplicate seat 3
+    resolutions_dup = [
+        {"seat": 0, "action": "assign", "account_id": "account:mortal_bot"},
+        {"seat": 1, "action": "assign", "account_id": "account:human1"},
+        {"seat": 2, "action": "assign", "account_id": "account:human2"},
+        {"seat": 3, "action": "assign", "account_id": "account:human3"},
+        {"seat": 3, "action": "assign", "account_id": "account:human3"},
+    ]
+    assessment = intake.assess_intake_admission(
+        log_id="20260804gm-test-shape",
+        resolutions=resolutions_dup,
+        season_id="s_running",
+        rating_eligible=True,
+        project_root=setup_assessment_env["tmp_path"],
+    )
+    assert assessment.state == "blocked"
+    assert any("4 个座位" in iss.message for iss in assessment.issues)
+
+
+def test_toctou_assessment_ready_then_confirm_revalidates_and_fails(setup_assessment_env):
+    """TOCTOU proof: assessment returns ready -> season/registry mutates -> confirm independently re-evaluates and fails closed."""
+    configs_dir = setup_assessment_env["configs_dir"]
+    tmp_path = setup_assessment_env["tmp_path"]
+    data_dir = setup_assessment_env["data_dir"]
+
+    resolutions = [
+        {"seat": 0, "action": "assign", "account_id": "account:mortal_bot", "model_identity_id": "model:mortal", "external_revision_id": "external:mortal:4.1b"},
+        {"seat": 1, "action": "assign", "account_id": "account:human1"},
+        {"seat": 2, "action": "assign", "account_id": "account:human2"},
+        {"seat": 3, "action": "assign", "account_id": "account:human3"},
+    ]
+
+    # 1. Assessment says READY
+    assessment = intake.assess_intake_admission(
+        log_id="20260804gm-test-toctou",
+        resolutions=resolutions,
+        season_id="s_running",
+        rating_eligible=True,
+        project_root=tmp_path,
+    )
+    assert assessment.state == "ready"
+
+    # Snapshot data before confirm failure
+    matches_count_before = len(ledger.list_matches().matches)
+
+    # 2. Behind the scenes: Season status transitions to completed
+    sr.set_season_status(configs_dir, "s_running", "completed")
+
+    # 3. Confirm attempts to import match with rating_eligible=True without new assessment -> must fail!
+    with pytest.raises(ValueError, match="不是 running 状态"):
+        intake.resolve_and_create_match(
+            log_id="20260804gm-test-toctou",
+            resolutions=resolutions,
+            season_id="s_running",
+            rating_eligible=True,
+        )
+
+    # 4. Confirm zero side effects on failure (no staging, no pending, no committed match)
+    assert len(ledger.list_matches().matches) == matches_count_before
+    assert not (data_dir / "replays_staging" / "20260804gm-test-toctou").exists()
+    assert not (data_dir / "pending_transaction.json").exists()
 
 
 def test_assessment_blocked_local_artifact_mismatch(setup_assessment_env):

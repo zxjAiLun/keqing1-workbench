@@ -404,13 +404,22 @@ def participants_env(tmp_path, monkeypatch):
     root = tmp_path / "participants"
     monkeypatch.setenv("KEQING_PARTICIPANT_DATA_ROOT", str(root))
     from participants import registry
-    from participants.schemas import AccountCreate, ModelIdentityCreate
+    from participants.schemas import AccountCreate, ExternalModelRevisionCreate, ModelIdentityCreate
 
     registry.create_model_identity(
         ModelIdentityCreate(model_identity_id="model:mortal-70k", label="70k", kind="local_model", artifact_path="ckpt.pth")
     )
     registry.create_model_identity(
         ModelIdentityCreate(model_identity_id="model:mortal41b", label="Mortal 4.1b", kind="external_agent")
+    )
+    registry.add_external_revision(
+        "model:mortal41b",
+        ExternalModelRevisionCreate(
+            external_revision_id="external:mortal41b:4.1b",
+            provider="mortal",
+            version="4.1b",
+            stage="promoted",
+        ),
     )
     registry.create_account(AccountCreate(account_id="account:keqing1", display_name="keqing1", account_type="human"))
     registry.create_account(

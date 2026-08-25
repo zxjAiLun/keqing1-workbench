@@ -1712,10 +1712,16 @@ async def set_ladder_season_enrollment(season_id: str, payload: dict):
     """
     sr = _season_manager()
     account_ids = payload.get("account_ids") or []
+    provenance_by_model = payload.get("provenance_by_model")
     if not isinstance(account_ids, list):
         return _manager_errors(ValueError("account_ids 必须是数组"))
     try:
-        season = sr.set_season_enrollment(_LADDER_SEASONS_DIR, season_id, account_ids)
+        season = sr.set_season_enrollment(
+            _LADDER_SEASONS_DIR,
+            season_id,
+            account_ids,
+            provenance_by_model=provenance_by_model,
+        )
     except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
         return _manager_errors(exc)
     return JSONResponse(content=season)

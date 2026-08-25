@@ -650,3 +650,221 @@ def test_intake_confirm_freezes_external_revision_provenance(setup_provenance_en
     assert seat0.execution_provenance.external_revision_id == "external:mortal:4.1b"
     assert seat0.execution_provenance.model_identity_id == "model:mortal"
 
+
+# -----------------------------------------------------------------------------
+# 6. Production-Path Season Registry Lifecycle & Freeze Control Plane Tests
+# -----------------------------------------------------------------------------
+
+def test_production_path_season_lifecycle_and_freeze_invariance(setup_provenance_env):
+    """Production path: create_season -> set_season_enrollment -> set_season_status('running') -> ensure_ladder_eligibility.
+
+    Verifies:
+    1. Single promoted revision automatically freezes into season JSON execution_provenance.
+    2. Subsequent changes to registry (new versions, current flag changes) do NOT mutate the season.
+    3. Adding accounts to running season preserves the original frozen execution_provenance without drifting.
+    """
+    from workbench.replay import season_registry as sr
+
+    configs_dir = setup_provenance_env["configs_dir"]
+    tmp_path = setup_provenance_env["tmp_path"]
+
+    # 1. Setup isolated model with exactly 1 promoted revision
+    registry.create_model_identity(
+        ModelIdentityCreate(
+            model_identity_id="model:single_mortal",
+            label="Single Mortal",
+            kind="external_agent",
+        )
+    )
+    registry.add_external_revision(
+        "model:single_mortal",
+        ExternalModelRevisionCreate(
+            external_revision_id="external:single_mortal:4.1b",
+            provider="mortal",
+            version="4.1b",
+            stage="promoted",
+        ),
+    )
+    registry.create_account(
+        AccountCreate(
+            account_id="account:single_mortal_bot",
+            display_name="Single Mortal Bot",
+            account_type="external_bot",
+            default_controller="external_agent",
+            model_identity_id="model:single_mortal",
+        )
+    )
+
+    # 2. Production control plane: create season & enroll
+    sr.create_season(configs_dir, season_id="s_prod_life", title="Prod Season")
+    season = sr.set_season_enrollment(
+        configs_dir,
+        "s_prod_life",
+        ["account:human1", "account:human2", "account:human3", "account:single_mortal_bot"],
+    )
+
+    # Verify season JSON generated FrozenExecutionProvenance
+    mortal_group = next(m for m in season["models"] if m["model_id"] == "model:single_mortal")
+    assert mortal_group["execution_provenance"]["kind"] == "external_revision"
+    assert mortal_group["execution_provenance"]["external_revision_id"] == "external:single_mortal:4.1b"
+    assert mortal_group["execution_provenance"]["model_identity_id"] == "model:single_mortal"
+
+    # Transition to running
+    running_season = sr.set_season_status(configs_dir, "s_prod_life", "running")
+    assert running_season["status"] == "running"
+
+    # 3. Mutate registry: add 4.2 promoted and current
+    registry.add_external_revision(
+        "model:single_mortal",
+        ExternalModelRevisionCreate(
+            external_revision_id="external:single_mortal:4.2",
+            provider="mortal",
+            version="4.2",
+            stage="promoted",
+            is_current=True,
+        ),
+    )
+
+    # 4. Enroll another human account into running season
+    registry.create_account(
+        AccountCreate(
+            account_id="account:human4",
+            display_name="Human 4",
+            account_type="human",
+            default_controller="human_ui",
+        )
+    )
+    updated_running = sr.set_season_enrollment(
+        configs_dir,
+        "s_prod_life",
+        ["account:human1", "account:human2", "account:human3", "account:human4", "account:single_mortal_bot"],
+    )
+    # Frozen execution_provenance MUST NOT drift to 4.2!
+    mortal_group_after = next(m for m in updated_running["models"] if m["model_id"] == "model:single_mortal")
+    assert mortal_group_after["execution_provenance"]["external_revision_id"] == "external:single_mortal:4.1b"
+
+    # 5. Ladder admission: 4.1b passes, 4.2 rejects
+    seats_41b = [
+        MatchSeat(seat=0, account_id="account:single_mortal_bot", controller_type="external_agent", model_identity_id="model:single_mortal", external_revision_id="external:single_mortal:4.1b"),
+        MatchSeat(seat=1, account_id="account:human1", controller_type="human_ui"),
+        MatchSeat(seat=2, account_id="account:human2", controller_type="human_ui"),
+        MatchSeat(seat=3, account_id="account:human3", controller_type="human_ui"),
+    ]
+    admission = ensure_ladder_eligibility("s_prod_life", seats_41b, registry=registry, project_root=tmp_path)
+    assert admission.provenance_by_seat[0].external_revision_id == "external:single_mortal:4.1b"
+
+    seats_42 = [
+        MatchSeat(seat=0, account_id="account:single_mortal_bot", controller_type="external_agent", model_identity_id="model:single_mortal", external_revision_id="external:single_mortal:4.2"),
+        MatchSeat(seat=1, account_id="account:human1", controller_type="human_ui"),
+        MatchSeat(seat=2, account_id="account:human2", controller_type="human_ui"),
+        MatchSeat(seat=3, account_id="account:human3", controller_type="human_ui"),
+    ]
+    with pytest.raises(ValueError, match="外部版本.*与赛季.*不一致"):
+        ensure_ladder_eligibility("s_prod_life", seats_42, registry=registry, project_root=tmp_path)
+
+
+def test_season_enrollment_ambiguity_and_explicit_provenance(setup_provenance_env):
+    """When a model identity has >1 promoted revisions, enrollment without explicit provenance fails closed; explicit provenance succeeds."""
+    from workbench.replay import season_registry as sr
+
+    configs_dir = setup_provenance_env["configs_dir"]
+
+    # model:mortal has both 4.1b and 4.2 promoted
+    sr.create_season(configs_dir, season_id="s_ambig", title="Ambig Season")
+
+    # 1. Unspecified provenance -> fails closed with ambiguity error
+    with pytest.raises(ValueError, match="存在多个晋升版本.*存在歧义.*必须显式指定 external_revision_id"):
+        sr.set_season_enrollment(
+            configs_dir,
+            "s_ambig",
+            ["account:human1", "account:human2", "account:human3", "account:mortal_bot"],
+        )
+
+    # 2. Explicitly specify 4.1b -> succeeds
+    season = sr.set_season_enrollment(
+        configs_dir,
+        "s_ambig",
+        ["account:human1", "account:human2", "account:human3", "account:mortal_bot"],
+        provenance_by_model={
+            "model:mortal": {
+                "kind": "external_revision",
+                "model_identity_id": "model:mortal",
+                "external_revision_id": "external:mortal:4.1b",
+            }
+        },
+    )
+    m_group = next(m for m in season["models"] if m["model_id"] == "model:mortal")
+    assert m_group["execution_provenance"]["external_revision_id"] == "external:mortal:4.1b"
+
+
+def test_season_registry_loader_validates_frozen_execution_provenance_structure(setup_provenance_env):
+    """Malformed or invalid execution_provenance in season JSON is rejected by registry loader."""
+    from workbench.replay.ladder import SeasonRegistryError, get_season_config, read_registry
+
+    configs_dir = setup_provenance_env["configs_dir"]
+
+    # 1. Invalid shape: external_revision missing external_revision_id
+    bad_payload1 = {
+        "schema": "keqing.ladder.season.v1",
+        "season_id": "s_bad1",
+        "report_dir": "reports/s_bad1",
+        "models": [
+            {
+                "model_id": "model:mortal",
+                "execution_provenance": {
+                    "kind": "external_revision",
+                    "model_identity_id": "model:mortal",
+                    # missing external_revision_id!
+                },
+                "accounts": [{"account_id": "account:mortal_bot"}],
+            }
+        ],
+    }
+    path1 = configs_dir / "s_bad1.json"
+    path1.write_text(json.dumps(bad_payload1), encoding="utf-8")
+    with pytest.raises(SeasonRegistryError, match="execution_provenance 结构无效"):
+        read_registry(path1)
+
+    # 2. Mismatched model_identity_id in local_artifact provenance
+    bad_payload2 = {
+        "schema": "keqing.ladder.season.v1",
+        "season_id": "s_bad2",
+        "report_dir": "reports/s_bad2",
+        "models": [
+            {
+                "model_id": "model:m70k",
+                "execution_provenance": {
+                    "kind": "local_artifact",
+                    "model_identity_id": "model:other_model",
+                    "model_artifact_id": "model:other_model@01",
+                },
+                "accounts": [{"account_id": "account:m70k_bot"}],
+            }
+        ],
+    }
+    path2 = configs_dir / "s_bad2.json"
+    path2.write_text(json.dumps(bad_payload2), encoding="utf-8")
+    with pytest.raises(SeasonRegistryError, match="local_artifact model_identity_id.*与 group.*不一致"):
+        read_registry(path2)
+
+
+def test_running_status_transition_rejects_missing_frozen_provenance(setup_provenance_env):
+    """Transitioning to running rejects any season containing model groups without valid execution_provenance."""
+    from workbench.replay import season_registry as sr
+    from workbench.replay.ladder import SeasonRegistryError
+
+    configs_dir = setup_provenance_env["configs_dir"]
+
+    sr.create_season(configs_dir, season_id="s_missing_prov", title="Missing Prov Season")
+    path = configs_dir / "s_missing_prov.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    # Manually inject an un-frozen model group
+    raw["models"] = [
+        {"model_id": "model:mortal", "accounts": [{"account_id": "account:mortal_bot"}]}
+    ]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(SeasonRegistryError, match="缺少完整不可变的 execution_provenance，禁止开赛"):
+        sr.set_season_status(configs_dir, "s_missing_prov", "running")
+
+

@@ -154,6 +154,34 @@ def _validate_registry(raw: Any, filename: str) -> dict[str, Any]:
         if model_id in seen_models:
             raise _fail(f"season {season_id}: 重复 model_id '{model_id}'")
         seen_models.add(model_id)
+
+        # R13-B: 结构化校验 execution_provenance
+        exec_prov_raw = model.get("execution_provenance")
+        if exec_prov_raw is not None:
+            if not isinstance(exec_prov_raw, dict):
+                raise _fail(f"season {season_id} / model {model_id}: execution_provenance 必须是对象")
+            from workbench.participants.schemas import FrozenExecutionProvenance
+            try:
+                frozen_prov = FrozenExecutionProvenance.model_validate(exec_prov_raw)
+            except Exception as exc:
+                raise _fail(f"season {season_id} / model {model_id}: execution_provenance 结构无效: {exc}") from exc
+
+            if frozen_prov.kind == "human":
+                if model_id != "human":
+                    raise _fail(f"season {season_id} / model {model_id}: human provenance 只能用于 model_id='human'")
+            elif frozen_prov.kind == "local_artifact":
+                expected_ident = model.get("model_identity_id") or model_id
+                if frozen_prov.model_identity_id != expected_ident:
+                    raise _fail(
+                        f"season {season_id} / model {model_id}: local_artifact model_identity_id '{frozen_prov.model_identity_id}' 与 group '{expected_ident}' 不一致"
+                    )
+            elif frozen_prov.kind == "external_revision":
+                expected_ident = model.get("model_identity_id") or model_id
+                if frozen_prov.model_identity_id != expected_ident:
+                    raise _fail(
+                        f"season {season_id} / model {model_id}: external_revision model_identity_id '{frozen_prov.model_identity_id}' 与 group '{expected_ident}' 不一致"
+                    )
+
         accounts = model.get("accounts")
         if not isinstance(accounts, list):
             raise _fail(f"season {season_id} / model {model_id}: accounts 必须是数组")

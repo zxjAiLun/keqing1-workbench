@@ -212,6 +212,7 @@ class ModelArtifactUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 
 class FrozenExecutionProvenance(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["human", "local_artifact", "external_revision"]
     model_identity_id: str | None = None
     model_artifact_id: str | None = None

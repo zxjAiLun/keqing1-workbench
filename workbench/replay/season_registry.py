@@ -187,6 +187,24 @@ def set_season_status(configs_dir: Path, season_id: str, status: str) -> dict[st
 
         updated = dict(season)
         updated["status"] = status
+        if status == "running":
+            # R13-B Freeze Gate: 所有正式 model group 必须具有完整合法的 execution_provenance
+            models = updated.get("models") or []
+            from workbench.participants.schemas import FrozenExecutionProvenance
+            for m in models:
+                mid = m.get("model_id")
+                exec_prov = m.get("execution_provenance")
+                if not exec_prov or not isinstance(exec_prov, dict):
+                    raise SeasonRegistryError(
+                        f"赛季 {season_id} 模型 '{mid}' 缺少完整不可变的 execution_provenance，禁止开赛"
+                    )
+                try:
+                    FrozenExecutionProvenance.model_validate(exec_prov)
+                except Exception as exc:
+                    raise SeasonRegistryError(
+                        f"赛季 {season_id} 模型 '{mid}' execution_provenance 结构非法: {exc}"
+                    ) from exc
+
         if current == "completed" and status == "running":
             # R11-E Post-release Repair：reopen 审计 + 不自动抢占当前
             updated["reopened_at"] = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
@@ -307,16 +325,91 @@ def delete_season(
 # R11-E2：参赛阵容（enrollment）
 # ---------------------------------------------------------------------------
 
-def _freeze_checkpoint(identity) -> str | None:
-    """新 group 的 checkpoint 冻结：ModelIdentity 有唯一 current artifact 时
-    冻结其 artifact_path；否则 None（"赛季要求哪个 checkpoint"独立于
-    Participants 当前 artifact 的后续变化）。"""
+def _freeze_model_group_provenance(
+    target_key: str,
+    identity: Any | None,
+    explicit_provenance: Any | None = None,
+) -> tuple[dict[str, Any], str | None, str | None, str | None]:
+    """为新 group 生成权威 FrozenExecutionProvenance 及兼容字段。
+
+    返回: (execution_provenance_dict, checkpoint, model_artifact_id, external_revision_id)
+    """
+    from workbench.participants.schemas import FrozenExecutionProvenance
+
+    if explicit_provenance is not None:
+        if isinstance(explicit_provenance, dict):
+            prov = FrozenExecutionProvenance.model_validate(explicit_provenance)
+        elif isinstance(explicit_provenance, FrozenExecutionProvenance):
+            prov = explicit_provenance
+        else:
+            raise ValueError(f"模型 {target_key} 的 explicit_provenance 必须是对象")
+
+        if prov.kind == "human":
+            if target_key != "human":
+                raise ValueError(f"human provenance 不能用于 AI 模型 {target_key}")
+            return (prov.model_dump(), None, None, None)
+        elif prov.kind == "local_artifact":
+            if prov.model_identity_id != target_key:
+                raise ValueError(f"local_artifact identity {prov.model_identity_id} 与 group {target_key} 不一致")
+            ckpt = None
+            if identity is not None:
+                art = next((a for a in identity.artifacts if a.model_artifact_id == prov.model_artifact_id), None)
+                if art is not None:
+                    ckpt = art.artifact_path
+            return (prov.model_dump(), ckpt, prov.model_artifact_id, None)
+        elif prov.kind == "external_revision":
+            if prov.model_identity_id != target_key:
+                raise ValueError(f"external_revision identity {prov.model_identity_id} 与 group {target_key} 不一致")
+            return (prov.model_dump(), None, None, prov.external_revision_id)
+
+    if target_key == "human":
+        prov = FrozenExecutionProvenance(kind="human")
+        return (prov.model_dump(), None, None, None)
+
     if identity is None:
-        return None
-    current = [a for a in identity.artifacts if a.is_current and a.artifact_path]
-    if len(current) == 1:
-        return current[0].artifact_path
-    return None
+        raise ValueError(f"模型身份不存在: {target_key}")
+
+    if identity.kind == "local_model":
+        eligible_arts = [
+            a for a in identity.artifacts
+            if getattr(a, "is_ladder_eligible", True) and a.stage == "promoted"
+        ]
+        if len(eligible_arts) == 0:
+            raise ValueError(f"本地模型 {target_key} 没有可用于正式天梯的晋升产物 (0 promoted ladder_eligible artifacts)")
+        if len(eligible_arts) > 1:
+            art_ids = [a.model_artifact_id for a in eligible_arts]
+            raise ValueError(
+                f"本地模型 {target_key} 存在多个晋升产物 ({art_ids})，存在歧义，必须显式指定 model_artifact_id"
+            )
+        selected_art = eligible_arts[0]
+        prov = FrozenExecutionProvenance(
+            kind="local_artifact",
+            model_identity_id=target_key,
+            model_artifact_id=selected_art.model_artifact_id,
+        )
+        return (prov.model_dump(), selected_art.artifact_path, selected_art.model_artifact_id, None)
+
+    elif identity.kind == "external_agent":
+        eligible_revs = [
+            r for r in identity.external_revisions
+            if getattr(r, "is_ladder_eligible", True) and r.stage == "promoted"
+        ]
+        if len(eligible_revs) == 0:
+            raise ValueError(f"外部模型 {target_key} 没有可用于正式天梯的晋升版本 (0 promoted ladder_eligible revisions)")
+        if len(eligible_revs) > 1:
+            rev_ids = [r.external_revision_id for r in eligible_revs]
+            raise ValueError(
+                f"外部模型 {target_key} 存在多个晋升版本 ({rev_ids})，存在歧义，必须显式指定 external_revision_id"
+            )
+        selected_rev = eligible_revs[0]
+        prov = FrozenExecutionProvenance(
+            kind="external_revision",
+            model_identity_id=target_key,
+            external_revision_id=selected_rev.external_revision_id,
+        )
+        return (prov.model_dump(), None, None, selected_rev.external_revision_id)
+
+    raise ValueError(f"模型 {target_key} 类型不支持加入天梯赛季: {identity.kind}")
 
 
 def _account_target_key(account) -> str:
@@ -333,26 +426,25 @@ def _build_enrollment_groups(
     season: dict[str, Any],
     account_ids: list[str],
     accounts_by_id: dict[str, Any],
+    *,
+    participants_registry=None,
+    provenance_by_model: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """按 Participants Account **重建**赛季成员分组（R11-E2 Repair）。
+    """按 Participants Account **重建**赛季成员分组（R11-E2 Repair / R13-B Season Authority Freeze）。
 
     membership 完全由 requested account_ids 决定——旧成员若不在请求中即被移除
     （draft 可删）；每个 group 的 metadata（model_id / model_identity_id /
-    checkpoint / 其他 snapshot 字段）只在身份匹配时复用，绝不残留旧 membership。
-
-    - human Account → model_id="human" 组；
-    - AI Account → 按其 Account.model_identity_id 归组（无绑定 → fail closed）；
-    - 旧 legacy group（无 model_identity_id）：成员推导唯一一致时自动 backfill，
-      不一致 → fail closed，绝不猜；
-    - 新 AI group：model_id=model_identity_id（稳定），checkpoint 冻结唯一 current
-      artifact；已有 group 的 checkpoint 绝不因 Participants 变化而漂移；
-    - 成员冻结 display_name（历史格式）。
+    execution_provenance / checkpoint / model_artifact_id / external_revision_id）
+    在身份匹配时严格复用，绝不因 Registry 变化发生漂移。
+    新 AI group 自动或按显式指定冻结 exact FrozenExecutionProvenance。
     """
-    from participants import registry as participants_registry
+    if participants_registry is None:
+        from participants import registry as default_registry
+        participants_registry = default_registry
 
     get_identity = participants_registry.get_model_identity
 
-    # 1. 保留旧 group metadata（membership 全部清空）
+    # 1. 保留旧 group metadata（membership 全部清空，execution_provenance 严格保留）
     legacy_groups: list[dict[str, Any]] = []
     for m in season.get("models", []) if isinstance(season.get("models"), list) else []:
         group = dict(m)
@@ -387,14 +479,22 @@ def _build_enrollment_groups(
                 break
         if matched is None:
             identity = None if target_key == "human" else get_identity(target_key)
+            explicit_prov = (provenance_by_model or {}).get(target_key)
+            (exec_prov, ckpt, art_id, rev_id) = _freeze_model_group_provenance(
+                target_key, identity, explicit_prov
+            )
             matched = {
                 "model_id": "human" if target_key == "human" else target_key,
                 "model_identity_id": None if target_key == "human" else target_key,
+                "execution_provenance": exec_prov,
                 "accounts": [],
             }
-            checkpoint = _freeze_checkpoint(identity)
-            if checkpoint is not None:
-                matched["checkpoint"] = checkpoint
+            if ckpt is not None:
+                matched["checkpoint"] = ckpt
+            if art_id is not None:
+                matched["model_artifact_id"] = art_id
+            if rev_id is not None:
+                matched["external_revision_id"] = rev_id
             legacy_groups.append(matched)
 
         matched["accounts"].append(
@@ -461,6 +561,7 @@ def set_season_enrollment(
     account_ids: list[str],
     *,
     participants_registry=None,
+    provenance_by_model: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """R11-E2：按 Participants Account 编辑赛季参赛阵容。
 
@@ -494,7 +595,13 @@ def set_season_enrollment(
         if status == "running":
             _check_running_invariants(season, account_ids, accounts_by_id)
 
-        groups = _build_enrollment_groups(season, account_ids, accounts_by_id)
+        groups = _build_enrollment_groups(
+            season,
+            account_ids,
+            accounts_by_id,
+            participants_registry=participants_registry,
+            provenance_by_model=provenance_by_model,
+        )
         updated = dict(season)
         updated["models"] = groups
         updated["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")

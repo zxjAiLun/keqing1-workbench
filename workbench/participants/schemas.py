@@ -201,6 +201,7 @@ class ModelArtifactCreate(BaseModel):
 
 
 class ModelArtifactUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     label: str | None = None
     stage: ArtifactStage | None = None
     capabilities: list[ArtifactCapability] | None = None

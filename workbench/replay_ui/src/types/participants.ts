@@ -33,16 +33,16 @@ export interface ModelArtifact {
   artifact_path?: string | null;
   hash?: string | null;
   is_current: boolean;
-  stage?: 'promoted' | 'candidate' | 'deprecated' | 'retired';
+  stage?: ArtifactStage;
   is_ladder_eligible?: boolean;
-  capabilities?: string[];
+  capabilities?: ArtifactCapability[];
   created_at: string;
   retired_at?: string | null;
 }
 
 export interface ModelArtifactUpdate {
-  stage?: 'promoted' | 'candidate' | 'deprecated' | 'retired';
-  capabilities?: string[];
+  stage?: ArtifactStage;
+  capabilities?: ArtifactCapability[];
   is_current?: boolean;
 }
 
@@ -53,9 +53,9 @@ export interface ExternalModelRevision {
   version: string;
   external_ref?: string | null;
   is_current: boolean;
-  stage: 'promoted' | 'candidate' | 'deprecated' | 'retired';
+  stage: ArtifactStage;
   is_ladder_eligible?: boolean;
-  capabilities?: string[];
+  capabilities?: ArtifactCapability[];
   created_at: string;
   retired_at?: string | null;
   note?: string | null;
@@ -66,15 +66,14 @@ export interface ExternalModelRevisionCreate {
   provider: string;
   version: string;
   external_ref?: string | null;
-  stage?: 'promoted' | 'candidate' | 'deprecated' | 'retired';
+  stage?: ArtifactStage;
   is_current?: boolean;
-  capabilities?: string[];
-  note?: string | null;
+  capabilities?: ArtifactCapability[];
 }
 
 export interface ExternalModelRevisionUpdate {
-  stage?: 'promoted' | 'candidate' | 'deprecated' | 'retired';
-  capabilities?: string[];
+  stage?: ArtifactStage;
+  capabilities?: ArtifactCapability[];
   is_current?: boolean;
 }
 

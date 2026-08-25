@@ -528,10 +528,7 @@ def update_model_artifact(
         new_stage = raw_fields.get("stage")
 
         if cur_stage == "retired":
-            if new_stage is not None and new_stage != "retired":
-                raise ValueError(f"已退役 (retired) 的模型产物 {artifact_id} 已封存，不可变更阶段")
-            if raw_fields.get("is_current"):
-                raise ValueError(f"已退役 (retired) 的模型产物 {artifact_id} 不可设为当前版本")
+            raise ValueError(f"已退役 (retired) 的模型产物 {artifact_id} 已封存，不可变更任何字段")
 
         if raw_fields.get("is_current"):
             for raw in store["artifacts"]:

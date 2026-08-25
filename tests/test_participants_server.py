@@ -140,6 +140,28 @@ def test_model_endpoints(four_account_ids):
     patched_art = api.api_update_artifact("model-70k", art_id, ModelArtifactUpdate(stage="deprecated"))
     assert patched_art["stage"] == "deprecated"
 
+    # Retire local artifact -> sealed
+    retired_art = api.api_update_artifact("model-70k", art_id, ModelArtifactUpdate(stage="retired"))
+    assert retired_art["stage"] == "retired"
+    assert retired_art["retired_at"] is not None
+
+    # Sealed retired local artifact cannot modify stage/capabilities/label/is_current -> 409
+    for patch_payload in [
+        ModelArtifactUpdate(stage="promoted"),
+        ModelArtifactUpdate(capabilities=[]),
+        ModelArtifactUpdate(label="New Name"),
+        ModelArtifactUpdate(is_current=True),
+    ]:
+        with pytest.raises(HTTPException) as exc_art_ret:
+            api.api_update_artifact("model-70k", art_id, patch_payload)
+        assert exc_art_ret.value.status_code == 409
+        assert "已封存" in str(exc_art_ret.value.detail)
+
+    # Set current on retired artifact -> 409
+    with pytest.raises(HTTPException) as exc_art_curr:
+        api.api_set_current_artifact("model-70k", art_id)
+    assert exc_art_curr.value.status_code == 409
+
     with pytest.raises(HTTPException) as exc:
         api.api_add_artifact("model-ghost", ModelArtifactCreate(label="x", artifact_path="y"))
     assert exc.value.status_code == 404

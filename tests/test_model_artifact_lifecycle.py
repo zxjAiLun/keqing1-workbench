@@ -213,13 +213,33 @@ def test_retired_artifact_blocks_current_and_transitions(participants_env) -> No
     art_id = ident.artifacts[0].model_artifact_id
     registry.retire_model_artifact("m_arch", art_id)
 
-    # Cannot set retired artifact as current
+    # 1. Cannot set retired artifact as current
     with pytest.raises(ValueError, match="无法将已退役"):
         registry.set_current_model_artifact("m_arch", art_id)
 
-    # Cannot transition out of retired stage
+    # 2. Cannot transition out of retired stage
     with pytest.raises(ValueError, match="已封存"):
         registry.promote_model_artifact("m_arch", art_id)
+
+    # 3. Cannot mutate capabilities, label, or stage on sealed retired artifact
+    from workbench.participants.schemas import ModelArtifactUpdate
+
+    for update_payload in [
+        ModelArtifactUpdate(capabilities=[]),
+        ModelArtifactUpdate(capabilities=["review_allowed", "playwithyou_allowed"]),
+        ModelArtifactUpdate(label="Modified Label"),
+        ModelArtifactUpdate(is_current=True),
+        ModelArtifactUpdate(stage="deprecated"),
+    ]:
+        with pytest.raises(ValueError, match="已封存，不可变更任何字段"):
+            registry.update_model_artifact("m_arch", art_id, update_payload)
+
+    # Invariant check: capabilities and stage remain completely unmodified
+    ident_refreshed = registry.get_model_identity("m_arch")
+    art_refreshed = next(a for a in ident_refreshed.artifacts if a.model_artifact_id == art_id)
+    assert art_refreshed.stage == "retired"
+    assert art_refreshed.capabilities == ["review_allowed"]
+    assert art_refreshed.is_current is False
 
 
 def test_explicit_empty_capabilities_respected() -> None:

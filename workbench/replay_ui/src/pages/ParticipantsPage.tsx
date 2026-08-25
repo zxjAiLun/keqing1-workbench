@@ -11,6 +11,7 @@ import type {
   Account,
   AccountCreate,
   AccountStatsResponse,
+  ArtifactCapability,
   ArtifactStage,
   ExternalModelRevisionCreate,
   ModelArtifactCreate,
@@ -131,7 +132,7 @@ export function ParticipantsPage() {
     if (!addingRevisionFor || !revVersion.trim() || !revProvider.trim()) return;
     setRevBusy(true);
     try {
-      const capabilities: string[] = [];
+      const capabilities: ArtifactCapability[] = [];
       if (revLadderEligible) capabilities.push('ladder_eligible');
       if (revPlaywithyouAllowed) capabilities.push('playwithyou_allowed');
       if (revReviewAllowed) capabilities.push('review_allowed');
@@ -362,7 +363,7 @@ export function ParticipantsPage() {
                               disabled={artifactBusy}
                               style={ghostSmallBtn}
                             >
-                              设为当前
+                              设为目录当前
                             </button>
                           )}
                           {!isRetired && art.stage !== 'promoted' && (
@@ -480,7 +481,7 @@ export function ParticipantsPage() {
                               disabled={revBusy}
                               style={ghostSmallBtn}
                             >
-                              设为当前
+                              设为目录当前
                             </button>
                           )}
                           {!isRetired && rev.stage !== 'promoted' && (

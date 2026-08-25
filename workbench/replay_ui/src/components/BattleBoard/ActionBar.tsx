@@ -158,13 +158,13 @@ function btnStyle(type: string): React.CSSProperties {
         color: 'var(--accent-text)',
       };
     case "pon":
-      return { ...base, background: 'var(--warning)', color: 'var(--text-primary)' };
+      return { ...base, background: 'var(--warning)', color: 'var(--on-semantic-fill)' };
     case "chi":
-      return { ...base, background: 'var(--success)', color: 'var(--text-primary)' };
+      return { ...base, background: 'var(--success)', color: 'var(--on-semantic-fill)' };
     case "daiminkan":
     case "ankan":
     case "kakan":
-      return { ...base, background: 'var(--seat-2)', color: 'var(--text-primary)' };
+      return { ...base, background: 'var(--seat-2)', color: 'var(--on-semantic-fill)' };
     case "none":
       return {
         ...base,

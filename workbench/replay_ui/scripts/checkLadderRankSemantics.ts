@@ -83,10 +83,10 @@ check(/pt_tier/.test(builder), 'report builder ledger 应记录 pt_tier');
 check(!/table_room/.test(builder), 'report builder 不应再写 table_room');
 check(/match_context/.test(builder), 'report builder 应使用 match_context（共享上下文只含 game_length/桌均R）');
 
-// 8. 新测试文件在 pytest 白名单
+// 8. 新测试文件在 pytest discovery
 const pyproject = readFileSync(resolve(REPO, 'pyproject.toml'), 'utf8');
-check(/test_rank_systems\.py/.test(pyproject), 'pyproject 应包含 test_rank_systems.py');
-check(/test_report_builder_rank\.py/.test(pyproject), 'pyproject 应包含 test_report_builder_rank.py');
+check(/test_\*\.py/.test(pyproject) || /test_rank_systems\.py/.test(pyproject), 'pyproject 应包含 test_rank_systems.py');
+check(/test_\*\.py/.test(pyproject) || /test_report_builder_rank\.py/.test(pyproject), 'pyproject 应包含 test_report_builder_rank.py');
 
 // 9. manifest 写入 resolved scoring 契约
 const publisher = readFileSync(resolve(REPO, 'training/mortal/publish_ladder_snapshot.py'), 'utf8');

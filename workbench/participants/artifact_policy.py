@@ -44,10 +44,9 @@ def _resolve_physical_artifact_path(
     if not raw:
         return None
     try:
-        return resolve_model_checkpoint(raw, project_root)
+        return resolve_model_checkpoint(raw, project_root).resolve()
     except (FileNotFoundError, RuntimeError, ValueError):
-        p = Path(raw)
-        return p.resolve() if p.is_absolute() else (Path(project_root) / p).resolve()
+        return None
 
 
 def resolve_artifact_binding(
@@ -102,9 +101,8 @@ def resolve_artifact_binding(
                     resolved_checkpoint_path = Path(str(resolved)).resolve()
                 else:
                     resolved_checkpoint_path = resolve_model_checkpoint(raw_cp_str, project_root).resolve()
-            except Exception:
-                p = Path(raw_cp_str)
-                resolved_checkpoint_path = p.resolve() if p.is_absolute() else (Path(project_root) / p).resolve()
+            except Exception as exc:
+                raise ValueError(f"无法解析 checkpoint 路径 {checkpoint!r}: {exc}") from exc
 
     # If explicit identity and artifact provided
     if identity_id and artifact_id:
@@ -159,7 +157,7 @@ def resolve_artifact_binding(
 
             candidates.append((ident, art, phys))
 
-    # If no exact match found but account has a bound model_identity with current artifact
+    # If no exact match found but account has a bound model_identity
     if not candidates and account_id and account and account.model_identity_id and not identity_id and not artifact_id:
         ident = registry.get_model_identity(account.model_identity_id)
         if ident is not None:
@@ -185,18 +183,12 @@ def resolve_artifact_binding(
         raise ValueError(f"未找到匹配的模型产物 (0 match, criteria: {spec_info})，拒绝准入")
 
     if len(candidates) > 1:
-        # If multiple candidates exist, check if exactly one is marked current
-        current_matches = [(i, a, p) for (i, a, p) in candidates if a.is_current]
-        if len(current_matches) == 1:
-            ident, art, phys = current_matches[0]
-        else:
-            cand_names = [f"{i.model_identity_id}:{a.model_artifact_id}" for i, a, _ in candidates]
-            raise ValueError(
-                f"模型产物存在歧义，匹配到 {len(candidates)} 个候选 ({', '.join(cand_names)})，拒绝准入"
-            )
-    else:
-        ident, art, phys = candidates[0]
+        cand_names = [f"{i.model_identity_id}:{a.model_artifact_id}" for i, a, _ in candidates]
+        raise ValueError(
+            f"模型产物存在歧义，匹配到 {len(candidates)} 个候选 ({', '.join(cand_names)})，拒绝准入"
+        )
 
+    ident, art, phys = candidates[0]
     _enforce_artifact_purpose(art, purpose, account_id=account_id)
     return CanonicalArtifactBinding(
         account_id=account_id,
@@ -232,3 +224,9 @@ def _enforce_artifact_purpose(
             )
     else:
         raise ValueError(f"未知的模型产物准入目标: {purpose}")
+
+
+__all__ = [
+    "CanonicalArtifactBinding",
+    "resolve_artifact_binding",
+]

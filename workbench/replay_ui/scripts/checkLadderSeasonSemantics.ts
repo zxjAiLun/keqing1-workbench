@@ -112,11 +112,11 @@ for (const page of PAGES) {
   );
 }
 
-// 12. test_ladder_server.py 必须在 pytest python_files 白名单
+// 12. test_ladder_server.py 必须被 pytest discovery 自动发现
 const pyproject = readFileSync(resolve(import.meta.dirname, '../../../pyproject.toml'), 'utf8');
 check(
-  /test_ladder_server\.py/.test(pyproject),
-  'pyproject.toml python_files 应包含 test_ladder_server.py',
+  /test_\*\.py/.test(pyproject) || /test_ladder_server\.py/.test(pyproject),
+  'pyproject.toml discovery 应覆盖 test_ladder_server.py',
 );
 
 if (failures > 0) {

@@ -70,11 +70,11 @@ check(
 );
 check(inFile('../participants/api.py', ['prefix="/api/participants"']), 'participants api 前缀 /api/participants');
 
-// 7) pytest 白名单：participants 测试以 glob 收录（新增 R12-A 文件自动纳入）
+// 7) pytest discovery：自动收录全部测试（含 test_participants_*）
 const pyproject = read('../../pyproject.toml');
 check(
-  pyproject.includes('test_participants_*.py'),
-  'pyproject python_files 白名单包含 test_participants_*.py（glob）',
+  pyproject.includes('test_*.py') || pyproject.includes('test_participants_*.py'),
+  'pyproject discovery 自动收录 participants 测试',
 );
 
 // 8) MatchesPage 渲染 status（active|void）
@@ -281,6 +281,6 @@ const ladderTypes = read('src/types/ladder.ts');
 check(ladderTypes.includes('stats_coverage') && ladderTypes.includes('stats_total_games'), 'TS 类型含统计覆盖率字段');
 const accountPage = read('src/pages/LadderAccountPage.tsx');
 check(accountPage.includes('详细牌谱统计'), '账号详情披露详细牌谱统计覆盖率');
-check(pyproject.includes('test_participants_replay_stats_projection.py') || pyproject.includes('test_participants_*.py'), 'R12-A 测试入 pytest 白名单');
+check(pyproject.includes('test_*.py') || pyproject.includes('test_participants_replay_stats_projection.py') || pyproject.includes('test_participants_*.py'), 'R12-A 测试入 pytest 白名单');
 
 console.log('participant semantics OK (model-only launcher, account-less session alias, force-save, routes, server mount, pytest whitelist, R12-A replay stats projection)');

@@ -149,14 +149,20 @@ def validate_ladder_eligibility(
             # 非人类座位：必须通过单一 artifact policy resolver 唯一解析并满足 ladder_eligible
             from .artifact_policy import resolve_artifact_binding
 
-            identity_id = getattr(seat, "model_identity_id", None) or account.model_identity_id or season_model.get("model_id")
+            # 严格 provenance 优先级：
+            # 1. seat 显式提供 model_identity_id -> 必须原样验证，绝不允许 fallback
+            # 2. 否则使用 account.model_identity_id
+            # 3. 否则才尝试使用 season_model.get("model_id")
+            seat_ident = getattr(seat, "model_identity_id", None)
+            if seat_ident is not None:
+                identity_id = seat_ident
+            elif account.model_identity_id is not None:
+                identity_id = account.model_identity_id
+            else:
+                identity_id = season_model.get("model_id")
+
             artifact_id = getattr(seat, "model_artifact_id", None)
             season_ckpt = season_model.get("checkpoint")
-
-            # 校验 account 是否存在且未停用
-            if identity_id and not registry.get_model_identity(identity_id):
-                # 如果 identity 尚未存在于 registry，但在 season 中配置了 checkpoint/model_id，尝试绑定
-                identity_id = season_model.get("model_id")
 
             resolve_artifact_binding(
                 account_id=account_id,

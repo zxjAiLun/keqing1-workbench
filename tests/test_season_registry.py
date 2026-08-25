@@ -17,7 +17,9 @@ from replay.ladder import SeasonNotFoundError, SeasonRegistryError  # noqa: E402
 
 
 @pytest.fixture
-def configs_dir(tmp_path):
+def configs_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("KEQING_PARTICIPANT_DATA_ROOT", str(tmp_path / "participants"))
+    monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(tmp_path / "ladder"))
     return tmp_path / "registries"
 
 
@@ -303,7 +305,10 @@ def test_delete_season_cleans_dirty_lock_and_owned_snapshots(configs_dir, tmp_pa
     sr.set_season_status(configs_dir, "s1", "completed")
 
     participants_root = tmp_path / "participants"
+    ladder_root = tmp_path / "ladder"
     monkeypatch.setenv("KEQING_PARTICIPANT_DATA_ROOT", str(participants_root))
+    monkeypatch.setenv("KEQING_LADDER_DATA_ROOT", str(ladder_root))
+    monkeypatch.setenv("KEQING_DATA_ROOT", str(tmp_path / "data_root"))
     from project_data import data_path as _data_path
 
     dirty = participants_root / "ladder_dirty_s1.json"
@@ -313,7 +318,7 @@ def test_delete_season_cleans_dirty_lock_and_owned_snapshots(configs_dir, tmp_pa
     dirty.write_text("{}", encoding="utf-8")
     lock.write_text("", encoding="utf-8")
     # Workbench 认领的快照目录 + 外部目录（模拟历史 report_dir 指向外部）
-    owned = _data_path("ladder") / "seasons" / "s1"
+    owned = ladder_root / "seasons" / "s1"
     owned.mkdir(parents=True, exist_ok=True)
     (owned / "account_summary.json").write_text("{}", encoding="utf-8")
     external = tmp_path / "external-report"

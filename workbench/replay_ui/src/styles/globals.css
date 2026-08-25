@@ -51,6 +51,9 @@
   --accent-bg: rgba(212,168,83,0.14);
   --accent-border: rgba(212,168,83,0.40);
 
+  /* 语义实心按钮前景文字色（高亮实心底上的深色高可读性文字） */
+  --on-semantic-fill: #1a150c;
+
   /* 语义色（青=正/优势，红=负/恶手） */
   --positive: #5ec8e8;
   --negative: #f07070;
@@ -330,6 +333,7 @@
 
   /* 边框 */
   --border: #e5e7eb;
+  --border-strong: #d1d5db;
   --border-focus: #3498db;
 
   /* 导航栏 */

@@ -56,9 +56,9 @@ check(/ingest_root/.test(publisher), 'publisher 应支持 ingest_root');
 check(/build_ingest_report/.test(publisher), 'publisher 应调用 build_ingest_report（ingest 分支）');
 check(/ingest=1/.test(publisher), 'publisher ingest 指纹应标记 ingest=1');
 
-// 6. pytest 白名单
+// 6. pytest discovery
 const pyproject = read('pyproject.toml');
-check(/test_ladder_ingest\.py/.test(pyproject), 'pyproject 应包含 test_ladder_ingest.py');
+check(/test_\*\.py/.test(pyproject) || /test_ladder_ingest\.py/.test(pyproject), 'pyproject 应包含 test_ladder_ingest.py');
 
 if (failures > 0) {
   console.error(`ladder ingest semantics FAILED (${failures} issues)`);

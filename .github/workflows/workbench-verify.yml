@@ -61,5 +61,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Semantic checks
+        run: |
+          npm run check:participant-semantics
+          npm run check:ladder-live-semantics
+          npm run check:ladder-season-semantics
+          npm run check:ladder-ingest-semantics
+          npm run check:review-daiminkan
+          npm run check:review-e2e
+
       - name: Build
         run: npm run build

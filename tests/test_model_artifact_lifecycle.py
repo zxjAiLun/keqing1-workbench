@@ -2,6 +2,7 @@
 """R12-D: Model Artifact Lifecycle and Purpose Classification tests."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import pytest
 
@@ -403,7 +404,7 @@ def test_artifact_policy_resolver_adversarial_matrix(participants_env, tmp_path,
     )
     assert b_rev.model_artifact_id == art1_id
 
-    # 10. Ambiguous match (>1 candidates with same checkpoint and neither current) -> rejects
+    # 10. Ambiguous match (>1 candidates with same checkpoint, even if exactly one is current) -> must reject
     cp_shared = tmp_path / "models" / "shared.pth"
     cp_shared.write_text("shared", encoding="utf-8")
     i_amb1 = registry.create_model_identity(
@@ -415,23 +416,135 @@ def test_artifact_policy_resolver_adversarial_matrix(participants_env, tmp_path,
             stage="promoted",
         )
     )
-    i_amb2 = registry.create_model_identity(
-        ModelIdentityCreate(
-            model_identity_id="ident_amb2",
-            label="Amb 2",
-            kind="local_model",
+    # Add second artifact under same identity pointing to same checkpoint
+    art_amb2 = registry.add_model_artifact(
+        "ident_amb1",
+        ModelArtifactCreate(
+            label="Amb 1 second",
             artifact_path=str(cp_shared),
             stage="promoted",
-        )
+        ),
     )
-    # Unset is_current to trigger ambiguity
-    with pytest.raises(ValueError, match="存在歧义|0 match"):
-        # Explicit search by checkpoint only across both identities
+    # Now ident_amb1 has 2 artifacts for cp_shared; exactly 1 is current.
+    # Policy must strictly reject without identity_id + artifact_id narrow down
+    with pytest.raises(ValueError, match="模型产物存在歧义"):
         resolve_artifact_binding(
+            identity_id="ident_amb1",
             checkpoint=str(cp_shared),
             purpose="ladder_eligible",
             project_root=tmp_path,
             registry=registry,
         )
+
+    # 11. Two records pointing to nonexistent checkpoint -> both fail canonical resolution -> 0 match / parse reject
+    nonexistent_path = "models/ghost_nonexistent_12345.pth"
+    i_ghost1 = registry.create_model_identity(
+        ModelIdentityCreate(
+            model_identity_id="ident_ghost1",
+            label="Ghost 1",
+            kind="local_model",
+            artifact_path=nonexistent_path,
+            stage="promoted",
+        )
+    )
+    with pytest.raises(ValueError, match="无法解析 checkpoint 路径|未找到匹配"):
+        resolve_artifact_binding(
+            identity_id="ident_ghost1",
+            checkpoint=nonexistent_path,
+            purpose="ladder_eligible",
+            project_root=tmp_path,
+            registry=registry,
+        )
+
+    # 12. Invalid checkpoint alias -> fails closed
+    with pytest.raises(ValueError, match="无法解析 checkpoint 路径|未找到匹配"):
+        resolve_artifact_binding(
+            checkpoint="completely_invalid_alias_and_not_file",
+            purpose="ladder_eligible",
+            project_root=tmp_path,
+            registry=registry,
+        )
+
+
+def test_ladder_rejects_explicit_nonexistent_seat_identity(participants_env, tmp_path, monkeypatch) -> None:
+    from participants.ladder_eligibility import validate_ladder_eligibility
+
+    season_id = "test-season-e2e"
+    # Create running season config
+    season_cfg = {
+        "schema": "keqing.ladder.season.v1",
+        "season_id": season_id,
+        "status": "running",
+        "report_dir": str(tmp_path / "reports" / season_id),
+        "ingest": {
+            "sources_root": str(tmp_path / "sources"),
+            "participants": {"enabled": True, "exclusive": True},
+        },
+        "models": [
+            {"model_id": "human", "accounts": [{"account_id": "human@01"}]},
+            {
+                "model_id": "mortal_70k",
+                "checkpoint": "checkpoints/70k.pth",
+                "accounts": [
+                    {"account_id": "ai@01"},
+                    {"account_id": "ai@02"},
+                    {"account_id": "ai@03"},
+                ],
+            },
+        ],
+    }
+    cfg_dir = tmp_path / "configs"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / f"{season_id}.json").write_text(json.dumps(season_cfg, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setenv("KEQING_LADDER_CONFIG_DIR", str(cfg_dir))
+
+    cp_file = tmp_path / "checkpoints" / "70k.pth"
+    cp_file.parent.mkdir(parents=True, exist_ok=True)
+    cp_file.write_text("model_data", encoding="utf-8")
+
+    # Create legal account & legal promoted identity
+    registry.create_model_identity(
+        ModelIdentityCreate(
+            model_identity_id="mortal_70k",
+            label="70k",
+            kind="local_model",
+            artifact_path=str(cp_file),
+            stage="promoted",
+        )
+    )
+    for acc, acc_type in [
+        ("human@01", "human"),
+        ("ai@01", "managed_bot"),
+        ("ai@02", "managed_bot"),
+        ("ai@03", "managed_bot"),
+    ]:
+        registry.create_account(
+            AccountCreate(
+                account_id=acc,
+                display_name=acc,
+                account_type=acc_type,
+                model_identity_id="mortal_70k" if acc_type != "human" else None,
+            )
+        )
+
+    # Valid seats pass
+    valid_seats = [
+        MatchSeat(seat=0, account_id="human@01", controller_type="human_ui"),
+        MatchSeat(seat=1, account_id="ai@01", controller_type="local_model"),
+        MatchSeat(seat=2, account_id="ai@02", controller_type="local_model"),
+        MatchSeat(seat=3, account_id="ai@03", controller_type="local_model"),
+    ]
+    validate_ladder_eligibility(season_id, valid_seats, registry=registry, project_root=tmp_path)
+
+    # Explicit nonexistent model_identity_id provided on seat -> MUST NOT fallback to season model -> REJECT
+    bad_seat_explicit_identity = [
+        MatchSeat(seat=0, account_id="human@01", controller_type="human_ui"),
+        MatchSeat(seat=1, account_id="ai@01", controller_type="local_model", model_identity_id="does-not-exist"),
+        MatchSeat(seat=2, account_id="ai@02", controller_type="local_model"),
+        MatchSeat(seat=3, account_id="ai@03", controller_type="local_model"),
+    ]
+    with pytest.raises(ValueError, match="未找到匹配的模型产物|不存在"):
+        validate_ladder_eligibility(season_id, bad_seat_explicit_identity, registry=registry, project_root=tmp_path)
+
 
 

@@ -27,6 +27,14 @@ def env(tmp_path, monkeypatch):
     # 有效赛季配置：human（nick）+ 70k（bots，带 checkpoint）
     configs = tmp_path / "configs"
     configs.mkdir(exist_ok=True)
+
+    # 实体文件 checkpoint
+    cp70k = tmp_path / "checkpoints" / "70k.pth"
+    cpv3 = tmp_path / "checkpoints" / "v3.pth"
+    cp70k.parent.mkdir(parents=True, exist_ok=True)
+    cp70k.write_text("70k_data", encoding="utf-8")
+    cpv3.write_text("v3_data", encoding="utf-8")
+
     season_cfg = {
         "schema": "keqing.ladder.season.v1",
         "season_id": SEASON,
@@ -38,7 +46,7 @@ def env(tmp_path, monkeypatch):
             {"model_id": "human", "accounts": [{"account_id": "nick@01"}]},
             {
                 "model_id": "70k",
-                "checkpoint": "checkpoints/70k.pth",
+                "checkpoint": str(cp70k),
                 "accounts": [
                     {"account_id": "70k@01"},
                     {"account_id": "70k@02"},
@@ -52,8 +60,8 @@ def env(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _accounts():
-    _models()
+def _accounts(tmp_path: Path | None = None):
+    _models(tmp_path)
     for account_id, account_type in (
         ("nick@01", "human"),
         ("70k@01", "managed_bot"),
@@ -70,17 +78,19 @@ def _accounts():
         )
 
 
-def _models():
+def _models(tmp_path: Path | None = None):
     """70k / V3 两个身份 + 产物（checkpoint 路径不同）。"""
     ident_70k = registry.get_model_identity("70k")
     if ident_70k is None:
+        cp70k = "checkpoints/70k.pth" if tmp_path is None else str(tmp_path / "checkpoints" / "70k.pth")
         ident_70k = registry.create_model_identity(
-            ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", artifact_path="checkpoints/70k.pth", stage="promoted")
+            ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", artifact_path=cp70k, stage="promoted")
         )
     ident_v3 = registry.get_model_identity("V3")
     if ident_v3 is None:
+        cpv3 = "checkpoints/v3.pth" if tmp_path is None else str(tmp_path / "checkpoints" / "v3.pth")
         ident_v3 = registry.create_model_identity(
-            ModelIdentityCreate(model_identity_id="V3", label="V3", kind="local_model", artifact_path="checkpoints/v3.pth", stage="promoted")
+            ModelIdentityCreate(model_identity_id="V3", label="V3", kind="local_model", artifact_path=cpv3, stage="promoted")
         )
     return ident_70k, ident_v3
 
@@ -110,8 +120,8 @@ def _match_create(seats, *, season_id=SEASON):
 # P1-1：intake 恢复补标 dirty（crash window）
 # ---------------------------------------------------------------------------
 
-def test_recover_intake_transaction_restores_dirty(env):
-    _accounts()
+def test_recover_intake_transaction_restores_dirty(env, tmp_path):
+    _accounts(tmp_path)
     match = ledger.create_match(_match_create(_seats()), registry)
     # 模拟「dirty 丢失」：正常提交后再清掉（等价于旧顺序下死在 rewrite 与 dirty 之间）
     ledger.clear_ladder_dirty(SEASON)
@@ -154,40 +164,40 @@ def test_recover_intake_transaction_restores_dirty(env):
 # P1-2：正式赛季资格 gate
 # ---------------------------------------------------------------------------
 
-def test_gate_rejects_70k_account_with_v3_artifact(env):
-    _accounts()
-    _identity_70k, identity_v3 = _models()
+def test_gate_rejects_70k_account_with_v3_artifact(env, tmp_path):
+    _accounts(tmp_path)
+    _identity_70k, identity_v3 = _models(tmp_path)
     art_v3 = identity_v3.artifacts[0]
     with pytest.raises((ValueError, ledger.ValidationError)):
         ledger.create_match(_match_create(_seats("V3", art_v3.model_artifact_id)), registry)
 
 
-def test_gate_accepts_70k_account_with_70k_artifact(env):
-    _accounts()
-    identity_70k, _v3 = _models()
+def test_gate_accepts_70k_account_with_70k_artifact(env, tmp_path):
+    _accounts(tmp_path)
+    identity_70k, _v3 = _models(tmp_path)
     art_70k = identity_70k.artifacts[0]
     match = ledger.create_match(_match_create(_seats(identity_70k.model_identity_id, art_70k.model_artifact_id)), registry)
     assert match.rating_eligible is True
     assert ledger.ladder_dirty_path(SEASON).exists()
 
 
-def test_gate_rejects_unknown_season(env):
-    _accounts()
+def test_gate_rejects_unknown_season(env, tmp_path):
+    _accounts(tmp_path)
     with pytest.raises(ValueError, match="正式赛季不存在"):
         ledger.create_match(_match_create(_seats(), season_id="ghost-season"), registry)
 
 
-def test_gate_rejects_unregistered_account(env):
-    _accounts()
+def test_gate_rejects_unregistered_account(env, tmp_path):
+    _accounts(tmp_path)
     # 账号存在但不在赛季成员 → 正式资格 gate 拒绝
     registry.create_account(AccountCreate(account_id="ghost@01", display_name="ghost", account_type="external_bot"))
     with pytest.raises(ValueError, match="未在正式赛季"):
         ledger.create_match(_match_create(_seats(extra_account="ghost@01")), registry)
 
 
-def test_gate_rejects_human_not_under_human_model(env):
+def test_gate_rejects_human_not_under_human_model(env, tmp_path):
     """人类账号必须属于 model_id=human（C23 契约）。"""
-    _accounts()
+    _accounts(tmp_path)
     # nick@01 是 human，赛季配置在 human 模型下 → 正常；这里构造一个 human 账号
     # 在 bot 模型的 season 场景：用 70k@01（bot）改造成 human 需要重建 fixture，
     # 直接验证现有配置下 human nick 通过即可 + 一个反例。
@@ -268,9 +278,9 @@ def test_gate_rejects_rating_eligible_without_season(env):
         )
 
 
-def test_gate_normalizes_season_id(env):
+def test_gate_normalizes_season_id(env, tmp_path):
     """UX Repair 3 / P1：season_id 带空白 → 验证通过但必须落账为 trim 后的规范值。"""
-    _accounts()
+    _accounts(tmp_path)
     seats = [
         MatchSeat(seat=0, account_id="nick@01", controller_type="human_ui"),
         MatchSeat(seat=1, account_id="70k@01", controller_type="local_model"),
@@ -297,15 +307,16 @@ def test_gate_normalizes_season_id(env):
     assert not ledger.ladder_dirty_path(" official-ladder-v1 ").exists()
 
 
-def test_gate_rejects_human_seat_with_bot_artifact(env):
+def test_gate_rejects_human_seat_with_bot_artifact(env, tmp_path):
     """P1：正式人类座位不能携带冻结 bot 模型产物——防止 bot 战绩记到 Nick 名下。
 
     用全局 identity 复现真实漏洞场景：账号显式绑定模型后，
     identity_belongs_to_account 通过，必须由 eligibility gate 拒绝。
     """
-    _accounts()
+    _accounts(tmp_path)
+    cp70k = str(tmp_path / "checkpoints" / "70k.pth")
     global_70k = registry.create_model_identity(
-        ModelIdentityCreate(model_identity_id="70k-global", label="70k", kind="local_model", artifact_path="checkpoints/70k.pth")
+        ModelIdentityCreate(model_identity_id="70k-global", label="70k", kind="local_model", artifact_path=cp70k, stage="promoted")
     )
     for aid in ("70k@01", "70k@02", "70k@03"):
         registry.update_account(aid, AccountUpdate(model_identity_id="70k-global"))
@@ -322,11 +333,12 @@ def test_gate_rejects_human_seat_with_bot_artifact(env):
         ledger.create_match(_match_create(seats), registry)
 
 
-def test_gate_accepts_bot_artifact_on_bot_account(env):
+def test_gate_accepts_bot_artifact_on_bot_account(env, tmp_path):
     """P1：bot artifact + 对应 bot 账号 + official ladder → ACCEPT。"""
-    _accounts()
+    _accounts(tmp_path)
+    cp70k = str(tmp_path / "checkpoints" / "70k.pth")
     global_70k = registry.create_model_identity(
-        ModelIdentityCreate(model_identity_id="70k-global", label="70k", kind="local_model", artifact_path="checkpoints/70k.pth")
+        ModelIdentityCreate(model_identity_id="70k-global", label="70k", kind="local_model", artifact_path=cp70k, stage="promoted")
     )
     for aid in ("70k@01", "70k@02", "70k@03"):
         registry.update_account(aid, AccountUpdate(model_identity_id="70k-global"))

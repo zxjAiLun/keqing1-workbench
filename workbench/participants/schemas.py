@@ -208,6 +208,42 @@ class ModelArtifactUpdate(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# 冻结执行凭据（不可变历史落账证据）
+# ---------------------------------------------------------------------------
+
+class FrozenExecutionProvenance(BaseModel):
+    kind: Literal["human", "local_artifact", "external_revision"]
+    model_identity_id: str | None = None
+    model_artifact_id: str | None = None
+    external_revision_id: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_shape(self) -> "FrozenExecutionProvenance":
+        if self.kind == "human":
+            if self.model_identity_id is not None:
+                raise ValueError("human execution_provenance 不允许携带 model_identity_id")
+            if self.model_artifact_id is not None:
+                raise ValueError("human execution_provenance 不允许携带 model_artifact_id")
+            if self.external_revision_id is not None:
+                raise ValueError("human execution_provenance 不允许携带 external_revision_id")
+        elif self.kind == "local_artifact":
+            if not self.model_identity_id:
+                raise ValueError("local_artifact execution_provenance 必须提供 model_identity_id")
+            if not self.model_artifact_id:
+                raise ValueError("local_artifact execution_provenance 必须提供 model_artifact_id")
+            if self.external_revision_id is not None:
+                raise ValueError("local_artifact execution_provenance 不允许携带 external_revision_id")
+        elif self.kind == "external_revision":
+            if not self.model_identity_id:
+                raise ValueError("external_revision execution_provenance 必须提供 model_identity_id")
+            if not self.external_revision_id:
+                raise ValueError("external_revision execution_provenance 必须提供 external_revision_id")
+            if self.model_artifact_id is not None:
+                raise ValueError("external_revision execution_provenance 不允许携带 model_artifact_id")
+        return self
+
+
+# ---------------------------------------------------------------------------
 # 外部账号别名（身份解析）
 # ---------------------------------------------------------------------------
 
@@ -278,6 +314,8 @@ class SeatResolution(BaseModel):
     alias_id: str | None = None  # 候选别名 ID：服务端读取 account + model 信息
     model_identity_id: str | None = None
     model_artifact_id: str | None = None
+    external_revision_id: str | None = None
+    execution_provenance: FrozenExecutionProvenance | None = None
     alias_scope: ExternalAliasScope | Literal["none"] = "match"
     confidence: Literal["confirmed", "unresolved"] = "confirmed"
 
@@ -296,8 +334,12 @@ class MatchSeat(BaseModel):
     seat: SeatNo
     account_id: str
     controller_type: ControllerType | None = None  # 缺省取 account.default_controller
+    # 兼容投影字段（旧数据 / UI 读取兼容，权威字段为 execution_provenance）
     model_identity_id: str | None = None
     model_artifact_id: str | None = None
+    external_revision_id: str | None = None
+    # 权威不可变执行证据对象 (R13-B)
+    execution_provenance: FrozenExecutionProvenance | None = None
 
 
 class MatchCreate(BaseModel):

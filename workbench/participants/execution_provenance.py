@@ -25,6 +25,7 @@ from .schemas import (
     ArtifactCapability,
     ControllerType,
     ExternalModelRevision,
+    FrozenExecutionProvenance,
     ModelArtifact,
     ModelIdentity,
 )
@@ -243,3 +244,27 @@ def resolve_execution_provenance(
         )
 
     raise ValueError(f"未知的账号类型: {account.account_type}")
+
+
+def freeze_execution_provenance(
+    provenance: CanonicalExecutionProvenance,
+) -> FrozenExecutionProvenance:
+    """Project a CanonicalExecutionProvenance into a persisted FrozenExecutionProvenance.
+
+    Zero runtime paths (resolved_checkpoint_path is strictly excluded from Match persistence).
+    """
+    if provenance.kind == "human":
+        return FrozenExecutionProvenance(kind="human")
+    elif provenance.kind == "local_artifact":
+        return FrozenExecutionProvenance(
+            kind="local_artifact",
+            model_identity_id=provenance.model_identity_id,
+            model_artifact_id=provenance.model_artifact_id,
+        )
+    elif provenance.kind == "external_revision":
+        return FrozenExecutionProvenance(
+            kind="external_revision",
+            model_identity_id=provenance.model_identity_id,
+            external_revision_id=provenance.external_revision_id,
+        )
+    raise ValueError(f"未知的 execution provenance 类型: {provenance.kind}")

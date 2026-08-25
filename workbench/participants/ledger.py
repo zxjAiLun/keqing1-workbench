@@ -310,6 +310,15 @@ def validate_match(
                     message=f"模型产物 {seat.model_artifact_id} 不属于身份 {seat.model_identity_id}",
                 )
             )
+        if getattr(seat, "external_revision_id", None) and not registry.external_revision_belongs_to_identity(
+            seat.model_identity_id, seat.external_revision_id
+        ):
+            issues.append(
+                ValidationIssue(
+                    code="external_revision_mismatch",
+                    message=f"外部版本 {seat.external_revision_id} 不属于身份 {seat.model_identity_id}",
+                )
+            )
 
     if len(final_scores) != 4:
         issues.append(ValidationIssue(code="score_count", message=f"必须恰好 4 个最终分数，得到 {len(final_scores)}"))
@@ -588,11 +597,20 @@ def create_match(payload: MatchCreate, registry) -> Match:
         match_id = _generate_match_id()
         match, issues, blocking = build_match(payload, registry, match_id, now)
         # P1-2：正式计分 → 正式赛季资格 gate（rating_eligible ⇒ 必填 season + 校验）
-        # 返回值是 trim 后的规范 season_id，必须回写 Match（防止空白 season 绕过投影）
+        # 返回值是 trim 后的规范 season_id 与逐座 CanonicalExecutionProvenance，必须回写 Match
         if match.rating_eligible:
             from .ladder_eligibility import ensure_ladder_eligibility
+            from .execution_provenance import freeze_execution_provenance
 
-            match.season_id = ensure_ladder_eligibility(match.season_id, match.seats, registry=registry)
+            admission = ensure_ladder_eligibility(match.season_id, match.seats, registry=registry)
+            match.season_id = admission.season_id
+            for s in match.seats:
+                if s.seat in admission.provenance_by_seat:
+                    frozen_prov = freeze_execution_provenance(admission.provenance_by_seat[s.seat])
+                    s.execution_provenance = frozen_prov
+                    s.model_identity_id = frozen_prov.model_identity_id
+                    s.model_artifact_id = frozen_prov.model_artifact_id
+                    s.external_revision_id = frozen_prov.external_revision_id
         # P1-5：dirty 先于 Match 提交（即使后续崩溃也只会多重建一次，不会永久漏更新）
         mark_ladder_dirty(match.season_id)
         _transactional_match_update(
@@ -731,13 +749,22 @@ def revise_match(match_id: str, payload: MatchRevise, registry) -> Match:
         next_match.updated_at = now_iso()
         _assert_seat_accounts_exist(next_match.seats, registry)
         # P1-2：修订后为正式计分 → 正式赛季资格 gate（rating_eligible ⇒ 必填 season + 校验）
-        # 返回值是 trim 后的规范 season_id，必须回写（防止空白 season 绕过投影）
+        # 返回值是 trim 后的规范 season_id 与逐座 CanonicalExecutionProvenance，必须回写 Match
         if next_match.rating_eligible:
             from .ladder_eligibility import ensure_ladder_eligibility
+            from .execution_provenance import freeze_execution_provenance
 
-            next_match.season_id = ensure_ladder_eligibility(
+            admission = ensure_ladder_eligibility(
                 next_match.season_id, next_match.seats, registry=registry
             )
+            next_match.season_id = admission.season_id
+            for s in next_match.seats:
+                if s.seat in admission.provenance_by_seat:
+                    frozen_prov = freeze_execution_provenance(admission.provenance_by_seat[s.seat])
+                    s.execution_provenance = frozen_prov
+                    s.model_identity_id = frozen_prov.model_identity_id
+                    s.model_artifact_id = frozen_prov.model_artifact_id
+                    s.external_revision_id = frozen_prov.external_revision_id
             new_season = next_match.season_id
         # P1-3/P1-5：旧赛季与新赛季都标 dirty（去重），且先于 Match 提交
         for season in {old_season, new_season}:

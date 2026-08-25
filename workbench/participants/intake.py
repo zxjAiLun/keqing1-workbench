@@ -603,6 +603,7 @@ def _resolve_seat(
     account_id: str | None = None
     model_identity_id: str | None = None
     model_artifact_id: str | None = None
+    external_revision_id: str | None = None
     account_to_create: AccountCreate | None = None
     alias_to_register: ExternalAliasCreate | None = None
 
@@ -705,6 +706,7 @@ def _resolve_seat(
             raise ValueError(f"账号已停用: {account_id}")
         model_identity_id = raw_res.get("model_identity_id")
         model_artifact_id = raw_res.get("model_artifact_id")
+        external_revision_id = raw_res.get("external_revision_id")
         controller_type = raw_res.get("default_controller") or account.default_controller
         alias_to_register = _build_alias(
             name=name, account_id=account_id, seat_no=seat_no,
@@ -717,6 +719,8 @@ def _resolve_seat(
         raise ValueError(f"模型身份 {model_identity_id} 不属于账号 {account_id}")
     if not registry.artifact_belongs_to_identity(model_identity_id, model_artifact_id):
         raise ValueError(f"模型产物 {model_artifact_id} 不属于身份 {model_identity_id}")
+    if not registry.external_revision_belongs_to_identity(model_identity_id, external_revision_id):
+        raise ValueError(f"外部版本 {external_revision_id} 不属于身份 {model_identity_id}")
 
     seat = MatchSeat(
         seat=seat_no,
@@ -724,6 +728,7 @@ def _resolve_seat(
         controller_type=controller_type,
         model_identity_id=model_identity_id,
         model_artifact_id=model_artifact_id,
+        external_revision_id=external_revision_id,
     )
     audit = {
         "raw_name": name,
@@ -731,6 +736,7 @@ def _resolve_seat(
         "account_id": account_id,
         "model_identity_id": model_identity_id,
         "model_artifact_id": model_artifact_id,
+        "external_revision_id": external_revision_id,
         "alias_scope": alias_scope,
         "confidence": confidence,
     }
@@ -838,11 +844,20 @@ def resolve_and_create_match(
         if len({s.account_id for s in seats}) != 4:
             raise ValueError("四个座位不能指向同一账号")
         # P1-2：正式计分 → 正式赛季资格 gate（rating_eligible ⇒ 必填 season + 校验）
-        # 返回值是 trim 后的规范 season_id，必须回写（防止空白 season 绕过投影）
+        # 返回值是 trim 后的规范 season_id 与逐座 CanonicalExecutionProvenance，必须回写 Match
         if rating_eligible:
             from .ladder_eligibility import ensure_ladder_eligibility
+            from .execution_provenance import freeze_execution_provenance
 
-            season_id = ensure_ladder_eligibility(season_id, seats, registry=registry)
+            admission = ensure_ladder_eligibility(season_id, seats, registry=registry)
+            season_id = admission.season_id
+            for s in seats:
+                if s.seat in admission.provenance_by_seat:
+                    frozen_prov = freeze_execution_provenance(admission.provenance_by_seat[s.seat])
+                    s.execution_provenance = frozen_prov
+                    s.model_identity_id = frozen_prov.model_identity_id
+                    s.model_artifact_id = frozen_prov.model_artifact_id
+                    s.external_revision_id = frozen_prov.external_revision_id
 
         # 全部校验通过后才写 staging（P2-2：校验失败不残留 staging）
         staging = _staging_dir(log_id)

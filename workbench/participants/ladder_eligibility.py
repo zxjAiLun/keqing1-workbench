@@ -131,48 +131,48 @@ def validate_ladder_eligibility(
         season_model = _season_account_model(season, account_id)
         if season_model is None:
             raise ValueError(f"账号 {account_id} 未在正式赛季 {season_id} 注册")
+
         if account.account_type == "human":
             if season_model["model_id"] != "human":
                 raise ValueError(
                     f"人类账号 {account_id} 必须属于 model_id=human（当前属于 {season_model['model_id'] or '未知'}）"
                 )
-            # P1（UX Repair 2）：正式人类座位不能携带冻结 bot 模型产物——
-            # 否则 '实际跑 70k artifact + 赛后记 nick@01' 会被 human checkpoint=none 跳过比较。
             if getattr(seat, "model_identity_id", None) or getattr(seat, "model_artifact_id", None):
-                raise ValueError(
-                    f"正式人类座位 {account_id} 不能携带冻结 bot 模型产物"
-                )
+                raise ValueError(f"正式人类座位 {account_id} 不能携带冻结 bot 模型产物")
             controller_type = getattr(seat, "controller_type", None)
             if controller_type and controller_type != "human_ui":
                 raise ValueError(f"正式人类座位 {account_id} 的控制器必须为 human_ui")
+
+        # 严格 provenance 优先级：
+        # 1. seat 显式提供 model_identity_id -> 必须原样验证，绝不允许 fallback
+        # 2. 否则使用 account.model_identity_id
+        # 3. 否则才尝试使用 season_model.get("model_id")
+        seat_ident = getattr(seat, "model_identity_id", None)
+        if seat_ident is not None:
+            identity_id = seat_ident
+        elif account.model_identity_id is not None:
+            identity_id = account.model_identity_id
         else:
-            # 非人类座位：必须通过单一 artifact policy resolver 唯一解析并满足 ladder_eligible
-            from .artifact_policy import resolve_artifact_binding
+            identity_id = season_model.get("model_id") if account.account_type != "human" else None
 
-            # 严格 provenance 优先级：
-            # 1. seat 显式提供 model_identity_id -> 必须原样验证，绝不允许 fallback
-            # 2. 否则使用 account.model_identity_id
-            # 3. 否则才尝试使用 season_model.get("model_id")
-            seat_ident = getattr(seat, "model_identity_id", None)
-            if seat_ident is not None:
-                identity_id = seat_ident
-            elif account.model_identity_id is not None:
-                identity_id = account.model_identity_id
-            else:
-                identity_id = season_model.get("model_id")
+        controller_type = getattr(seat, "controller_type", None)
+        artifact_id = getattr(seat, "model_artifact_id", None)
+        external_revision_id = getattr(seat, "external_revision_id", None)
+        season_ckpt = season_model.get("checkpoint") if account.account_type == "managed_bot" else None
 
-            artifact_id = getattr(seat, "model_artifact_id", None)
-            season_ckpt = season_model.get("checkpoint")
+        from .execution_provenance import resolve_execution_provenance
 
-            resolve_artifact_binding(
-                account_id=account_id,
-                identity_id=identity_id,
-                artifact_id=artifact_id,
-                checkpoint=season_ckpt,
-                purpose="ladder_eligible",
-                project_root=project_root,
-                registry=registry,
-            )
+        resolve_execution_provenance(
+            account_id=account_id,
+            controller_type=controller_type,
+            identity_id=identity_id,
+            artifact_id=artifact_id,
+            external_revision_id=external_revision_id,
+            checkpoint=season_ckpt,
+            purpose="ladder_eligible",
+            project_root=project_root,
+            registry=registry,
+        )
 
 
 __all__ = ["ensure_ladder_eligibility", "validate_ladder_eligibility"]

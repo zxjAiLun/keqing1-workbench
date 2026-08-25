@@ -84,7 +84,7 @@ def env(tmp_path, monkeypatch):
         ("nick@01", "human"),
         ("70k@01", "managed_bot"),
         ("70k@02", "managed_bot"),
-        ("friend@01", "external_bot"),
+        ("friend@01", "managed_bot"),
     ):
         # R11-D：AI 账号显式绑定逻辑模型
         registry.create_account(

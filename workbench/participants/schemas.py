@@ -102,15 +102,65 @@ class ModelArtifact(BaseModel):
 
     @property
     def is_ladder_eligible(self) -> bool:
-        return self.stage == "promoted" and "ladder_eligible" in self.capabilities
+        return self.stage == "promoted" and "ladder_eligible" in (self.capabilities or [])
 
     @property
     def is_playwithyou_allowed(self) -> bool:
-        return self.stage != "retired" and "playwithyou_allowed" in self.capabilities
+        return self.stage != "retired" and "playwithyou_allowed" in (self.capabilities or [])
 
     @property
     def is_review_allowed(self) -> bool:
-        return "review_allowed" in self.capabilities
+        return "review_allowed" in (self.capabilities or [])
+
+
+class ExternalModelRevision(BaseModel):
+    external_revision_id: str
+    model_identity_id: str
+    provider: str
+    version: str
+    external_ref: str | None = None
+    stage: ArtifactStage = "promoted"
+    capabilities: list[ArtifactCapability] | None = None
+    is_current: bool = True
+    created_at: str
+    retired_at: str | None = None
+
+    @model_validator(mode="after")
+    def populate_stage_and_capabilities(self) -> ExternalModelRevision:
+        if self.capabilities is None:
+            self.capabilities = _DEFAULT_CAPABILITIES_BY_STAGE.get(self.stage, ["review_allowed"])[:]
+        return self
+
+    @property
+    def is_ladder_eligible(self) -> bool:
+        return self.stage == "promoted" and "ladder_eligible" in (self.capabilities or [])
+
+    @property
+    def is_playwithyou_allowed(self) -> bool:
+        return self.stage != "retired" and "playwithyou_allowed" in (self.capabilities or [])
+
+    @property
+    def is_review_allowed(self) -> bool:
+        return "review_allowed" in (self.capabilities or [])
+
+
+class ExternalModelRevisionCreate(BaseModel):
+    external_revision_id: str | None = None
+    provider: str = Field(min_length=1)
+    version: str = Field(min_length=1)
+    external_ref: str | None = None
+    stage: ArtifactStage = "promoted"
+    capabilities: list[ArtifactCapability] | None = None
+    is_current: bool = True
+
+
+class ExternalModelRevisionUpdate(BaseModel):
+    provider: str | None = None
+    version: str | None = None
+    external_ref: str | None = None
+    stage: ArtifactStage | None = None
+    capabilities: list[ArtifactCapability] | None = None
+    is_current: bool | None = None
 
 
 class ModelIdentity(BaseModel):
@@ -123,6 +173,7 @@ class ModelIdentity(BaseModel):
     retired_at: str | None = None
     note: str | None = None
     artifacts: list[ModelArtifact] = Field(default_factory=list)
+    external_revisions: list[ExternalModelRevision] = Field(default_factory=list)
 
 
 class ModelIdentityCreate(BaseModel):

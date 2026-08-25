@@ -22,6 +22,9 @@ from .schemas import (
     ArtifactCapability,
     ArtifactStage,
     ControllerType,
+    ExternalModelRevision,
+    ExternalModelRevisionCreate,
+    ExternalModelRevisionUpdate,
     ModelArtifact,
     ModelArtifactCreate,
     ModelArtifactUpdate,
@@ -50,7 +53,7 @@ def _read_accounts() -> dict:
 
 
 def _read_models() -> dict:
-    return read_json(_models_path(), {"identities": [], "artifacts": []})
+    return read_json(_models_path(), {"identities": [], "artifacts": [], "external_revisions": []})
 
 
 def _default_controller_for(account_type: str) -> ControllerType:
@@ -251,13 +254,18 @@ def delete_account_guarded(account_id: str, reference_checker) -> dict:
 def list_models() -> list[ModelIdentity]:
     store = _read_models()
     by_id = {raw["model_identity_id"]: raw for raw in store["identities"]}
-    for art_raw in store["artifacts"]:
+    for art_raw in store.get("artifacts", []):
         ident = by_id.get(art_raw.get("model_identity_id"))
         if ident is not None:
             ident.setdefault("artifacts", []).append(art_raw)
+    for rev_raw in store.get("external_revisions", []):
+        ident = by_id.get(rev_raw.get("model_identity_id"))
+        if ident is not None:
+            ident.setdefault("external_revisions", []).append(rev_raw)
     result = [ModelIdentity.model_validate(raw) for raw in store["identities"]]
     for identity in result:
         identity.artifacts.sort(key=lambda a: a.created_at, reverse=True)
+        identity.external_revisions.sort(key=lambda r: r.created_at, reverse=True)
     result.sort(key=lambda m: (m.model_identity_id,))
     return result
 
@@ -315,8 +323,11 @@ def add_model_artifact(identity_id: str, payload: ModelArtifactCreate) -> ModelA
     art_id = payload.model_artifact_id or f"{identity_id}@{uuid.uuid4().hex[:6]}"
     with _write_lock, data_lock():
         store = _read_models()
-        if not any(raw.get("model_identity_id") == identity_id for raw in store["identities"]):
+        ident_raw = next((raw for raw in store["identities"] if raw.get("model_identity_id") == identity_id), None)
+        if ident_raw is None:
             raise KeyError(f"model identity not found: {identity_id}")
+        if ident_raw.get("kind") == "external_agent":
+            raise ValueError(f"external_agent 模型身份 {identity_id} 禁止挂载本地 ModelArtifact")
         if any(raw.get("model_artifact_id") == art_id for raw in store["artifacts"]):
             raise ValueError(f"model_artifact_id 已存在: {art_id}")
         # 新增产物设为 current，其余降级
@@ -338,6 +349,166 @@ def add_model_artifact(identity_id: str, payload: ModelArtifactCreate) -> ModelA
         store["artifacts"].append(art_entry)
         write_json(_models_path(), MODELS_SCHEMA, store)
     return ModelArtifact.model_validate(store["artifacts"][-1])
+
+
+def list_external_revisions(identity_id: str | None = None) -> list[ExternalModelRevision]:
+    store = _read_models()
+    raw_list = store.get("external_revisions", [])
+    if identity_id is not None:
+        raw_list = [r for r in raw_list if r.get("model_identity_id") == identity_id]
+    result = [ExternalModelRevision.model_validate(r) for r in raw_list]
+    result.sort(key=lambda r: r.created_at, reverse=True)
+    return result
+
+
+def get_external_revision(revision_id: str) -> ExternalModelRevision | None:
+    for rev in list_external_revisions():
+        if rev.external_revision_id == revision_id:
+            return rev
+    return None
+
+
+def add_external_revision(
+    identity_id: str, payload: ExternalModelRevisionCreate
+) -> ExternalModelRevision:
+    now = now_iso()
+    rev_id = payload.external_revision_id or f"external:{identity_id.replace('model:', '')}:{payload.version}"
+    with _write_lock, data_lock():
+        store = _read_models()
+        ident_raw = next(
+            (raw for raw in store["identities"] if raw.get("model_identity_id") == identity_id),
+            None,
+        )
+        if ident_raw is None:
+            raise KeyError(f"model identity not found: {identity_id}")
+        if ident_raw.get("kind") != "external_agent":
+            raise ValueError(
+                f"仅 external_agent 模型身份可挂载 ExternalModelRevision，当前身份类型为 {ident_raw.get('kind')}"
+            )
+        store.setdefault("external_revisions", [])
+        if any(raw.get("external_revision_id") == rev_id for raw in store["external_revisions"]):
+            raise ValueError(f"external_revision_id 已存在: {rev_id}")
+        if payload.is_current:
+            for raw in store["external_revisions"]:
+                if raw.get("model_identity_id") == identity_id and raw.get("is_current"):
+                    raw["is_current"] = False
+        rev_entry = {
+            "external_revision_id": rev_id,
+            "model_identity_id": identity_id,
+            "provider": payload.provider,
+            "version": payload.version,
+            "external_ref": payload.external_ref,
+            "stage": payload.stage,
+            "capabilities": payload.capabilities,
+            "is_current": payload.is_current,
+            "created_at": now,
+            "retired_at": None,
+        }
+        store["external_revisions"].append(rev_entry)
+        write_json(_models_path(), MODELS_SCHEMA, store)
+    return ExternalModelRevision.model_validate(store["external_revisions"][-1])
+
+
+def update_external_revision(
+    identity_id: str, revision_id: str, payload: ExternalModelRevisionUpdate
+) -> ExternalModelRevision:
+    with _write_lock, data_lock():
+        store = _read_models()
+        if not any(raw.get("model_identity_id") == identity_id for raw in store["identities"]):
+            raise KeyError(f"model identity not found: {identity_id}")
+        store.setdefault("external_revisions", [])
+        target = next(
+            (
+                raw
+                for raw in store["external_revisions"]
+                if raw.get("external_revision_id") == revision_id
+                and raw.get("model_identity_id") == identity_id
+            ),
+            None,
+        )
+        if target is None:
+            raise KeyError(f"external revision not found: {revision_id}")
+
+        raw_fields = payload.model_dump(exclude_unset=True)
+        cur_stage = target.get("stage", "promoted")
+        new_stage = raw_fields.get("stage")
+
+        if cur_stage == "retired":
+            if new_stage is not None and new_stage != "retired":
+                raise ValueError(f"已退役 (retired) 的外部版本 {revision_id} 已封存，不可变更阶段")
+            if raw_fields.get("is_current"):
+                raise ValueError(f"已退役 (retired) 的外部版本 {revision_id} 不可设为当前版本")
+
+        if raw_fields.get("is_current"):
+            for raw in store["external_revisions"]:
+                if raw.get("model_identity_id") == identity_id:
+                    raw["is_current"] = raw.get("external_revision_id") == revision_id
+        if "stage" in raw_fields:
+            target["stage"] = new_stage
+            if new_stage == "retired":
+                target["retired_at"] = target.get("retired_at") or now_iso()
+                target["is_current"] = False
+            elif new_stage == "promoted":
+                target["retired_at"] = None
+        if "provider" in raw_fields:
+            target["provider"] = raw_fields["provider"]
+        if "version" in raw_fields:
+            target["version"] = raw_fields["version"]
+        if "external_ref" in raw_fields:
+            target["external_ref"] = raw_fields["external_ref"]
+        if "capabilities" in raw_fields:
+            target["capabilities"] = raw_fields["capabilities"]
+
+        write_json(_models_path(), MODELS_SCHEMA, store)
+    return ExternalModelRevision.model_validate(target)
+
+
+def promote_external_revision(identity_id: str, revision_id: str) -> ExternalModelRevision:
+    """把指定外部版本阶段变更为 promoted 并设为 current。"""
+    return update_external_revision(
+        identity_id, revision_id, ExternalModelRevisionUpdate(stage="promoted", is_current=True)
+    )
+
+
+def deprecate_external_revision(identity_id: str, revision_id: str) -> ExternalModelRevision:
+    """把指定外部版本阶段变更为 deprecated。"""
+    return update_external_revision(
+        identity_id, revision_id, ExternalModelRevisionUpdate(stage="deprecated")
+    )
+
+
+def retire_external_revision(identity_id: str, revision_id: str) -> ExternalModelRevision:
+    """把指定外部版本阶段变更为 retired 并封存。"""
+    return update_external_revision(
+        identity_id, revision_id, ExternalModelRevisionUpdate(stage="retired", is_current=False)
+    )
+
+
+def set_current_external_revision(identity_id: str, revision_id: str) -> ExternalModelRevision:
+    """把指定外部版本设为 current。"""
+    with _write_lock, data_lock():
+        store = _read_models()
+        if not any(raw.get("model_identity_id") == identity_id for raw in store["identities"]):
+            raise KeyError(f"model identity not found: {identity_id}")
+        store.setdefault("external_revisions", [])
+        target = next(
+            (
+                raw
+                for raw in store["external_revisions"]
+                if raw.get("external_revision_id") == revision_id
+                and raw.get("model_identity_id") == identity_id
+            ),
+            None,
+        )
+        if target is None:
+            raise KeyError(f"external revision not found: {revision_id}")
+        if target.get("stage") == "retired":
+            raise ValueError(f"无法将已退役 (retired) 的外部版本 {revision_id} 设为当前版本")
+        for raw in store["external_revisions"]:
+            if raw.get("model_identity_id") == identity_id:
+                raw["is_current"] = raw.get("external_revision_id") == revision_id
+        write_json(_models_path(), MODELS_SCHEMA, store)
+    return ExternalModelRevision.model_validate(target)
 
 
 def update_model_artifact(
@@ -504,3 +675,14 @@ def artifact_belongs_to_identity(identity_id: str | None, artifact_id: str | Non
     if identity is None:
         return False
     return any(art.model_artifact_id == artifact_id for art in identity.artifacts)
+
+
+def external_revision_belongs_to_identity(identity_id: str | None, revision_id: str | None) -> bool:
+    if revision_id is not None and identity_id is None:
+        return False
+    if identity_id is None or revision_id is None:
+        return True
+    identity = get_model_identity(identity_id)
+    if identity is None:
+        return False
+    return any(rev.external_revision_id == revision_id for rev in identity.external_revisions)

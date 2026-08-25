@@ -332,37 +332,25 @@ def _freeze_model_group_provenance(
 ) -> tuple[dict[str, Any], str | None, str | None, str | None]:
     """为新 group 生成权威 FrozenExecutionProvenance 及兼容字段。
 
+    不变量：自动选择与显式选择必须满足同一个合格集合 (EligibleSeasonProvenance)：
+    - exact existing evidence ∩ correct identity kind ∩ promoted ∩ ladder_eligible
+    - 区别仅仅是：
+      - auto: eligible set 必须恰好 1 个；
+      - explicit: caller 从 eligible set 中指定 exact 1 个（显式选择只能消除歧义，绝不能绕过 eligibility）。
+
     返回: (execution_provenance_dict, checkpoint, model_artifact_id, external_revision_id)
     """
     from workbench.participants.schemas import FrozenExecutionProvenance
 
-    if explicit_provenance is not None:
-        if isinstance(explicit_provenance, dict):
-            prov = FrozenExecutionProvenance.model_validate(explicit_provenance)
-        elif isinstance(explicit_provenance, FrozenExecutionProvenance):
-            prov = explicit_provenance
-        else:
-            raise ValueError(f"模型 {target_key} 的 explicit_provenance 必须是对象")
-
-        if prov.kind == "human":
-            if target_key != "human":
-                raise ValueError(f"human provenance 不能用于 AI 模型 {target_key}")
-            return (prov.model_dump(), None, None, None)
-        elif prov.kind == "local_artifact":
-            if prov.model_identity_id != target_key:
-                raise ValueError(f"local_artifact identity {prov.model_identity_id} 与 group {target_key} 不一致")
-            ckpt = None
-            if identity is not None:
-                art = next((a for a in identity.artifacts if a.model_artifact_id == prov.model_artifact_id), None)
-                if art is not None:
-                    ckpt = art.artifact_path
-            return (prov.model_dump(), ckpt, prov.model_artifact_id, None)
-        elif prov.kind == "external_revision":
-            if prov.model_identity_id != target_key:
-                raise ValueError(f"external_revision identity {prov.model_identity_id} 与 group {target_key} 不一致")
-            return (prov.model_dump(), None, None, prov.external_revision_id)
-
     if target_key == "human":
+        if explicit_provenance is not None:
+            prov = (
+                FrozenExecutionProvenance.model_validate(explicit_provenance)
+                if isinstance(explicit_provenance, dict)
+                else explicit_provenance
+            )
+            if prov.kind != "human":
+                raise ValueError(f"human group 只能使用 human provenance (当前为 {prov.kind})")
         prov = FrozenExecutionProvenance(kind="human")
         return (prov.model_dump(), None, None, None)
 
@@ -374,40 +362,80 @@ def _freeze_model_group_provenance(
             a for a in identity.artifacts
             if getattr(a, "is_ladder_eligible", True) and a.stage == "promoted"
         ]
-        if len(eligible_arts) == 0:
-            raise ValueError(f"本地模型 {target_key} 没有可用于正式天梯的晋升产物 (0 promoted ladder_eligible artifacts)")
-        if len(eligible_arts) > 1:
-            art_ids = [a.model_artifact_id for a in eligible_arts]
-            raise ValueError(
-                f"本地模型 {target_key} 存在多个晋升产物 ({art_ids})，存在歧义，必须显式指定 model_artifact_id"
+        if explicit_provenance is not None:
+            prov = (
+                FrozenExecutionProvenance.model_validate(explicit_provenance)
+                if isinstance(explicit_provenance, dict)
+                else explicit_provenance
             )
-        selected_art = eligible_arts[0]
-        prov = FrozenExecutionProvenance(
+            if prov.kind != "local_artifact":
+                raise ValueError(f"本地模型 {target_key} 的 provenance 必须为 local_artifact (当前为 {prov.kind})")
+            if prov.model_identity_id != target_key:
+                raise ValueError(f"local_artifact identity {prov.model_identity_id} 与 group {target_key} 不一致")
+            matched_art = next((a for a in identity.artifacts if a.model_artifact_id == prov.model_artifact_id), None)
+            if matched_art is None:
+                raise ValueError(f"本地模型 {target_key} 不存在产物 {prov.model_artifact_id}")
+            if matched_art not in eligible_arts:
+                raise ValueError(
+                    f"本地模型产物 {prov.model_artifact_id} 不具备天梯资格 (stage={matched_art.stage})"
+                )
+            selected_art = matched_art
+        else:
+            if len(eligible_arts) == 0:
+                raise ValueError(f"本地模型 {target_key} 没有可用于正式天梯的晋升产物 (0 promoted ladder_eligible artifacts)")
+            if len(eligible_arts) > 1:
+                art_ids = [a.model_artifact_id for a in eligible_arts]
+                raise ValueError(
+                    f"本地模型 {target_key} 存在多个晋升产物 ({art_ids})，存在歧义，必须显式指定 model_artifact_id"
+                )
+            selected_art = eligible_arts[0]
+
+        frozen_prov = FrozenExecutionProvenance(
             kind="local_artifact",
             model_identity_id=target_key,
             model_artifact_id=selected_art.model_artifact_id,
         )
-        return (prov.model_dump(), selected_art.artifact_path, selected_art.model_artifact_id, None)
+        return (frozen_prov.model_dump(), selected_art.artifact_path, selected_art.model_artifact_id, None)
 
     elif identity.kind == "external_agent":
         eligible_revs = [
             r for r in identity.external_revisions
             if getattr(r, "is_ladder_eligible", True) and r.stage == "promoted"
         ]
-        if len(eligible_revs) == 0:
-            raise ValueError(f"外部模型 {target_key} 没有可用于正式天梯的晋升版本 (0 promoted ladder_eligible revisions)")
-        if len(eligible_revs) > 1:
-            rev_ids = [r.external_revision_id for r in eligible_revs]
-            raise ValueError(
-                f"外部模型 {target_key} 存在多个晋升版本 ({rev_ids})，存在歧义，必须显式指定 external_revision_id"
+        if explicit_provenance is not None:
+            prov = (
+                FrozenExecutionProvenance.model_validate(explicit_provenance)
+                if isinstance(explicit_provenance, dict)
+                else explicit_provenance
             )
-        selected_rev = eligible_revs[0]
-        prov = FrozenExecutionProvenance(
+            if prov.kind != "external_revision":
+                raise ValueError(f"外部模型 {target_key} 的 provenance 必须为 external_revision (当前为 {prov.kind})")
+            if prov.model_identity_id != target_key:
+                raise ValueError(f"external_revision identity {prov.model_identity_id} 与 group {target_key} 不一致")
+            matched_rev = next((r for r in identity.external_revisions if r.external_revision_id == prov.external_revision_id), None)
+            if matched_rev is None:
+                raise ValueError(f"外部模型 {target_key} 不存在版本 {prov.external_revision_id}")
+            if matched_rev not in eligible_revs:
+                raise ValueError(
+                    f"外部模型版本 {prov.external_revision_id} 不具备天梯资格 (stage={matched_rev.stage})"
+                )
+            selected_rev = matched_rev
+        else:
+            if len(eligible_revs) == 0:
+                raise ValueError(f"外部模型 {target_key} 没有可用于正式天梯的晋升版本 (0 promoted ladder_eligible revisions)")
+            if len(eligible_revs) > 1:
+                rev_ids = [r.external_revision_id for r in eligible_revs]
+                raise ValueError(
+                    f"外部模型 {target_key} 存在多个晋升版本 ({rev_ids})，存在歧义，必须显式指定 external_revision_id"
+                )
+            selected_rev = eligible_revs[0]
+
+        frozen_prov = FrozenExecutionProvenance(
             kind="external_revision",
             model_identity_id=target_key,
             external_revision_id=selected_rev.external_revision_id,
         )
-        return (prov.model_dump(), None, None, selected_rev.external_revision_id)
+        return (frozen_prov.model_dump(), None, None, selected_rev.external_revision_id)
 
     raise ValueError(f"模型 {target_key} 类型不支持加入天梯赛季: {identity.kind}")
 
@@ -577,6 +605,8 @@ def set_season_enrollment(
     from participants import registry as default_registry
 
     participants_registry = participants_registry or default_registry
+    if provenance_by_model is not None and not isinstance(provenance_by_model, dict):
+        raise ValueError("provenance_by_model 必须是对象映射 (model_id -> provenance)")
     account_ids = [str(a).strip() for a in account_ids]
     if len(set(account_ids)) != len(account_ids):
         raise ValueError("参赛账号不能重复")

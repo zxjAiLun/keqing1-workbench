@@ -1715,6 +1715,8 @@ async def set_ladder_season_enrollment(season_id: str, payload: dict):
     provenance_by_model = payload.get("provenance_by_model")
     if not isinstance(account_ids, list):
         return _manager_errors(ValueError("account_ids 必须是数组"))
+    if provenance_by_model is not None and not isinstance(provenance_by_model, dict):
+        return _manager_errors(ValueError("provenance_by_model 必须是对象"))
     try:
         season = sr.set_season_enrollment(
             _LADDER_SEASONS_DIR,

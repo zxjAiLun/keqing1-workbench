@@ -868,3 +868,277 @@ def test_running_status_transition_rejects_missing_frozen_provenance(setup_prove
         sr.set_season_status(configs_dir, "s_missing_prov", "running")
 
 
+# -----------------------------------------------------------------------------
+# 7. Adversarial Explicit Selection & Eligibility Closure Tests (R13-B Repair 2)
+# -----------------------------------------------------------------------------
+
+def test_explicit_selection_rejects_ineligible_external_revisions(setup_provenance_env):
+    """Explicit selection can only eliminate ambiguity, NEVER bypass eligibility (R13-B Repair 2 invariant)."""
+    from workbench.replay import season_registry as sr
+
+    configs_dir = setup_provenance_env["configs_dir"]
+
+    # Add candidate, deprecated, retired revisions under model:mortal
+    registry.add_external_revision(
+        "model:mortal",
+        ExternalModelRevisionCreate(
+            external_revision_id="external:mortal:candidate_rev",
+            provider="mortal",
+            version="cand",
+            stage="candidate",
+        ),
+    )
+    registry.add_external_revision(
+        "model:mortal",
+        ExternalModelRevisionCreate(
+            external_revision_id="external:mortal:deprecated_rev",
+            provider="mortal",
+            version="dep",
+            stage="deprecated",
+        ),
+    )
+    retired_rev = registry.add_external_revision(
+        "model:mortal",
+        ExternalModelRevisionCreate(
+            external_revision_id="external:mortal:retired_rev",
+            provider="mortal",
+            version="ret",
+            stage="promoted",
+        ),
+    )
+    registry.retire_external_revision("model:mortal", "external:mortal:retired_rev")
+
+    # Add another external model
+    registry.create_model_identity(
+        ModelIdentityCreate(
+            model_identity_id="model:other_ext",
+            label="Other Ext",
+            kind="external_agent",
+        )
+    )
+    registry.add_external_revision(
+        "model:other_ext",
+        ExternalModelRevisionCreate(
+            external_revision_id="external:other_ext:1.0",
+            provider="other",
+            version="1.0",
+            stage="promoted",
+        ),
+    )
+
+    sr.create_season(configs_dir, season_id="s_adv_ext", title="Adversarial Ext Season")
+
+    # 1. Nonexistent external revision -> REJECT
+    with pytest.raises(ValueError, match="不存在版本 external:mortal:DOES_NOT_EXIST"):
+        sr.set_season_enrollment(
+            configs_dir,
+            "s_adv_ext",
+            ["account:human1", "account:human2", "account:human3", "account:mortal_bot"],
+            provenance_by_model={
+                "model:mortal": {
+                    "kind": "external_revision",
+                    "model_identity_id": "model:mortal",
+                    "external_revision_id": "external:mortal:DOES_NOT_EXIST",
+                }
+            },
+        )
+
+    # 2. External revision from another identity -> REJECT
+    with pytest.raises(ValueError, match="不存在版本 external:other_ext:1.0"):
+        sr.set_season_enrollment(
+            configs_dir,
+            "s_adv_ext",
+            ["account:human1", "account:human2", "account:human3", "account:mortal_bot"],
+            provenance_by_model={
+                "model:mortal": {
+                    "kind": "external_revision",
+                    "model_identity_id": "model:mortal",
+                    "external_revision_id": "external:other_ext:1.0",
+                }
+            },
+        )
+
+    # 3. Candidate revision -> REJECT
+    with pytest.raises(ValueError, match="不具备天梯资格.*stage=candidate"):
+        sr.set_season_enrollment(
+            configs_dir,
+            "s_adv_ext",
+            ["account:human1", "account:human2", "account:human3", "account:mortal_bot"],
+            provenance_by_model={
+                "model:mortal": {
+                    "kind": "external_revision",
+                    "model_identity_id": "model:mortal",
+                    "external_revision_id": "external:mortal:candidate_rev",
+                }
+            },
+        )
+
+    # 4. Deprecated revision -> REJECT
+    with pytest.raises(ValueError, match="不具备天梯资格.*stage=deprecated"):
+        sr.set_season_enrollment(
+            configs_dir,
+            "s_adv_ext",
+            ["account:human1", "account:human2", "account:human3", "account:mortal_bot"],
+            provenance_by_model={
+                "model:mortal": {
+                    "kind": "external_revision",
+                    "model_identity_id": "model:mortal",
+                    "external_revision_id": "external:mortal:deprecated_rev",
+                }
+            },
+        )
+
+    # 5. Retired revision -> REJECT
+    with pytest.raises(ValueError, match="不具备天梯资格.*stage=retired"):
+        sr.set_season_enrollment(
+            configs_dir,
+            "s_adv_ext",
+            ["account:human1", "account:human2", "account:human3", "account:mortal_bot"],
+            provenance_by_model={
+                "model:mortal": {
+                    "kind": "external_revision",
+                    "model_identity_id": "model:mortal",
+                    "external_revision_id": "external:mortal:retired_rev",
+                }
+            },
+        )
+
+    # 6. Valid promoted ladder_eligible revision -> PASS
+    season = sr.set_season_enrollment(
+        configs_dir,
+        "s_adv_ext",
+        ["account:human1", "account:human2", "account:human3", "account:mortal_bot"],
+        provenance_by_model={
+            "model:mortal": {
+                "kind": "external_revision",
+                "model_identity_id": "model:mortal",
+                "external_revision_id": "external:mortal:4.1b",
+            }
+        },
+    )
+    m_grp = next(m for m in season["models"] if m["model_id"] == "model:mortal")
+    assert m_grp["execution_provenance"]["external_revision_id"] == "external:mortal:4.1b"
+
+
+def test_explicit_selection_rejects_ineligible_local_artifacts(setup_provenance_env):
+    """Explicit local selection rejects nonexistent, candidate, or wrong identity artifacts."""
+    from workbench.replay import season_registry as sr
+
+    configs_dir = setup_provenance_env["configs_dir"]
+    tmp_path = setup_provenance_env["tmp_path"]
+
+    # Add candidate and retired artifacts under model:m70k
+    ckpt_cand = tmp_path / "cand.pth"
+    ckpt_cand.write_text("cand")
+    registry.add_model_artifact(
+        "model:m70k",
+        ModelArtifactCreate(
+            model_artifact_id="model:m70k@candidate",
+            label="cand.pth",
+            artifact_path=str(ckpt_cand),
+            stage="candidate",
+        ),
+    )
+
+    ckpt_ret = tmp_path / "ret.pth"
+    ckpt_ret.write_text("ret")
+    registry.add_model_artifact(
+        "model:m70k",
+        ModelArtifactCreate(
+            model_artifact_id="model:m70k@retired",
+            label="ret.pth",
+            artifact_path=str(ckpt_ret),
+            stage="promoted",
+        ),
+    )
+    registry.retire_model_artifact("model:m70k", "model:m70k@retired")
+
+    sr.create_season(configs_dir, season_id="s_adv_loc", title="Adversarial Loc Season")
+
+    # 1. Nonexistent artifact -> REJECT
+    with pytest.raises(ValueError, match="不存在产物 model:m70k@DOES_NOT_EXIST"):
+        sr.set_season_enrollment(
+            configs_dir,
+            "s_adv_loc",
+            ["account:human1", "account:human2", "account:human3", "account:m70k_bot"],
+            provenance_by_model={
+                "model:m70k": {
+                    "kind": "local_artifact",
+                    "model_identity_id": "model:m70k",
+                    "model_artifact_id": "model:m70k@DOES_NOT_EXIST",
+                }
+            },
+        )
+
+    # 2. Candidate artifact -> REJECT
+    with pytest.raises(ValueError, match="不具备天梯资格.*stage=candidate"):
+        sr.set_season_enrollment(
+            configs_dir,
+            "s_adv_loc",
+            ["account:human1", "account:human2", "account:human3", "account:m70k_bot"],
+            provenance_by_model={
+                "model:m70k": {
+                    "kind": "local_artifact",
+                    "model_identity_id": "model:m70k",
+                    "model_artifact_id": "model:m70k@candidate",
+                }
+            },
+        )
+
+    # 3. Retired artifact -> REJECT
+    with pytest.raises(ValueError, match="不具备天梯资格.*stage=retired"):
+        sr.set_season_enrollment(
+            configs_dir,
+            "s_adv_loc",
+            ["account:human1", "account:human2", "account:human3", "account:m70k_bot"],
+            provenance_by_model={
+                "model:m70k": {
+                    "kind": "local_artifact",
+                    "model_identity_id": "model:m70k",
+                    "model_artifact_id": "model:m70k@retired",
+                }
+            },
+        )
+
+    # 4. Valid promoted artifact -> PASS
+    season = sr.set_season_enrollment(
+        configs_dir,
+        "s_adv_loc",
+        ["account:human1", "account:human2", "account:human3", "account:m70k_bot"],
+        provenance_by_model={
+            "model:m70k": {
+                "kind": "local_artifact",
+                "model_identity_id": "model:m70k",
+                "model_artifact_id": "model:m70k@01",
+            }
+        },
+    )
+    loc_grp = next(m for m in season["models"] if m["model_id"] == "model:m70k")
+    assert loc_grp["execution_provenance"]["model_artifact_id"] == "model:m70k@01"
+
+
+def test_enrollment_api_rejects_non_dict_provenance_by_model(setup_provenance_env):
+    """API and function type gate: provenance_by_model must be a dict, rejects list/string."""
+    from workbench.replay import season_registry as sr
+
+    configs_dir = setup_provenance_env["configs_dir"]
+    sr.create_season(configs_dir, season_id="s_type_gate", title="Type Gate Season")
+
+    with pytest.raises(ValueError, match="provenance_by_model 必须是对象映射"):
+        sr.set_season_enrollment(
+            configs_dir,
+            "s_type_gate",
+            ["account:human1"],
+            provenance_by_model=["bad_list"],
+        )
+
+    with pytest.raises(ValueError, match="provenance_by_model 必须是对象映射"):
+        sr.set_season_enrollment(
+            configs_dir,
+            "s_type_gate",
+            ["account:human1"],
+            provenance_by_model="bad_string",
+        )
+
+
+

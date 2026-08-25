@@ -157,6 +157,18 @@ def api_add_artifact(model_identity_id: str, payload: ModelArtifactCreate) -> di
     return artifact.model_dump()
 
 
+@router.patch("/models/{model_identity_id}/artifacts/{artifact_id}", response_model=dict)
+def api_update_artifact(model_identity_id: str, artifact_id: str, payload: ModelArtifactUpdate) -> dict:
+    """更新模型产物 lifecycle 字段（stage / capabilities / is_current 等）。"""
+    try:
+        artifact = registry.update_model_artifact(model_identity_id, artifact_id, payload)
+    except KeyError as exc:
+        raise _error(404, str(exc)) from exc
+    except ValueError as exc:
+        raise _error(409, str(exc)) from exc
+    return artifact.model_dump()
+
+
 @router.post("/models/{model_identity_id}/artifacts/{artifact_id}/current", response_model=dict)
 def api_set_current_artifact(model_identity_id: str, artifact_id: str) -> dict:
     """把指定 artifact 设为 current（R10 UX Repair P1-4：current artifact 管理）。"""
@@ -164,7 +176,47 @@ def api_set_current_artifact(model_identity_id: str, artifact_id: str) -> dict:
         artifact = registry.set_current_model_artifact(model_identity_id, artifact_id)
     except KeyError as exc:
         raise _error(404, str(exc)) from exc
+    except ValueError as exc:
+        raise _error(409, str(exc)) from exc
     return artifact.model_dump()
+
+
+@router.post("/models/{model_identity_id}/external-revisions", response_model=dict)
+def api_add_external_revision(model_identity_id: str, payload: ExternalModelRevisionCreate) -> dict:
+    """R13-D: 注册外部模型版本 (ExternalModelRevision)。"""
+    try:
+        rev = registry.add_external_revision(model_identity_id, payload)
+    except KeyError as exc:
+        raise _error(404, str(exc)) from exc
+    except ValueError as exc:
+        raise _error(409, str(exc)) from exc
+    return rev.model_dump()
+
+
+@router.patch("/models/{model_identity_id}/external-revisions/{revision_id}", response_model=dict)
+def api_update_external_revision(
+    model_identity_id: str, revision_id: str, payload: ExternalModelRevisionUpdate
+) -> dict:
+    """R13-D: 更新外部模型版本 lifecycle 字段（stage / capabilities / is_current）。"""
+    try:
+        rev = registry.update_external_revision(model_identity_id, revision_id, payload)
+    except KeyError as exc:
+        raise _error(404, str(exc)) from exc
+    except ValueError as exc:
+        raise _error(409, str(exc)) from exc
+    return rev.model_dump()
+
+
+@router.post("/models/{model_identity_id}/external-revisions/{revision_id}/current", response_model=dict)
+def api_set_current_external_revision(model_identity_id: str, revision_id: str) -> dict:
+    """R13-D: 把指定外部版本设为 current。"""
+    try:
+        rev = registry.set_current_external_revision(model_identity_id, revision_id)
+    except KeyError as exc:
+        raise _error(404, str(exc)) from exc
+    except ValueError as exc:
+        raise _error(409, str(exc)) from exc
+    return rev.model_dump()
 
 
 @router.patch("/models/{model_identity_id}", response_model=ModelIdentity)

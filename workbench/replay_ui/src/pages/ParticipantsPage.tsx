@@ -7,7 +7,15 @@ import { AccountFormModal } from '../components/Participants/AccountFormModal';
 import { ModelFormModal } from '../components/Participants/ModelFormModal';
 import { MODEL_PRESETS } from '../components/Participants/modelPresets';
 import { participantsApi } from '../api/participantsApi';
-import type { Account, AccountCreate, AccountStatsResponse, ModelArtifactCreate, ModelIdentity } from '../types/participants';
+import type {
+  Account,
+  AccountCreate,
+  AccountStatsResponse,
+  ArtifactStage,
+  ExternalModelRevisionCreate,
+  ModelArtifactCreate,
+  ModelIdentity,
+} from '../types/participants';
 
 export function ParticipantsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -28,6 +36,18 @@ export function ParticipantsPage() {
   const [artifactPath, setArtifactPath] = useState('');
   const [artifactBusy, setArtifactBusy] = useState(false);
 
+  // R13-D：External Revision 管理
+  const [addingRevisionFor, setAddingRevisionFor] = useState<string | null>(null);
+  const [revProvider, setRevProvider] = useState('mortal');
+  const [revVersion, setRevVersion] = useState('');
+  const [revExternalRef, setRevExternalRef] = useState('');
+  const [revStage, setRevStage] = useState<ArtifactStage>('promoted');
+  const [revIsCurrent, setRevIsCurrent] = useState(true);
+  const [revLadderEligible, setRevLadderEligible] = useState(true);
+  const [revPlaywithyouAllowed, setRevPlaywithyouAllowed] = useState(true);
+  const [revReviewAllowed, setRevReviewAllowed] = useState(true);
+  const [revBusy, setRevBusy] = useState(false);
+
   const refreshModels = useCallback(async () => {
     try {
       const resp = await participantsApi.listModels();
@@ -42,6 +62,18 @@ export function ParticipantsPage() {
     setArtifactPreset('');
     setArtifactLabel('');
     setArtifactPath('');
+  };
+
+  const openAddRevision = (identityId: string, label: string) => {
+    setAddingRevisionFor(identityId);
+    setRevProvider(identityId.includes('mortal') ? 'mortal' : 'external');
+    setRevVersion(label.includes('4.2') ? '4.2' : label.includes('4.1') ? '4.1b' : '');
+    setRevExternalRef('');
+    setRevStage('promoted');
+    setRevIsCurrent(true);
+    setRevLadderEligible(true);
+    setRevPlaywithyouAllowed(true);
+    setRevReviewAllowed(true);
   };
 
   const applyArtifactPreset = (presetId: string) => {
@@ -80,6 +112,69 @@ export function ParticipantsPage() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setArtifactBusy(false);
+    }
+  };
+
+  const updateArtifactStage = async (identityId: string, artifactId: string, stage: ArtifactStage) => {
+    setArtifactBusy(true);
+    try {
+      await participantsApi.updateModelArtifact(identityId, artifactId, { stage });
+      await refreshModels();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setArtifactBusy(false);
+    }
+  };
+
+  const addRevision = async () => {
+    if (!addingRevisionFor || !revVersion.trim() || !revProvider.trim()) return;
+    setRevBusy(true);
+    try {
+      const capabilities: string[] = [];
+      if (revLadderEligible) capabilities.push('ladder_eligible');
+      if (revPlaywithyouAllowed) capabilities.push('playwithyou_allowed');
+      if (revReviewAllowed) capabilities.push('review_allowed');
+
+      const payload: ExternalModelRevisionCreate = {
+        provider: revProvider.trim(),
+        version: revVersion.trim(),
+        external_ref: revExternalRef.trim() || null,
+        stage: revStage,
+        is_current: revIsCurrent,
+        capabilities,
+      };
+      await participantsApi.addExternalRevision(addingRevisionFor, payload);
+      setAddingRevisionFor(null);
+      await refreshModels();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRevBusy(false);
+    }
+  };
+
+  const setCurrentRevision = async (identityId: string, revisionId: string) => {
+    setRevBusy(true);
+    try {
+      await participantsApi.setCurrentExternalRevision(identityId, revisionId);
+      await refreshModels();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRevBusy(false);
+    }
+  };
+
+  const updateRevisionStage = async (identityId: string, revisionId: string, stage: ArtifactStage) => {
+    setRevBusy(true);
+    try {
+      await participantsApi.updateExternalRevision(identityId, revisionId, { stage });
+      await refreshModels();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRevBusy(false);
     }
   };
 
@@ -229,79 +324,280 @@ export function ParticipantsPage() {
           <div style={{ display: 'grid', gap: 8 }}>
             {identities.map((identity) => (
               <div key={identity.model_identity_id} style={modelRowStyle}>
-                <div style={{ minWidth: 180 }}>
+                <div style={{ minWidth: 200 }}>
                   <div style={{ fontWeight: 700 }}>{identity.label}</div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                    {identity.model_identity_id} · {identity.kind}
+                    {identity.model_identity_id} · <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{identity.kind}</span>
                     {identity.account_id ? ` · ${identity.account_id}` : ' · 全局'}
                   </div>
                 </div>
-                {/* 产物列表（R10 UX Repair P1-4） */}
-                <div style={{ flex: 1, display: 'grid', gap: 4, fontSize: 12 }}>
-                  {identity.artifacts.length === 0 && (
-                    <div style={{ color: 'var(--text-muted)' }}>无产物（外部代理或仅身份）</div>
-                  )}
-                  {identity.artifacts.map((art) => (
-                    <div key={art.model_artifact_id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontWeight: 700, color: art.is_current ? 'var(--accent)' : 'var(--text-primary)' }}>
-                        {art.label}{art.is_current ? '（当前）' : ''}
-                      </span>
-                      <code style={{ color: 'var(--text-muted)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {art.artifact_path ?? '—'}
-                      </code>
-                      {!art.is_current && (
+
+                {/* 1. local_model 专属：本地 Artifacts 管理 */}
+                {identity.kind === 'local_model' && (
+                  <div style={{ flex: 1, display: 'grid', gap: 6, fontSize: 12 }}>
+                    {identity.artifacts.length === 0 && (
+                      <div style={{ color: 'var(--text-muted)' }}>暂无本地产物</div>
+                    )}
+                    {identity.artifacts.map((art) => {
+                      const isRetired = art.stage === 'retired';
+                      return (
+                        <div key={art.model_artifact_id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 700, color: art.is_current ? 'var(--accent)' : 'var(--text-primary)' }}>
+                            {art.label}{art.is_current ? '（当前）' : ''}
+                          </span>
+                          <span style={{
+                            fontSize: 10, padding: '1px 5px', borderRadius: 3, fontWeight: 700,
+                            background: art.stage === 'promoted' ? 'rgba(16, 185, 129, 0.15)' : art.stage === 'deprecated' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(156, 163, 175, 0.15)',
+                            color: art.stage === 'promoted' ? 'var(--positive, #10b981)' : art.stage === 'deprecated' ? '#f59e0b' : 'var(--text-muted)',
+                          }}>
+                            {art.stage || 'promoted'}
+                          </span>
+                          <code style={{ color: 'var(--text-muted)', fontSize: 11, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {art.artifact_path ?? '—'}
+                          </code>
+                          {!art.is_current && !isRetired && (
+                            <button
+                              type="button"
+                              onClick={() => void setCurrentArtifact(identity.model_identity_id, art.model_artifact_id)}
+                              disabled={artifactBusy}
+                              style={ghostSmallBtn}
+                            >
+                              设为当前
+                            </button>
+                          )}
+                          {!isRetired && art.stage !== 'promoted' && (
+                            <button
+                              type="button"
+                              onClick={() => void updateArtifactStage(identity.model_identity_id, art.model_artifact_id, 'promoted')}
+                              disabled={artifactBusy}
+                              style={ghostSmallBtn}
+                            >
+                              晋升
+                            </button>
+                          )}
+                          {!isRetired && art.stage !== 'deprecated' && (
+                            <button
+                              type="button"
+                              onClick={() => void updateArtifactStage(identity.model_identity_id, art.model_artifact_id, 'deprecated')}
+                              disabled={artifactBusy}
+                              style={ghostSmallBtn}
+                            >
+                              废弃 (deprecate)
+                            </button>
+                          )}
+                          {!isRetired && (
+                            <button
+                              type="button"
+                              onClick={() => void updateArtifactStage(identity.model_identity_id, art.model_artifact_id, 'retired')}
+                              disabled={artifactBusy}
+                              style={{ ...ghostSmallBtn, color: 'var(--negative, #ef4444)' }}
+                            >
+                              退役 (retire)
+                            </button>
+                          )}
+                          {isRetired && (
+                            <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>已封存</span>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* 添加本地产物 */}
+                    {addingArtifactFor === identity.model_identity_id ? (
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 4 }}>
+                        <select
+                          value={artifactPreset}
+                          onChange={(e) => applyArtifactPreset(e.target.value)}
+                          style={smallInput}
+                        >
+                          <option value="">使用预置…</option>
+                          {MODEL_PRESETS.map((p) => (
+                            <option key={p.id} value={p.id}>{p.label}</option>
+                          ))}
+                        </select>
+                        <input
+                          value={artifactLabel}
+                          onChange={(e) => setArtifactLabel(e.target.value)}
+                          placeholder="产物名称"
+                          style={{ ...smallInput, width: 120 }}
+                        />
+                        <input
+                          value={artifactPath}
+                          onChange={(e) => setArtifactPath(e.target.value)}
+                          placeholder="checkpoint 路径"
+                          style={{ ...smallInput, flex: 1, minWidth: 200 }}
+                        />
                         <button
                           type="button"
-                          onClick={() => void setCurrentArtifact(identity.model_identity_id, art.model_artifact_id)}
-                          disabled={artifactBusy}
+                          onClick={() => void addArtifact()}
+                          disabled={artifactBusy || !artifactLabel.trim()}
                           style={ghostSmallBtn}
                         >
-                          设为当前
+                          添加
                         </button>
-                      )}
-                    </div>
-                  ))}
-                  {/* 添加产物 */}
-                  {addingArtifactFor === identity.model_identity_id ? (
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 4 }}>
-                      <select
-                        value={artifactPreset}
-                        onChange={(e) => applyArtifactPreset(e.target.value)}
-                        style={smallInput}
-                      >
-                        <option value="">使用预置…</option>
-                        {MODEL_PRESETS.map((p) => (
-                          <option key={p.id} value={p.id}>{p.label}</option>
-                        ))}
-                      </select>
-                      <input
-                        value={artifactLabel}
-                        onChange={(e) => setArtifactLabel(e.target.value)}
-                        placeholder="产物名称"
-                        style={{ ...smallInput, width: 120 }}
-                      />
-                      <input
-                        value={artifactPath}
-                        onChange={(e) => setArtifactPath(e.target.value)}
-                        placeholder="checkpoint 路径"
-                        style={{ ...smallInput, flex: 1, minWidth: 200 }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void addArtifact()}
-                        disabled={artifactBusy || !artifactLabel.trim()}
-                        style={ghostSmallBtn}
-                      >
-                        添加
-                      </button>
-                      <button type="button" onClick={() => setAddingArtifactFor(null)} style={ghostSmallBtn}>取消</button>
-                    </div>
-                  ) : (
-                    <button type="button" onClick={() => openAddArtifact(identity.model_identity_id)} style={ghostSmallBtn}>
-                      + 添加产物
-                    </button>
-                  )}
-                </div>
+                        <button type="button" onClick={() => setAddingArtifactFor(null)} style={ghostSmallBtn}>取消</button>
+                      </div>
+                    ) : (
+                      <div style={{ marginTop: 2 }}>
+                        <button type="button" onClick={() => openAddArtifact(identity.model_identity_id)} style={ghostSmallBtn}>
+                          + 添加本地产物
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 2. external_agent 专属：外部版本 External Revisions 管理 */}
+                {identity.kind === 'external_agent' && (
+                  <div style={{ flex: 1, display: 'grid', gap: 6, fontSize: 12 }}>
+                    {(!identity.external_revisions || identity.external_revisions.length === 0) && (
+                      <div style={{ color: 'var(--text-muted)' }}>暂无外部版本记录</div>
+                    )}
+                    {identity.external_revisions?.map((rev) => {
+                      const isRetired = rev.stage === 'retired';
+                      return (
+                        <div key={rev.external_revision_id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 700, color: rev.is_current ? 'var(--accent)' : 'var(--text-primary)' }}>
+                            v{rev.version}{rev.is_current ? '（当前）' : ''}
+                          </span>
+                          <span style={{
+                            fontSize: 10, padding: '1px 5px', borderRadius: 3, fontWeight: 700,
+                            background: rev.stage === 'promoted' ? 'rgba(16, 185, 129, 0.15)' : rev.stage === 'deprecated' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(156, 163, 175, 0.15)',
+                            color: rev.stage === 'promoted' ? 'var(--positive, #10b981)' : rev.stage === 'deprecated' ? '#f59e0b' : 'var(--text-muted)',
+                          }}>
+                            {rev.stage}
+                          </span>
+                          <code style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                            {rev.external_revision_id}
+                          </code>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>
+                            [{rev.provider}]
+                          </span>
+                          {!rev.is_current && !isRetired && (
+                            <button
+                              type="button"
+                              onClick={() => void setCurrentRevision(identity.model_identity_id, rev.external_revision_id)}
+                              disabled={revBusy}
+                              style={ghostSmallBtn}
+                            >
+                              设为当前
+                            </button>
+                          )}
+                          {!isRetired && rev.stage !== 'promoted' && (
+                            <button
+                              type="button"
+                              onClick={() => void updateRevisionStage(identity.model_identity_id, rev.external_revision_id, 'promoted')}
+                              disabled={revBusy}
+                              style={ghostSmallBtn}
+                            >
+                              晋升 (promoted)
+                            </button>
+                          )}
+                          {!isRetired && rev.stage !== 'deprecated' && (
+                            <button
+                              type="button"
+                              onClick={() => void updateRevisionStage(identity.model_identity_id, rev.external_revision_id, 'deprecated')}
+                              disabled={revBusy}
+                              style={ghostSmallBtn}
+                            >
+                              废弃 (deprecate)
+                            </button>
+                          )}
+                          {!isRetired && (
+                            <button
+                              type="button"
+                              onClick={() => void updateRevisionStage(identity.model_identity_id, rev.external_revision_id, 'retired')}
+                              disabled={revBusy}
+                              style={{ ...ghostSmallBtn, color: 'var(--negative, #ef4444)' }}
+                            >
+                              退役 (retire)
+                            </button>
+                          )}
+                          {isRetired && (
+                            <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>已封存</span>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* 添加外部版本 */}
+                    {addingRevisionFor === identity.model_identity_id ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', background: 'var(--page-bg)', borderRadius: 6, border: '1px solid var(--border)', marginTop: 4 }}>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <input
+                            value={revProvider}
+                            onChange={(e) => setRevProvider(e.target.value)}
+                            placeholder="Provider (如 mortal)"
+                            style={{ ...smallInput, width: 110 }}
+                          />
+                          <input
+                            value={revVersion}
+                            onChange={(e) => setRevVersion(e.target.value)}
+                            placeholder="版本号 (如 4.2 / 4.1b)"
+                            style={{ ...smallInput, width: 140 }}
+                          />
+                          <input
+                            value={revExternalRef}
+                            onChange={(e) => setRevExternalRef(e.target.value)}
+                            placeholder="外部引用 ref（可选）"
+                            style={{ ...smallInput, flex: 1, minWidth: 150 }}
+                          />
+                          <select
+                            value={revStage}
+                            onChange={(e) => setRevStage(e.target.value as ArtifactStage)}
+                            style={smallInput}
+                          >
+                            <option value="promoted">promoted（正式）</option>
+                            <option value="candidate">candidate（候选）</option>
+                            <option value="deprecated">deprecated（已废弃）</option>
+                          </select>
+                        </div>
+                        <div style={{ display: 'flex', gap: 12, alignItems: 'center', fontSize: 11, color: 'var(--text-secondary)' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={revIsCurrent} onChange={(e) => setRevIsCurrent(e.target.checked)} />
+                            设为当前版本
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={revLadderEligible} onChange={(e) => setRevLadderEligible(e.target.checked)} />
+                            具备天梯资格 (ladder_eligible)
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={revPlaywithyouAllowed} onChange={(e) => setRevPlaywithyouAllowed(e.target.checked)} />
+                            允许陪打 (playwithyou)
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={revReviewAllowed} onChange={(e) => setRevReviewAllowed(e.target.checked)} />
+                            允许复盘 (review)
+                          </label>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginTop: 2 }}>
+                          <button
+                            type="button"
+                            onClick={() => void addRevision()}
+                            disabled={revBusy || !revVersion.trim() || !revProvider.trim()}
+                            style={primaryBtn}
+                          >
+                            注册外部版本
+                          </button>
+                          <button type="button" onClick={() => setAddingRevisionFor(null)} style={ghostSmallBtn}>取消</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ marginTop: 2 }}>
+                        <button type="button" onClick={() => openAddRevision(identity.model_identity_id, identity.label)} style={ghostSmallBtn}>
+                          + 注册外部版本 (External Revision)
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 3. none 类型 */}
+                {identity.kind === 'none' && (
+                  <div style={{ flex: 1, color: 'var(--text-muted)', fontSize: 12 }}>
+                    纯占位模型身份（无产物与版本管理）
+                  </div>
+                )}
               </div>
             ))}
             {identities.length === 0 && (

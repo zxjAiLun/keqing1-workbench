@@ -119,17 +119,66 @@ def test_account_stats_stub(four_account_ids):
 
 
 def test_model_endpoints(four_account_ids):
-    from participants.schemas import ModelArtifactCreate, ModelIdentityCreate
+    from participants.schemas import (
+        ExternalModelRevisionCreate,
+        ExternalModelRevisionUpdate,
+        ModelArtifactCreate,
+        ModelArtifactUpdate,
+        ModelIdentityCreate,
+    )
 
+    # 1. Local Model & Artifact Lifecycle API
     identity = api.api_create_model(ModelIdentityCreate(model_identity_id="model-70k", label="70k", kind="local_model", account_id="70k@01", artifact_path="ckpt.pth"))
     assert identity.model_identity_id == "model-70k"
     listed = api.api_list_models()
     assert len(listed["identities"]) == 1
     artifact = api.api_add_artifact("model-70k", ModelArtifactCreate(label="70k-fixed.pth", artifact_path="ckpt2.pth"))
     assert artifact["is_current"] is True
+    art_id = artifact["model_artifact_id"]
+
+    # PATCH artifact lifecycle
+    patched_art = api.api_update_artifact("model-70k", art_id, ModelArtifactUpdate(stage="deprecated"))
+    assert patched_art["stage"] == "deprecated"
+
     with pytest.raises(HTTPException) as exc:
         api.api_add_artifact("model-ghost", ModelArtifactCreate(label="x", artifact_path="y"))
     assert exc.value.status_code == 404
+
+    # 2. External Agent & External Revision Lifecycle API (R13-D)
+    ext_ident = api.api_create_model(ModelIdentityCreate(model_identity_id="model:mortal", label="Mortal", kind="external_agent"))
+    assert ext_ident.model_identity_id == "model:mortal"
+
+    # POST external-revisions
+    rev1 = api.api_add_external_revision(
+        "model:mortal",
+        ExternalModelRevisionCreate(provider="mortal", version="4.1b", is_current=True),
+    )
+    assert rev1["version"] == "4.1b"
+    assert rev1["is_current"] is True
+    rev1_id = rev1["external_revision_id"]
+
+    # POST another revision 4.2
+    rev2 = api.api_add_external_revision(
+        "model:mortal",
+        ExternalModelRevisionCreate(provider="mortal", version="4.2", is_current=False),
+    )
+    assert rev2["version"] == "4.2"
+    assert rev2["is_current"] is False
+    rev2_id = rev2["external_revision_id"]
+
+    # POST set current
+    rev2_curr = api.api_set_current_external_revision("model:mortal", rev2_id)
+    assert rev2_curr["is_current"] is True
+
+    # PATCH revision lifecycle (retire)
+    rev1_retired = api.api_update_external_revision("model:mortal", rev1_id, ExternalModelRevisionUpdate(stage="retired"))
+    assert rev1_retired["stage"] == "retired"
+    assert rev1_retired["retired_at"] is not None
+
+    # Sealed retired cannot be modified -> 409
+    with pytest.raises(HTTPException) as exc_ret:
+        api.api_update_external_revision("model:mortal", rev1_id, ExternalModelRevisionUpdate(stage="promoted"))
+    assert exc_ret.value.status_code == 409
 
 
 def test_list_matches_pagination_validation(four_account_ids):

@@ -547,4 +547,114 @@ def test_ladder_rejects_explicit_nonexistent_seat_identity(participants_env, tmp
         validate_ladder_eligibility(season_id, bad_seat_explicit_identity, registry=registry, project_root=tmp_path)
 
 
+def test_external_revision_lifecycle_e2e_isolation(participants_env, tmp_path, monkeypatch) -> None:
+    """R13-D E2E: External Revision lifecycle transitions, season immutability, and intake isolation."""
+    from workbench.replay import season_registry as sr
+    from workbench.participants import intake
+    from workbench.participants.schemas import (
+        AccountCreate,
+        ExternalModelRevisionCreate,
+        ExternalModelRevisionUpdate,
+        ModelIdentityCreate,
+    )
+
+    configs_dir = tmp_path / "registries"
+    configs_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("KEQING_LADDER_CONFIG_DIR", str(configs_dir))
+
+    # 1. Register accounts & external model with 4.1b
+    registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:mortal", label="Mortal Agent", kind="external_agent"))
+    for i in range(1, 4):
+        registry.create_account(AccountCreate(account_id=f"account:h{i}", display_name=f"H{i}", account_type="human"))
+    registry.create_account(AccountCreate(account_id="account:mortal_bot", display_name="MortalBot", account_type="external_bot", model_identity_id="model:mortal"))
+
+    rev41 = registry.add_external_revision(
+        "model:mortal",
+        ExternalModelRevisionCreate(provider="mortal", version="4.1b", is_current=True, stage="promoted"),
+    )
+    assert rev41.external_revision_id == "external:mortal:4.1b"
+
+    # 2. Lock Season to 4.1b
+    sr.create_season(configs_dir, season_id="s_mortal_season", title="Mortal Season")
+    sr.set_season_enrollment(
+        configs_dir,
+        "s_mortal_season",
+        ["account:h1", "account:h2", "account:h3", "account:mortal_bot"],
+        provenance_by_model={
+            "model:mortal": {
+                "kind": "external_revision",
+                "model_identity_id": "model:mortal",
+                "external_revision_id": "external:mortal:4.1b",
+            }
+        },
+    )
+    sr.set_season_status(configs_dir, "s_mortal_season", "running")
+
+    # Snapshot season config
+    season_before = sr.get_season(configs_dir, "s_mortal_season")
+    mortal_group_before = next(m for m in season_before["models"] if m.get("model_identity_id") == "model:mortal")
+    assert mortal_group_before["execution_provenance"]["external_revision_id"] == "external:mortal:4.1b"
+
+    # 3. Add new revision 4.2 and set current to 4.2 in catalog
+    rev42 = registry.add_external_revision(
+        "model:mortal",
+        ExternalModelRevisionCreate(provider="mortal", version="4.2", is_current=True, stage="promoted"),
+    )
+    assert rev42.external_revision_id == "external:mortal:4.2"
+    ident = registry.get_model_identity("model:mortal")
+    curr = next(r for r in ident.external_revisions if r.is_current)
+    assert curr.version == "4.2"
+
+    # 4. Verified: Season config remains completely untouched & immutable (still locked to 4.1b)
+    season_after = sr.get_season(configs_dir, "s_mortal_season")
+    mortal_group_after = next(m for m in season_after["models"] if m.get("model_identity_id") == "model:mortal")
+    assert mortal_group_after["execution_provenance"]["external_revision_id"] == "external:mortal:4.1b"
+
+    # Mock tenhou download
+    monkeypatch.setattr(
+        intake,
+        "download_tenhou6",
+        lambda log_id: {
+            "name": ["Bot", "H1", "H2", "H3"],
+            "rule": {"aka": True},
+            "log": [[[0, 0, 0], [25000, 25000, 25000, 25000], [], [], [], [], [], [], [], [], [], [], [], [], [], [], ["和了", [5000, -5000, 0, 0], [0, 1]]]],
+        },
+    )
+
+    # 5. Intake assessment on s_mortal_season:
+    # 5a. Seat with 4.1b -> PASS (ready)
+    res_41 = [
+        {"seat": 0, "action": "assign", "account_id": "account:mortal_bot", "model_identity_id": "model:mortal", "external_revision_id": "external:mortal:4.1b"},
+        {"seat": 1, "action": "assign", "account_id": "account:h1"},
+        {"seat": 2, "action": "assign", "account_id": "account:h2"},
+        {"seat": 3, "action": "assign", "account_id": "account:h3"},
+    ]
+    assess_41 = intake.assess_intake_admission(
+        log_id="20260804gm-test-r13d-41",
+        resolutions=res_41,
+        season_id="s_mortal_season",
+        rating_eligible=True,
+        project_root=tmp_path,
+    )
+    assert assess_41.state == "ready"
+    assert assess_41.seats[0].frozen_provenance.external_revision_id == "external:mortal:4.1b"
+
+    # 5b. Seat with 4.2 -> BLOCKED (season mismatch)
+    res_42 = [
+        {"seat": 0, "action": "assign", "account_id": "account:mortal_bot", "model_identity_id": "model:mortal", "external_revision_id": "external:mortal:4.2"},
+        {"seat": 1, "action": "assign", "account_id": "account:h1"},
+        {"seat": 2, "action": "assign", "account_id": "account:h2"},
+        {"seat": 3, "action": "assign", "account_id": "account:h3"},
+    ]
+    assess_42 = intake.assess_intake_admission(
+        log_id="20260804gm-test-r13d-42",
+        resolutions=res_42,
+        season_id="s_mortal_season",
+        rating_eligible=True,
+        project_root=tmp_path,
+    )
+    assert assess_42.state == "blocked"
+    assert any("external:mortal:4.2" in iss.message and "不一致" in iss.message for iss in assess_42.issues)
+
+
 

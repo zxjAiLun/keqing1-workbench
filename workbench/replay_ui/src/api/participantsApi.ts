@@ -18,8 +18,12 @@ import type {
   MatchResponse,
   MatchRevise,
   ModelsResponse,
+  ExternalModelRevision,
+  ExternalModelRevisionCreate,
+  ExternalModelRevisionUpdate,
   ModelArtifact,
   ModelArtifactCreate,
+  ModelArtifactUpdate,
   ModelIdentity,
   ModelIdentityCreate,
   RevisionSummary,
@@ -67,8 +71,16 @@ export const participantsApi = {
     api('/participants/models', { method: 'POST', body: JSON.stringify(payload) }),
   addModelArtifact: (modelIdentityId: string, payload: ModelArtifactCreate): Promise<ModelArtifact> =>
     api(`/participants/models/${encodeURIComponent(modelIdentityId)}/artifacts`, { method: 'POST', body: JSON.stringify(payload) }),
+  updateModelArtifact: (modelIdentityId: string, artifactId: string, payload: ModelArtifactUpdate): Promise<ModelArtifact> =>
+    api(`/participants/models/${encodeURIComponent(modelIdentityId)}/artifacts/${encodeURIComponent(artifactId)}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   setCurrentArtifact: (modelIdentityId: string, artifactId: string): Promise<ModelArtifact> =>
     api(`/participants/models/${encodeURIComponent(modelIdentityId)}/artifacts/${encodeURIComponent(artifactId)}/current`, { method: 'POST' }),
+  addExternalRevision: (modelIdentityId: string, payload: ExternalModelRevisionCreate): Promise<ExternalModelRevision> =>
+    api(`/participants/models/${encodeURIComponent(modelIdentityId)}/external-revisions`, { method: 'POST', body: JSON.stringify(payload) }),
+  updateExternalRevision: (modelIdentityId: string, revisionId: string, payload: ExternalModelRevisionUpdate): Promise<ExternalModelRevision> =>
+    api(`/participants/models/${encodeURIComponent(modelIdentityId)}/external-revisions/${encodeURIComponent(revisionId)}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  setCurrentExternalRevision: (modelIdentityId: string, revisionId: string): Promise<ExternalModelRevision> =>
+    api(`/participants/models/${encodeURIComponent(modelIdentityId)}/external-revisions/${encodeURIComponent(revisionId)}/current`, { method: 'POST' }),
 
   // ---- 对局账本 ----
   listMatches: (params: {

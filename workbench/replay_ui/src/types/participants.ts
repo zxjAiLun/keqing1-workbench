@@ -8,6 +8,8 @@ export type SourceType = 'native' | 'imported' | 'manual';
 export type DataCompleteness = 'result_only' | 'hand_summary' | 'full_replay';
 export type GameLength = 'tonpu' | 'hanchan';
 export type SeatNo = 0 | 1 | 2 | 3;
+export type ArtifactStage = 'promoted' | 'candidate' | 'deprecated' | 'retired';
+export type ArtifactCapability = 'ladder_eligible' | 'playwithyou_allowed' | 'review_allowed';
 
 export interface Account {
   account_id: string;
@@ -31,10 +33,17 @@ export interface ModelArtifact {
   artifact_path?: string | null;
   hash?: string | null;
   is_current: boolean;
-  stage?: 'promoted' | 'candidate' | 'retired';
+  stage?: 'promoted' | 'candidate' | 'deprecated' | 'retired';
   is_ladder_eligible?: boolean;
+  capabilities?: string[];
   created_at: string;
   retired_at?: string | null;
+}
+
+export interface ModelArtifactUpdate {
+  stage?: 'promoted' | 'candidate' | 'deprecated' | 'retired';
+  capabilities?: string[];
+  is_current?: boolean;
 }
 
 export interface ExternalModelRevision {
@@ -42,10 +51,11 @@ export interface ExternalModelRevision {
   model_identity_id: string;
   provider: string;
   version: string;
+  external_ref?: string | null;
   is_current: boolean;
   stage: 'promoted' | 'candidate' | 'deprecated' | 'retired';
-  is_ladder_eligible: boolean;
-  capabilities: string[];
+  is_ladder_eligible?: boolean;
+  capabilities?: string[];
   created_at: string;
   retired_at?: string | null;
   note?: string | null;
@@ -55,11 +65,17 @@ export interface ExternalModelRevisionCreate {
   external_revision_id?: string | null;
   provider: string;
   version: string;
+  external_ref?: string | null;
   stage?: 'promoted' | 'candidate' | 'deprecated' | 'retired';
   is_current?: boolean;
-  is_ladder_eligible?: boolean;
   capabilities?: string[];
   note?: string | null;
+}
+
+export interface ExternalModelRevisionUpdate {
+  stage?: 'promoted' | 'candidate' | 'deprecated' | 'retired';
+  capabilities?: string[];
+  is_current?: boolean;
 }
 
 export interface FrozenExecutionProvenance {

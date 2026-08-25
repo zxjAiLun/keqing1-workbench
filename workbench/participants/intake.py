@@ -988,6 +988,241 @@ def recover_intake_transaction_locked(tx: dict) -> None:
         pass
 
 
+def assess_intake_admission(
+    *,
+    log_id: str,
+    resolutions: list[dict],
+    session_id: str | None = None,
+    season_id: str | None = None,
+    rating_eligible: bool = False,
+    registry_override=None,
+    project_root: Path | None = None,
+) -> Any:
+    """R13-C: 只读无副作用的天梯准入评估 (Admission Assessment Preflight)。
+
+    纯 Preflight：
+    - 不创建账号、不注册别名、不写 staging、不写 matches.jsonl、不写 revision、不打 dirty marker；
+    - 内存中模拟解析四座，严格复用 validate_ladder_eligibility 准入门禁；
+    - rating_eligible=False 或无 season_id 时返回 state="not_requested"；
+    - 评估成功返回 state="ready" 并挂载每个座位的 FrozenExecutionProvenance（不含运行时 checkpoint 路径）；
+    - 存在冲突/未注册/版本不符时返回 state="blocked" 及结构化 AdmissionIssue 列表。
+    """
+    from workbench.replay import ladder as ladder_data
+    from workbench.participants.ladder_eligibility import (
+        PROJECT_ROOT as DEFAULT_PROJECT_ROOT,
+        _season_account_model,
+        validate_ladder_eligibility,
+    )
+    from workbench.participants.execution_provenance import freeze_execution_provenance
+    from workbench.participants.schemas import (
+        AdmissionIssue,
+        AdmissionSeatAssessment,
+        IntakeAdmissionAssessment,
+    )
+
+    active_root = project_root or DEFAULT_PROJECT_ROOT
+    active_registry = registry_override or registry
+
+    if not session_id:
+        session_id = _session_id_for_log_id(log_id)
+
+    # 下载/读取 player names（若失败让网络/解析错误抛出，走 transport 502）
+    tenhou6 = download_tenhou6(log_id)
+    names = tenhou6.get("name") or [f"Player {i+1}" for i in range(4)]
+
+    res_by_seat = {int(r["seat"]): r for r in resolutions if "seat" in r}
+
+    if not rating_eligible or not season_id or not str(season_id).strip():
+        # state = "not_requested"
+        seats_assessment: list[AdmissionSeatAssessment] = []
+        for s in range(4):
+            r = res_by_seat.get(s, {})
+            acct_id = r.get("account_id")
+            acct = active_registry.get_account(acct_id) if acct_id else None
+            disp = (
+                r.get("display_name")
+                or (acct.display_name if acct else None)
+                or (names[s] if s < len(names) else f"seat{s}")
+            )
+            ctrl = r.get("default_controller") or (acct.default_controller if acct else None)
+            seats_assessment.append(
+                AdmissionSeatAssessment(
+                    seat=s,
+                    account_id=acct_id,
+                    display_name=disp,
+                    controller_type=ctrl,
+                    is_ladder_eligible=False,
+                    issues=[],
+                    model_identity_id=r.get("model_identity_id"),
+                    model_artifact_id=r.get("model_artifact_id"),
+                    external_revision_id=r.get("external_revision_id"),
+                )
+            )
+        return IntakeAdmissionAssessment(
+            state="not_requested",
+            season_id=str(season_id).strip() if season_id else None,
+            rating_eligible=False,
+            issues=[],
+            seats=seats_assessment,
+        )
+
+    normalized_season_id = str(season_id).strip()
+    top_issues: list[AdmissionIssue] = []
+
+    configs_dir = ladder_data.resolve_config_dir(active_root)
+    season_config: dict[str, Any] | None = None
+    try:
+        season_config = ladder_data.get_season_config(configs_dir, normalized_season_id)
+    except ladder_data.SeasonNotFoundError:
+        top_issues.append(
+            AdmissionIssue(code="season_not_found", message=f"正式赛季不存在: {normalized_season_id}")
+        )
+    except Exception as exc:
+        top_issues.append(
+            AdmissionIssue(code="season_invalid", message=f"读取赛季配置失败: {exc}")
+        )
+
+    if season_config is not None:
+        if str(season_config.get("status") or "") != "running":
+            top_issues.append(
+                AdmissionIssue(
+                    code="season_not_running",
+                    message=f"赛季 {normalized_season_id} 当前状态为 {season_config.get('status')}，非 running",
+                )
+            )
+        ingest = season_config.get("ingest") if isinstance(season_config.get("ingest"), dict) else {}
+        part_cfg = ingest.get("participants")
+        if not (isinstance(part_cfg, dict) and part_cfg.get("enabled") and part_cfg.get("exclusive")):
+            top_issues.append(
+                AdmissionIssue(
+                    code="season_projection_disabled",
+                    message=f"赛季 {normalized_season_id} 未启用 participants 正式投影（需 enabled+exclusive）",
+                )
+            )
+
+    seats_assessment: list[AdmissionSeatAssessment] = []
+    mem_seats: list[MatchSeat] = []
+
+    for s in range(4):
+        raw_res = res_by_seat.get(s)
+        seat_issues: list[AdmissionIssue] = []
+        if raw_res is None:
+            seat_issues.append(AdmissionIssue(code="seat_missing", message=f"座位 {s} 缺少解析决议", seat=s))
+            seats_assessment.append(
+                AdmissionSeatAssessment(seat=s, is_ladder_eligible=False, issues=seat_issues)
+            )
+            continue
+
+        action = raw_res.get("action", "assign")
+        pname = names[s] if s < len(names) else f"seat{s}"
+
+        if action == "create":
+            seat_issues.append(
+                AdmissionIssue(code="account_not_enrolled", message=f"新建账号未在正式赛季 {normalized_season_id} 注册", seat=s)
+            )
+            disp = raw_res.get("display_name") or pname
+            ctrl = raw_res.get("default_controller") or _DEFAULT_CTRL_BY_TYPE.get(raw_res.get("account_type") or "external_bot")
+            seats_assessment.append(
+                AdmissionSeatAssessment(
+                    seat=s,
+                    display_name=disp,
+                    controller_type=ctrl,
+                    is_ladder_eligible=False,
+                    issues=seat_issues,
+                )
+            )
+            continue
+
+        try:
+            _, _, mem_seat, _ = _resolve_seat(
+                raw_res,
+                name=pname,
+                session_id=session_id,
+                external_match_id=log_id,
+            )
+        except Exception as exc:
+            seat_issues.append(
+                AdmissionIssue(code="seat_resolution_failed", message=str(exc), seat=s)
+            )
+            seats_assessment.append(
+                AdmissionSeatAssessment(
+                    seat=s,
+                    account_id=raw_res.get("account_id"),
+                    is_ladder_eligible=False,
+                    issues=seat_issues,
+                )
+            )
+            continue
+
+        acct = active_registry.get_account(mem_seat.account_id)
+        disp = acct.display_name if acct else mem_seat.account_id
+
+        if season_config is not None:
+            season_model = _season_account_model(season_config, mem_seat.account_id)
+            if season_model is None:
+                seat_issues.append(
+                    AdmissionIssue(
+                        code="account_not_enrolled",
+                        message=f"账号 {mem_seat.account_id} 未在正式赛季 {normalized_season_id} 注册",
+                        seat=s,
+                    )
+                )
+
+        seats_assessment.append(
+            AdmissionSeatAssessment(
+                seat=s,
+                account_id=mem_seat.account_id,
+                display_name=disp,
+                controller_type=mem_seat.controller_type,
+                is_ladder_eligible=(len(seat_issues) == 0 and len(top_issues) == 0),
+                issues=seat_issues,
+                model_identity_id=mem_seat.model_identity_id,
+                model_artifact_id=mem_seat.model_artifact_id,
+                external_revision_id=mem_seat.external_revision_id,
+            )
+        )
+        mem_seats.append(mem_seat)
+
+    # 4 座均基本解析成功且赛季配置有效时，执行全局 validate_ladder_eligibility
+    if len(top_issues) == 0 and len(mem_seats) == 4 and all(len(sa.issues) == 0 for sa in seats_assessment):
+        try:
+            prov_map = validate_ladder_eligibility(
+                normalized_season_id,
+                mem_seats,
+                registry=active_registry,
+                project_root=active_root,
+            )
+            for sa in seats_assessment:
+                can_prov = prov_map.get(sa.seat)
+                if can_prov is not None:
+                    frozen_prov = freeze_execution_provenance(can_prov)
+                    sa.is_ladder_eligible = True
+                    sa.frozen_provenance = frozen_prov
+                    sa.model_identity_id = frozen_prov.model_identity_id
+                    sa.model_artifact_id = frozen_prov.model_artifact_id
+                    sa.external_revision_id = frozen_prov.external_revision_id
+        except Exception as exc:
+            top_issues.append(
+                AdmissionIssue(code="admission_rejected", message=str(exc))
+            )
+            for sa in seats_assessment:
+                sa.is_ladder_eligible = False
+
+    all_issues = list(top_issues)
+    for sa in seats_assessment:
+        all_issues.extend(sa.issues)
+
+    state = "ready" if len(all_issues) == 0 else "blocked"
+
+    return IntakeAdmissionAssessment(
+        state=state,
+        season_id=normalized_season_id,
+        rating_eligible=True,
+        issues=all_issues,
+        seats=seats_assessment,
+    )
+
+
 __all__ = [
     "parse_tenhou_url",
     "download_tenhou6",
@@ -995,6 +1230,7 @@ __all__ = [
     "player_names",
     "hand_summaries",
     "build_preview",
+    "assess_intake_admission",
     "resolve_and_create_match",
     "recover_intake_transaction_locked",
     "read_replay_artifact",

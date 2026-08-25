@@ -111,7 +111,7 @@ def validate_ladder_eligibility(
     project_root: Path = PROJECT_ROOT,
 ) -> dict[int, CanonicalExecutionProvenance]:
     """正式天梯资格校验；不通过抛 ValueError（带中文原因）。返回逐座规范执行凭据。"""
-    from replay import ladder as ladder_data
+    from workbench.replay import ladder as ladder_data
 
     configs_dir = ladder_data.resolve_config_dir(project_root)
     try:

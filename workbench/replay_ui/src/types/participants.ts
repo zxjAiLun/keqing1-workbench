@@ -31,8 +31,42 @@ export interface ModelArtifact {
   artifact_path?: string | null;
   hash?: string | null;
   is_current: boolean;
+  stage?: 'promoted' | 'candidate' | 'retired';
+  is_ladder_eligible?: boolean;
   created_at: string;
   retired_at?: string | null;
+}
+
+export interface ExternalModelRevision {
+  external_revision_id: string;
+  model_identity_id: string;
+  provider: string;
+  version: string;
+  is_current: boolean;
+  stage: 'promoted' | 'candidate' | 'deprecated' | 'retired';
+  is_ladder_eligible: boolean;
+  capabilities: string[];
+  created_at: string;
+  retired_at?: string | null;
+  note?: string | null;
+}
+
+export interface ExternalModelRevisionCreate {
+  external_revision_id?: string | null;
+  provider: string;
+  version: string;
+  stage?: 'promoted' | 'candidate' | 'deprecated' | 'retired';
+  is_current?: boolean;
+  is_ladder_eligible?: boolean;
+  capabilities?: string[];
+  note?: string | null;
+}
+
+export interface FrozenExecutionProvenance {
+  kind: 'human' | 'local_artifact' | 'external_revision';
+  model_identity_id?: string | null;
+  model_artifact_id?: string | null;
+  external_revision_id?: string | null;
 }
 
 export interface ModelIdentity {
@@ -45,6 +79,7 @@ export interface ModelIdentity {
   retired_at?: string | null;
   note?: string | null;
   artifacts: ModelArtifact[];
+  external_revisions?: ExternalModelRevision[];
 }
 
 export interface MatchSeat {
@@ -53,6 +88,8 @@ export interface MatchSeat {
   controller_type?: ControllerType | null;
   model_identity_id?: string | null;
   model_artifact_id?: string | null;
+  external_revision_id?: string | null;
+  execution_provenance?: FrozenExecutionProvenance | null;
 }
 
 export interface Match {
@@ -350,4 +387,55 @@ export interface MatchReplayArtifact {
     ryukyoku?: { reason?: string | null; deltas: number[] } | null;
   }>;
   has_events: boolean;
+}
+
+// ---- R13-C: 天梯准入评估 (Admission Assessment) ----
+
+export interface AdmissionIssue {
+  code: string;
+  message: string;
+  seat?: SeatNo | null;
+}
+
+export interface AdmissionSeatAssessment {
+  seat: SeatNo;
+  account_id?: string | null;
+  display_name?: string | null;
+  controller_type?: ControllerType | null;
+  is_ladder_eligible: boolean;
+  issues: AdmissionIssue[];
+  frozen_provenance?: FrozenExecutionProvenance | null;
+  model_identity_id?: string | null;
+  model_artifact_id?: string | null;
+  external_revision_id?: string | null;
+}
+
+export interface IntakeAdmissionAssessmentRequest {
+  log_id: string;
+  resolutions: Array<{
+    seat: SeatNo;
+    action?: 'assign' | 'create';
+    account_id?: string | null;
+    display_name?: string | null;
+    account_type?: AccountType | null;
+    default_controller?: ControllerType | null;
+    alias_id?: string | null;
+    model_identity_id?: string | null;
+    model_artifact_id?: string | null;
+    external_revision_id?: string | null;
+    execution_provenance?: FrozenExecutionProvenance | null;
+    alias_scope?: string;
+    confidence?: 'confirmed' | 'unresolved';
+  }>;
+  session_id?: string | null;
+  season_id?: string | null;
+  rating_eligible: boolean;
+}
+
+export interface IntakeAdmissionAssessment {
+  state: 'ready' | 'blocked' | 'not_requested';
+  season_id?: string | null;
+  rating_eligible: boolean;
+  issues: AdmissionIssue[];
+  seats: AdmissionSeatAssessment[];
 }

@@ -8,6 +8,8 @@ import type {
   ExternalAlias,
   ExternalAliasCreate,
   IntakeConfirmRequest,
+  IntakeAdmissionAssessmentRequest,
+  IntakeAdmissionAssessment,
   IntakePreview,
   IntakePreviewRequest,
   MatchCreate,
@@ -105,6 +107,8 @@ export const participantsApi = {
     api('/participants/aliases', { method: 'POST', body: JSON.stringify(payload) }),
   intakePreview: (payload: IntakePreviewRequest): Promise<IntakePreview> =>
     api('/participants/intake/preview', { method: 'POST', body: JSON.stringify(payload) }),
+  intakeAssessment: (payload: IntakeAdmissionAssessmentRequest): Promise<IntakeAdmissionAssessment> =>
+    api('/participants/intake/assessment', { method: 'POST', body: JSON.stringify(payload) }),
   intakeConfirm: (payload: IntakeConfirmRequest): Promise<MatchResponse> =>
     api('/participants/intake/confirm', { method: 'POST', body: JSON.stringify(payload) }),
 

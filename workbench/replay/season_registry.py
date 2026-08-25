@@ -342,13 +342,19 @@ def _freeze_model_group_provenance(
     """
     from workbench.participants.schemas import FrozenExecutionProvenance
 
+    def _parse_explicit(exp_prov: Any) -> FrozenExecutionProvenance:
+        if isinstance(exp_prov, dict):
+            try:
+                return FrozenExecutionProvenance.model_validate(exp_prov)
+            except Exception as exc:
+                raise ValueError(f"模型 {target_key} 的 explicit_provenance 结构无效: {exc}") from exc
+        elif isinstance(exp_prov, FrozenExecutionProvenance):
+            return exp_prov
+        raise ValueError(f"模型 {target_key} 的 explicit_provenance 必须是对象映射 (收到 {type(exp_prov).__name__})")
+
     if target_key == "human":
         if explicit_provenance is not None:
-            prov = (
-                FrozenExecutionProvenance.model_validate(explicit_provenance)
-                if isinstance(explicit_provenance, dict)
-                else explicit_provenance
-            )
+            prov = _parse_explicit(explicit_provenance)
             if prov.kind != "human":
                 raise ValueError(f"human group 只能使用 human provenance (当前为 {prov.kind})")
         prov = FrozenExecutionProvenance(kind="human")
@@ -363,11 +369,7 @@ def _freeze_model_group_provenance(
             if getattr(a, "is_ladder_eligible", True) and a.stage == "promoted"
         ]
         if explicit_provenance is not None:
-            prov = (
-                FrozenExecutionProvenance.model_validate(explicit_provenance)
-                if isinstance(explicit_provenance, dict)
-                else explicit_provenance
-            )
+            prov = _parse_explicit(explicit_provenance)
             if prov.kind != "local_artifact":
                 raise ValueError(f"本地模型 {target_key} 的 provenance 必须为 local_artifact (当前为 {prov.kind})")
             if prov.model_identity_id != target_key:
@@ -403,11 +405,7 @@ def _freeze_model_group_provenance(
             if getattr(r, "is_ladder_eligible", True) and r.stage == "promoted"
         ]
         if explicit_provenance is not None:
-            prov = (
-                FrozenExecutionProvenance.model_validate(explicit_provenance)
-                if isinstance(explicit_provenance, dict)
-                else explicit_provenance
-            )
+            prov = _parse_explicit(explicit_provenance)
             if prov.kind != "external_revision":
                 raise ValueError(f"外部模型 {target_key} 的 provenance 必须为 external_revision (当前为 {prov.kind})")
             if prov.model_identity_id != target_key:

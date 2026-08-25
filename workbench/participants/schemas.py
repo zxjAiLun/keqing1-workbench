@@ -331,6 +331,45 @@ class IntakeConfirmRequest(BaseModel):
     rating_eligible: bool | None = None
 
 
+# ---------------------------------------------------------------------------
+# R13-C: 摄入准入评估 (Admission Assessment)
+# ---------------------------------------------------------------------------
+
+class AdmissionIssue(BaseModel):
+    code: str
+    message: str
+    seat: SeatNo | None = None
+
+
+class AdmissionSeatAssessment(BaseModel):
+    seat: SeatNo
+    account_id: str | None = None
+    display_name: str | None = None
+    controller_type: ControllerType | None = None
+    is_ladder_eligible: bool = False
+    issues: list[AdmissionIssue] = Field(default_factory=list)
+    frozen_provenance: FrozenExecutionProvenance | None = None
+    model_identity_id: str | None = None
+    model_artifact_id: str | None = None
+    external_revision_id: str | None = None
+
+
+class IntakeAdmissionAssessmentRequest(BaseModel):
+    log_id: str = Field(min_length=1)
+    resolutions: list[SeatResolution]
+    session_id: str | None = None
+    season_id: str | None = None
+    rating_eligible: bool = False
+
+
+class IntakeAdmissionAssessment(BaseModel):
+    state: Literal["ready", "blocked", "not_requested"]
+    season_id: str | None = None
+    rating_eligible: bool = False
+    issues: list[AdmissionIssue] = Field(default_factory=list)
+    seats: list[AdmissionSeatAssessment] = Field(default_factory=list)
+
+
 class MatchSeat(BaseModel):
     seat: SeatNo
     account_id: str

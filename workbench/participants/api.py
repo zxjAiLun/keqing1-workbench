@@ -18,6 +18,8 @@ from .schemas import (
     AccountCreate,
     AccountUpdate,
     ExternalAliasCreate,
+    IntakeAdmissionAssessment,
+    IntakeAdmissionAssessmentRequest,
     IntakeConfirmRequest,
     IntakePreviewRequest,
     Match,
@@ -304,6 +306,22 @@ def api_intake_preview(payload: IntakePreviewRequest) -> dict:
         raise _error(422, str(exc)) from exc
     except Exception as exc:  # 网络/解析错误统一 502
         raise HTTPException(status_code=502, detail={"error": f"牌谱获取失败: {exc}"}) from exc
+
+
+@router.post("/intake/assessment", response_model=IntakeAdmissionAssessment)
+def api_intake_assessment(payload: IntakeAdmissionAssessmentRequest) -> IntakeAdmissionAssessment:
+    try:
+        return intake.assess_intake_admission(
+            log_id=payload.log_id,
+            resolutions=[r.model_dump() for r in payload.resolutions],
+            session_id=payload.session_id,
+            season_id=payload.season_id,
+            rating_eligible=payload.rating_eligible,
+        )
+    except ValueError as exc:
+        raise _error(422, str(exc)) from exc
+    except Exception as exc:  # 网络/解析错误统一 502
+        raise HTTPException(status_code=502, detail={"error": f"牌谱评估失败: {exc}"}) from exc
 
 
 @router.post("/intake/confirm", response_model=MatchResponse)

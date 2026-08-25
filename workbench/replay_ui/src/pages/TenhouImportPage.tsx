@@ -8,7 +8,15 @@ import { participantsApi } from '../api/participantsApi';
 import { ladderApi } from '../api/ladderApi';
 import { ApiError } from '../api/replayApi';
 import { routes } from '../routes';
-import type { Account, ExternalAlias, IntakePreview, ModelIdentity, SeatResolution, SeatNo } from '../types/participants';
+import type {
+  Account,
+  ExternalAlias,
+  IntakeAdmissionAssessment,
+  IntakePreview,
+  ModelIdentity,
+  SeatResolution,
+  SeatNo,
+} from '../types/participants';
 
 type DraftResolution = {
   seat: SeatNo;
@@ -57,6 +65,9 @@ export function TenhouImportPage() {
   const [ladderSeason, setLadderSeason] = useState('');
   // R11-A1：该牌谱已存在（preview 检出或 confirm 返回 duplicate_match）时的已有对局 ID
   const [duplicateMatchId, setDuplicateMatchId] = useState<string | null>(null);
+  // R13-C：天梯准入评估 (Admission Assessment) 状态
+  const [assessment, setAssessment] = useState<IntakeAdmissionAssessment | null>(null);
+  const [assessing, setAssessing] = useState(false);
 
   const load = useCallback(async (signal: AbortSignal) => {
     try {
@@ -164,6 +175,70 @@ export function TenhouImportPage() {
       disabled: usedElsewhere.has(a.account_id),
     }));
   };
+
+  // R13-C: 响应式天梯准入评估
+  useEffect(() => {
+    if (!preview || !ladderEligible || !ladderSeason.trim()) {
+      setAssessment(null);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setAssessing(true);
+      try {
+        const resolutions: SeatResolution[] = drafts.map((d) => {
+          const base = {
+            seat: d.seat,
+            action: d.action,
+            alias_scope: d.alias_scope,
+            confidence: d.confidence,
+          };
+          if (d.action === 'create') {
+            return {
+              ...base,
+              display_name: d.display_name || preview.raw_player_names[d.seat],
+              account_type: d.account_type,
+            };
+          }
+          return {
+            ...base,
+            account_id: d.account_id,
+            alias_id: d.alias_id || undefined,
+          };
+        });
+        const res = await participantsApi.intakeAssessment({
+          log_id: preview.log_id,
+          resolutions,
+          session_id: sessionId,
+          season_id: ladderSeason.trim(),
+          rating_eligible: true,
+        });
+        if (!controller.signal.aborted) {
+          setAssessment(res);
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          // 网络或解析异常
+          setAssessment({
+            state: 'blocked',
+            season_id: ladderSeason.trim(),
+            rating_eligible: true,
+            issues: [{ code: 'assessment_error', message: err instanceof Error ? err.message : String(err) }],
+            seats: [],
+          });
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setAssessing(false);
+        }
+      }
+    }, 200);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [preview, drafts, ladderEligible, ladderSeason, sessionId]);
 
   const confirmImport = async () => {
     if (!preview) return;
@@ -448,34 +523,130 @@ export function TenhouImportPage() {
               </div>
             </section>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 14 }}>
-              {/* R10 UX Repair P1-6：确认时决定是否计入正式天梯 */}
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={ladderEligible}
-                  onChange={(e) => setLadderEligible(e.target.checked)}
-                />
-                计入正式天梯
-                {ladderEligible && (
-                  <input
-                    value={ladderSeason}
-                    onChange={(e) => setLadderSeason(e.target.value)}
-                    style={{ width: 150, border: '1px solid var(--border)', background: 'var(--page-bg)', color: 'var(--text-primary)', borderRadius: 4, padding: '4px 8px', fontSize: 12 }}
-                  />
+            {/* R13-C: 正式天梯准入评估卡片 */}
+            {ladderEligible && (
+              <section style={{ ...cardStyle, borderLeft: assessment?.state === 'ready' ? '4px solid var(--positive, #10b981)' : assessment?.state === 'blocked' ? '4px solid var(--negative, #ef4444)' : '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <div style={{ fontWeight: 800, fontSize: 14 }}>
+                    正式天梯准入评估 ({ladderSeason || '未指定赛季'})
+                  </div>
+                  <div>
+                    {assessing ? (
+                      <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 4, background: 'var(--page-bg)', color: 'var(--text-muted)' }}>
+                        评估中…
+                      </span>
+                    ) : assessment?.state === 'ready' ? (
+                      <span style={{ fontSize: 12, fontWeight: 700, padding: '2px 8px', borderRadius: 4, background: 'rgba(16, 185, 129, 0.15)', color: 'var(--positive, #10b981)' }}>
+                        ✓ 可计入正式天梯
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 12, fontWeight: 700, padding: '2px 8px', borderRadius: 4, background: 'rgba(239, 68, 68, 0.15)', color: 'var(--negative, #ef4444)' }}>
+                        ✕ 当前不可计入
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {assessment && assessment.issues.length > 0 && (
+                  <div style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: 6, padding: '8px 12px', marginBottom: 12 }}>
+                    <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--negative, #ef4444)', marginBottom: 4 }}>
+                      拦截原因：
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: 'var(--text-primary)' }}>
+                      {assessment.issues.map((iss, idx) => (
+                        <li key={idx}>
+                          {iss.seat != null ? `[${SEAT_WINDS[iss.seat as SeatNo]}] ` : ''}{iss.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
-              </label>
-              <button
-                onClick={confirmImport}
-                disabled={confirming || Boolean(preview.duplicate_match_id)}
-                style={{
-                  border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--accent-text)',
-                  borderRadius: 6, fontSize: 13, fontWeight: 700, padding: '9px 18px', cursor: 'pointer',
-                }}
-              >
-                {confirming ? '导入中…' : '确认导入'}
-              </button>
+
+                {assessment && assessment.seats.length > 0 && (
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    {assessment.seats.map((st) => (
+                      <div
+                        key={st.seat}
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '40px 140px 1fr 80px',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '6px 10px',
+                          borderRadius: 6,
+                          background: 'var(--page-bg)',
+                          fontSize: 12,
+                        }}
+                      >
+                        <span style={{ fontWeight: 800, color: 'var(--text-muted)' }}>{SEAT_WINDS[st.seat]}</span>
+                        <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {st.display_name || st.account_id || '未指派'}
+                        </span>
+                        <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {st.frozen_provenance ? (
+                            st.frozen_provenance.kind === 'human' ? (
+                              <span style={{ color: 'var(--accent)' }}>真人 (human)</span>
+                            ) : st.frozen_provenance.kind === 'local_artifact' ? (
+                              <span>本地模型: <code>{st.frozen_provenance.model_artifact_id}</code></span>
+                            ) : (
+                              <span>外部模型: <code>{st.frozen_provenance.external_revision_id}</code></span>
+                            )
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)' }}>待评估</span>
+                          )}
+                        </span>
+                        <span style={{ textAlign: 'right', fontWeight: 700, color: st.is_ladder_eligible ? 'var(--positive, #10b981)' : 'var(--negative, #ef4444)' }}>
+                          {st.is_ladder_eligible ? '合格' : '不合格'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 14 }}>
+                {/* R10 UX Repair P1-6：确认时决定是否计入正式天梯 */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={ladderEligible}
+                    onChange={(e) => setLadderEligible(e.target.checked)}
+                  />
+                  计入正式天梯
+                  {ladderEligible && (
+                    <input
+                      value={ladderSeason}
+                      onChange={(e) => setLadderSeason(e.target.value)}
+                      style={{ width: 150, border: '1px solid var(--border)', background: 'var(--page-bg)', color: 'var(--text-primary)', borderRadius: 4, padding: '4px 8px', fontSize: 12 }}
+                    />
+                  )}
+                </label>
+                <button
+                  onClick={confirmImport}
+                  disabled={
+                    confirming ||
+                    Boolean(preview.duplicate_match_id) ||
+                    (ladderEligible && (assessing || assessment?.state === 'blocked'))
+                  }
+                  style={{
+                    border: '1px solid var(--accent)',
+                    background: ladderEligible && assessment?.state === 'blocked' ? 'var(--border)' : 'var(--accent)',
+                    color: ladderEligible && assessment?.state === 'blocked' ? 'var(--text-muted)' : 'var(--accent-text)',
+                    borderRadius: 6, fontSize: 13, fontWeight: 700, padding: '9px 18px',
+                    cursor: ladderEligible && assessment?.state === 'blocked' ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {confirming ? '导入中…' : '确认导入'}
+                </button>
               </div>
+              {ladderEligible && assessment?.state === 'blocked' && (
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  当前天梯准入未通过。可调整身份/版本，或取消勾选「计入正式天梯」作为普通对局导入。
+                </div>
+              )}
+            </div>
               </>
             )}
           </>

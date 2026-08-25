@@ -35,7 +35,6 @@ testpaths = ["tests"]
 python_files = [
     "test_*.py",
 ]
-addopts = "--ignore=tests/test_battle_canonicalization.py --ignore=tests/test_battle_edge_cases.py"
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",

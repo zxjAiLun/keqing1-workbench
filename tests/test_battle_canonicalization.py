@@ -196,7 +196,7 @@ class TestHumanActionCanonicalization:
         manager, room = _make_room()
         manager.start_kyoku(room, seed=7)
 
-        room.state.players[0].hand.update(["2p", "2p", "3s", "4s", "5sr", "8m", "8m"])
+        room.state.players[0].hand = Counter(["2p", "2p", "3s", "4s", "5sr", "8m", "8m"])
         room.state.last_discard = {"actor": 1, "pai": "8m", "pai_raw": "8m"}
         room.state.actor_to_move = 0
 
@@ -269,7 +269,7 @@ class TestStateExposure:
         manager, room = _make_room()
         manager.start_kyoku(room, seed=7)
 
-        room.state.players[0].hand.update(["2p", "2p", "3s", "4s", "5sr", "8m", "8m"])
+        room.state.players[0].hand = Counter(["2p", "2p", "3s", "4s", "5sr", "8m", "8m"])
         room.state.last_discard = {"actor": 1, "pai": "8m", "pai_raw": "8m"}
         room.state.actor_to_move = 0
 
@@ -366,7 +366,7 @@ class TestMalformedRequestRejection:
         manager, room = _make_room()
         manager.start_kyoku(room, seed=7)
 
-        room.state.players[0].hand.update(["2p", "2p", "3s", "4s", "5sr", "8m", "8m"])
+        room.state.players[0].hand = Counter(["2p", "2p", "3s", "4s", "5sr", "8m", "8m"])
         room.state.last_discard = {"actor": 1, "pai": "8m", "pai_raw": "8m"}
         room.state.actor_to_move = 0
 

@@ -26,20 +26,22 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install keqing_core runtime wheel
-        run: |
-          # The keqing_core wheel is built by keqing-mortal (rust/keqing_core).
-          # Publishing it as a release asset is future work; until then the
-          # Python job needs it injected (e.g. via a repository secret URL).
-          if [ -n "${KEQING_CORE_WHEEL_URL:-}" ]; then
-            uv pip install --system "$KEQING_CORE_WHEEL_URL"
-          fi
-
       - name: Install dependencies
         run: uv sync --dev --frozen
 
+      - name: Install keqing_core runtime wheel
+        env:
+          KEQING_CORE_WHEEL_URL: ${{ secrets.KEQING_CORE_WHEEL_URL }}
+        run: |
+          if [ -z "${KEQING_CORE_WHEEL_URL:-}" ]; then
+            echo "::error::KEQING_CORE_WHEEL_URL secret is missing or empty"
+            exit 1
+          fi
+          uv pip install --python .venv/bin/python "$KEQING_CORE_WHEEL_URL"
+          .venv/bin/python -c "import keqing_core; print('keqing_core loaded from:', keqing_core.__file__)"
+
       - name: Run default pytest suite
-        run: uv run python -m pytest -q
+        run: .venv/bin/python -m pytest -q
 
   replay-ui:
     name: Replay UI build

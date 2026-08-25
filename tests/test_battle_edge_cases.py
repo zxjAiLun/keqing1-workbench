@@ -103,12 +103,14 @@ def test_haitei_flag_when_wall_exhausted_on_draw():
     # 模拟 tsumo（实际上 wall 已空，这里测 is_haitei 计算逻辑）
     # score_hora 的 is_haitei 取决于调用者传入的 is_tsumo 和 wall 剩余
     # 验证 hora 方法正确传递 is_haitei 参数
-    room.state.players[0].hand = Counter({"1m": 3, "2m": 3, "3m": 3, "4m": 3, "5m": 2})
+    room.state.players[0].hand = Counter({"1m": 1, "2m": 1, "3m": 1, "4m": 1, "5m": 1, "6m": 1, "7m": 1, "8m": 1, "9m": 1, "1p": 3, "2p": 2})
+    room.state.last_tsumo[0] = "2p"
+    room.state.last_tsumo_raw[0] = "2p"
     result = score_hora(
         room.state,
         actor=0,
         target=0,
-        pai="5m",
+        pai="2p",
         is_tsumo=True,
         is_haitei=True,
         is_houtei=False,
@@ -334,7 +336,8 @@ def test_chankan_flag_doc():
     assert sig.parameters["is_chankan"].default == False
 
     # 验证 kakan 响应时 chankan 路径存在
-    legal_src = inspect.getsource(enumerate_legal_action_specs)
+    import mahjong_env.legal_actions as la_module
+    legal_src = inspect.getsource(la_module._enumerate_legal_action_specs_python)
     assert "is_chankan" in legal_src
 
 

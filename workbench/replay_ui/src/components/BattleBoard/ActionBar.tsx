@@ -145,17 +145,26 @@ function btnStyle(type: string): React.CSSProperties {
   };
   switch (type) {
     case "hora":
-      return { ...base, background: 'linear-gradient(135deg, var(--negative) 0%, #c05046 100%)', color: '#fff' };
+      return {
+        ...base,
+        background: 'linear-gradient(135deg, var(--gold) 0%, var(--accent-hover) 100%)',
+        color: 'var(--accent-text)',
+        boxShadow: '0 0 16px var(--accent-shadow)',
+      };
     case "reach":
-      return { ...base, background: 'linear-gradient(135deg, var(--gold) 0%, var(--accent-hover) 100%)', color: 'var(--accent-text)' };
+      return {
+        ...base,
+        background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%)',
+        color: 'var(--accent-text)',
+      };
     case "pon":
-      return { ...base, background: 'linear-gradient(135deg, var(--warning) 0%, #c47f35 100%)', color: '#fff' };
+      return { ...base, background: 'var(--warning)', color: 'var(--text-primary)' };
     case "chi":
-      return { ...base, background: 'linear-gradient(135deg, var(--success) 0%, #3a9e6f 100%)', color: '#fff' };
+      return { ...base, background: 'var(--success)', color: 'var(--text-primary)' };
     case "daiminkan":
     case "ankan":
     case "kakan":
-      return { ...base, background: 'linear-gradient(135deg, var(--seat-2) 0%, #9a7fd0 100%)', color: '#fff' };
+      return { ...base, background: 'var(--seat-2)', color: 'var(--text-primary)' };
     case "none":
       return {
         ...base,

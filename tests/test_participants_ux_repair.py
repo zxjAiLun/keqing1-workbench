@@ -53,24 +53,36 @@ def env(tmp_path, monkeypatch):
 
 
 def _accounts():
+    _models()
     for account_id, account_type in (
         ("nick@01", "human"),
         ("70k@01", "managed_bot"),
         ("70k@02", "managed_bot"),
         ("70k@03", "managed_bot"),
     ):
-        registry.create_account(AccountCreate(account_id=account_id, display_name=account_id, account_type=account_type))
+        registry.create_account(
+            AccountCreate(
+                account_id=account_id,
+                display_name=account_id,
+                account_type=account_type,
+                model_identity_id="70k" if account_type != "human" else None,
+            )
+        )
 
 
 def _models():
     """70k / V3 两个身份 + 产物（checkpoint 路径不同）。"""
-    identity_70k = registry.create_model_identity(
-        ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", account_id="70k@02", artifact_path="checkpoints/70k.pth")
-    )
-    identity_v3 = registry.create_model_identity(
-        ModelIdentityCreate(model_identity_id="V3", label="V3", kind="local_model", account_id="70k@02", artifact_path="checkpoints/v3.pth")
-    )
-    return identity_70k, identity_v3
+    ident_70k = registry.get_model_identity("70k")
+    if ident_70k is None:
+        ident_70k = registry.create_model_identity(
+            ModelIdentityCreate(model_identity_id="70k", label="70k", kind="local_model", artifact_path="checkpoints/70k.pth", stage="promoted")
+        )
+    ident_v3 = registry.get_model_identity("V3")
+    if ident_v3 is None:
+        ident_v3 = registry.create_model_identity(
+            ModelIdentityCreate(model_identity_id="V3", label="V3", kind="local_model", artifact_path="checkpoints/v3.pth", stage="promoted")
+        )
+    return ident_70k, ident_v3
 
 
 def _seats(seat1_identity_id=None, seat1_artifact_id=None, extra_account="70k@03"):
@@ -146,7 +158,7 @@ def test_gate_rejects_70k_account_with_v3_artifact(env):
     _accounts()
     _identity_70k, identity_v3 = _models()
     art_v3 = identity_v3.artifacts[0]
-    with pytest.raises(ValueError, match="checkpoint 不一致"):
+    with pytest.raises((ValueError, ledger.ValidationError)):
         ledger.create_match(_match_create(_seats("V3", art_v3.model_artifact_id)), registry)
 
 

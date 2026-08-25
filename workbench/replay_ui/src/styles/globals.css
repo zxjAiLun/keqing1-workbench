@@ -184,6 +184,16 @@
   /* 页面背景 */
   --page-bg: #f0f2f5;
 
+  /* 表面层级 */
+  --surface-1: #ffffff;
+  --surface-2: #f8f9fa;
+  --surface-3: #edf0f2;
+
+  /* 阴影层级 */
+  --elev-1: 0 1px 3px rgba(0,0,0,0.08);
+  --elev-2: 0 4px 12px rgba(0,0,0,0.12);
+  --elev-3: 0 12px 32px rgba(0,0,0,0.16);
+
   /* 侧边栏 */
   --sidebar-bg: #ffffff;
   --sidebar-border: #e5e7eb;
@@ -203,17 +213,23 @@
   --text-primary: #1f2937;
   --text-secondary: #6b7280;
   --text-muted: #9ca3af;
+  --text-faint: rgba(31,41,55,0.28);
 
   /* 主色调 */
   --accent: #3498db;
   --accent-hover: #2589c5;
   --accent-text: #ffffff;
   --accent-shadow: rgba(52,152,219,0.3);
+  --accent-bg: rgba(52,152,219,0.12);
+  --accent-border: rgba(52,152,219,0.35);
 
-  /* 成功/警告/错误 */
+  /* 语义色（青=正/优势，红=负/恶手） */
+  --positive: #0284c7;
+  --negative: #dc2626;
   --success: #27ae60;
   --warning: #d97706;
   --error: #dc2626;
+  --info: #2563eb;
 
   /* 金色（立直/胜利） */
   --gold: #d4a853;

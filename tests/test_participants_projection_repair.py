@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from participants import ledger, projection, registry
-from participants.schemas import AccountCreate, MatchCreate, MatchRevise, MatchSeat
+from participants.schemas import AccountCreate, MatchCreate, MatchRevise, MatchSeat, ModelIdentityCreate
 from replay import ladder_ingest
 
 SEASON = "official-ladder-v1"
@@ -28,13 +28,29 @@ def participants_root(tmp_path, monkeypatch):
 
 
 def _accounts():
+    registry.create_model_identity(
+        ModelIdentityCreate(
+            model_identity_id="70k",
+            label="70k",
+            kind="local_model",
+            artifact_path="artifacts/mortal_training/checkpoints/mortal_default_70k_promoted_candidate.pth",
+            stage="promoted",
+        )
+    )
     for account_id, account_type in (
         ("nick@01", "human"),
         ("70k@01", "managed_bot"),
         ("70k@02", "managed_bot"),
         ("70k@03", "managed_bot"),
     ):
-        registry.create_account(AccountCreate(account_id=account_id, display_name=account_id, account_type=account_type))
+        registry.create_account(
+            AccountCreate(
+                account_id=account_id,
+                display_name=account_id,
+                account_type=account_type,
+                model_identity_id="70k" if account_type != "human" else None,
+            )
+        )
 
 
 def _match_create(season_id=SEASON, rating_eligible=True, occurred_at="2026-08-04T10:00:00+08:00"):

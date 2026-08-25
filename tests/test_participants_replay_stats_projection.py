@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from participants import intake, ledger, registry
-from participants.schemas import AccountCreate, MatchCreate, MatchSeat
+from participants.schemas import AccountCreate, MatchCreate, MatchSeat, ModelIdentityCreate
 from replay import build_platform_account_report as account_report
 from replay import ladder_ingest
 
@@ -63,6 +63,15 @@ def participants_root(tmp_path, monkeypatch):
 
 
 def _accounts() -> None:
+    registry.create_model_identity(
+        ModelIdentityCreate(
+            model_identity_id="70k",
+            label="70k",
+            kind="local_model",
+            artifact_path="artifacts/mortal_training/checkpoints/mortal_default_70k_promoted_candidate.pth",
+            stage="promoted",
+        )
+    )
     for account_id, account_type in (
         ("nick@01", "human"),
         ("70k@01", "managed_bot"),
@@ -70,7 +79,12 @@ def _accounts() -> None:
         ("70k@03", "managed_bot"),
     ):
         registry.create_account(
-            AccountCreate(account_id=account_id, display_name=account_id, account_type=account_type)
+            AccountCreate(
+                account_id=account_id,
+                display_name=account_id,
+                account_type=account_type,
+                model_identity_id="70k" if account_type != "human" else None,
+            )
         )
 
 

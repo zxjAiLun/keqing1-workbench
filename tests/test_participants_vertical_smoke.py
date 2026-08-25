@@ -92,7 +92,7 @@ def env(tmp_path, monkeypatch):
                 account_id=account_id,
                 display_name=account_id,
                 account_type=account_type,
-                model_identity_id="70k" if account_id.startswith("70k") else None,
+                model_identity_id="70k" if account_type != "human" else None,
             )
         )
     aliases.register_alias(

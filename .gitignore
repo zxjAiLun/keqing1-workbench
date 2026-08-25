@@ -24,6 +24,7 @@ third_party/*
 logs/
 tmp/
 artifacts/
+dataset/
 *.log
 *.tmp
 *.bak

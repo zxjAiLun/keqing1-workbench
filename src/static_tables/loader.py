@@ -27,8 +27,8 @@ def load_static_table_bundle(path: str | Path) -> StaticTableBundle:
             )
         )
     return StaticTableBundle(
-        version=int(raw["version"]),
-        source_root=str(raw["source_root"]),
-        generated_from=str(raw["generated_from"]),
+        version=int(raw.get("version", 1)),
+        source_root=str(raw.get("source_root", "")),
+        generated_from=str(raw.get("generated_from", "")),
         tables=tables,
     )

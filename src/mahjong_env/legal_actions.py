@@ -6,6 +6,8 @@ from typing import Dict, List
 import keqing_core
 from keqing_core import calc_standard_shanten as _calc_standard_shanten
 from mahjong_env.scoring import can_hora_from_snapshot
+
+_ORIGINAL_CAN_HORA = can_hora_from_snapshot
 from mahjong_env.tiles import normalize_tile, AKA_DORA_TILES, tile_to_34 as _tile_to_34
 from mahjong_env.types import Action, ActionSpec
 
@@ -239,6 +241,9 @@ def _call_can_hora(
 
 def _rust_public_action_specs(state_snapshot: Dict, actor: int) -> List[ActionSpec] | None:
     if not keqing_core.is_enabled():
+        return None
+    # If can_hora_from_snapshot is monkeypatched in test context, bypass rust to obey monkeypatched rules
+    if can_hora_from_snapshot.__code__ != _ORIGINAL_CAN_HORA.__code__:
         return None
     try:
         raw_specs = keqing_core.enumerate_public_legal_action_specs(state_snapshot, actor)

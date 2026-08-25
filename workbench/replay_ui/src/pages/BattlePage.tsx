@@ -30,7 +30,7 @@ export function BattlePage() {
   const humanPlayerId = state?.human_player_id ?? 0;
   const forcedAutoTsumogiri =
     Boolean(state?.reached?.[humanPlayerId]) &&
-    !Boolean(state?.pending_reach?.[humanPlayerId]);
+    !state?.pending_reach?.[humanPlayerId];
   const effectiveAutoTsumogiri = autoTsumogiri || forcedAutoTsumogiri;
 
   const startNewGame = useCallback(async () => {

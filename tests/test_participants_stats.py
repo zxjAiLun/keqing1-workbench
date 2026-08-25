@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from participants import intake, ledger, registry, stats
-from participants.schemas import AccountCreate, MatchCreate, MatchSeat
+from participants.schemas import AccountCreate, MatchCreate, MatchSeat, ModelIdentityCreate
 
 
 @pytest.fixture(autouse=True)
@@ -16,13 +16,29 @@ def participants_root(tmp_path, monkeypatch):
 
 
 def _accounts():
+    registry.create_model_identity(
+        ModelIdentityCreate(
+            model_identity_id="70k",
+            label="70k",
+            kind="local_model",
+            artifact_path="artifacts/mortal_training/checkpoints/mortal_default_70k_promoted_candidate.pth",
+            stage="promoted",
+        )
+    )
     for account_id, account_type in (
         ("nick@01", "human"),
         ("70k@01", "managed_bot"),
         ("70k@02", "managed_bot"),
         ("70k@03", "managed_bot"),
     ):
-        registry.create_account(AccountCreate(account_id=account_id, display_name=account_id, account_type=account_type))
+        registry.create_account(
+            AccountCreate(
+                account_id=account_id,
+                display_name=account_id,
+                account_type=account_type,
+                model_identity_id="70k" if account_type != "human" else None,
+            )
+        )
 
 
 def _seats():

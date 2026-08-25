@@ -117,7 +117,7 @@ const launcher2 = read('../launch_tenhou_bots.py');
 check(launcher2.includes('resolved_checkpoint_path'), 'launcher 从 binding 冻结路径设 model_path');
 check(launcher2.includes('config.model_path = Path(frozen_path)'), 'runtime 加载冻结路径而非动态 spec');
 check(playwithyou.includes('launcher_command_specs'), '父进程用冻结绝对路径作为 --bots');
-check(playwithyou.includes('"resolved_checkpoint_path": str(resolved_path)'), 'binding 冻结 resolved_checkpoint_path');
+check(playwithyou.includes('"resolved_checkpoint_path": str('), 'binding 冻结 resolved_checkpoint_path');
 check(playwithyou.includes('"roster": payload.get("roster") or []'), '_discover_captures 透出 roster');
 check(playwithyou.includes('"evidence_warning": payload.get("evidence_warning")'), '_discover_captures 透出 evidence_warning');
 

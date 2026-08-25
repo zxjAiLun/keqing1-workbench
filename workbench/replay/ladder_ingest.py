@@ -36,14 +36,18 @@ def resolve_ingest_sources_root(project_root: Path, season: Mapping[str, Any]) -
     """解析赛季 ingest.sources_root（API 与 publisher 共用同一套路径语义）。
 
     - 绝对路径原样使用；
-    - 相对路径：设置 ``KEQING_LADDER_DATA_ROOT`` 时相对数据根，否则相对仓库根。
+    - 相对路径：设置 ``KEQING_LADDER_DATA_ROOT`` 时相对数据根，否则相对项目/仓库根。
     """
     ingest = season.get("ingest") if isinstance(season.get("ingest"), dict) else {}
     raw = ingest.get("sources_root")
     if not raw:
         raise LadderIngestError("season 缺少 ingest.sources_root")
-    del project_root
-    return resolve_ladder_path(str(raw))
+    path = Path(str(raw)).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    if os.environ.get("KEQING_LADDER_DATA_ROOT", "").strip():
+        return resolve_ladder_path(path)
+    return (Path(project_root) / path).resolve()
 
 
 class LadderIngestError(ValueError):

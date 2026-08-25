@@ -146,61 +146,27 @@ def validate_ladder_eligibility(
             if controller_type and controller_type != "human_ui":
                 raise ValueError(f"正式人类座位 {account_id} 的控制器必须为 human_ui")
         else:
-            identity_id = getattr(seat, "model_identity_id", None) or account.model_identity_id
+            # 非人类座位：必须通过单一 artifact policy resolver 唯一解析并满足 ladder_eligible
+            from .artifact_policy import resolve_artifact_binding
+
+            identity_id = getattr(seat, "model_identity_id", None) or account.model_identity_id or season_model.get("model_id")
             artifact_id = getattr(seat, "model_artifact_id", None)
-            artifact_record = None
+            season_ckpt = season_model.get("checkpoint")
 
-            if identity_id:
-                identity = registry.get_model_identity(identity_id)
-                if identity is not None:
-                    if artifact_id:
-                        artifact_record = _artifact_record(registry, artifact_id)
-                    else:
-                        season_ckpt = _resolve_checkpoint(season_model.get("checkpoint"), project_root)
-                        if season_ckpt is not None:
-                            matching = [
-                                a for a in identity.artifacts
-                                if _artifact_path(registry, a.model_artifact_id, project_root) == season_ckpt
-                            ]
-                            if matching:
-                                artifact_record = matching[0]
-                        if artifact_record is None:
-                            artifact_record = next((a for a in identity.artifacts if a.is_current), None)
-                        if artifact_record is None and identity.artifacts:
-                            artifact_record = identity.artifacts[0]
-            elif artifact_id:
-                artifact_record = _artifact_record(registry, artifact_id)
-            else:
-                # 尝试从 season_model["checkpoint"] 自动匹配全局 artifact
-                season_ckpt = _resolve_checkpoint(season_model.get("checkpoint"), project_root)
-                if season_ckpt is not None:
-                    for ident in registry.list_models():
-                        for a in ident.artifacts:
-                            if _artifact_path(registry, a.model_artifact_id, project_root) == season_ckpt:
-                                artifact_record = a
-                                break
-                        if artifact_record is not None:
-                            break
+            # 校验 account 是否存在且未停用
+            if identity_id and not registry.get_model_identity(identity_id):
+                # 如果 identity 尚未存在于 registry，但在 season 中配置了 checkpoint/model_id，尝试绑定
+                identity_id = season_model.get("model_id")
 
-            if artifact_record is not None:
-                artifact_id = artifact_record.model_artifact_id
-                # 校验 checkpoint 一致性
-                artifact_path = _artifact_path(registry, artifact_id, project_root)
-                if artifact_path is None:
-                    raise ValueError(f"模型产物不存在: {artifact_id}")
-                season_ckpt = _resolve_checkpoint(season_model.get("checkpoint"), project_root)
-                if season_ckpt is not None and artifact_path != season_ckpt:
-                    raise ValueError(
-                        f"账号 {account_id} 的模型产物与正式赛季 {season_model.get('model_id') or '?'} "
-                        f"checkpoint 不一致"
-                    )
-
-                if getattr(artifact_record, "stage", None) != "promoted" or (
-                    hasattr(artifact_record, "is_ladder_eligible") and not artifact_record.is_ladder_eligible
-                ):
-                    raise ValueError(
-                        f"账号 {account_id} 所用模型产物 {artifact_id} 处于 {getattr(artifact_record, 'stage', '未知')} 状态，无正式天梯参赛资格（仅 promoted 状态可参赛）"
-                    )
+            resolve_artifact_binding(
+                account_id=account_id,
+                identity_id=identity_id,
+                artifact_id=artifact_id,
+                checkpoint=season_ckpt,
+                purpose="ladder_eligible",
+                project_root=project_root,
+                registry=registry,
+            )
 
 
 __all__ = ["ensure_ladder_eligibility", "validate_ladder_eligibility"]

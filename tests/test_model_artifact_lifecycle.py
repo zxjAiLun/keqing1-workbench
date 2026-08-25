@@ -266,6 +266,172 @@ def test_playwithyou_model_only_launchers_blocks_retired_artifact(tmp_path, monk
 
     # Start request with launchers=[{model_id: "70k"}] must be rejected
     roster_entry = {"launcher_slot": 0, "model_id": "70k", "controller_type": "local_model"}
-    with pytest.raises(ValueError, match="已退役"):
+    with pytest.raises(ValueError, match="已退役|无法用于 Play-with-you"):
         pw._freeze_launcher_models([roster_entry], [str(fake_cp)])
+
+
+def test_artifact_policy_resolver_adversarial_matrix(participants_env, tmp_path, monkeypatch) -> None:
+    from participants.artifact_policy import resolve_artifact_binding
+
+    # Setup files
+    cp1 = tmp_path / "models" / "cp1.pth"
+    cp2 = tmp_path / "models" / "cp2.pth"
+    cp1.parent.mkdir(parents=True, exist_ok=True)
+    cp1.write_text("model1", encoding="utf-8")
+    cp2.write_text("model2", encoding="utf-8")
+
+    # 1. Nonexistent identity -> rejects
+    with pytest.raises(ValueError, match="0 match|未找到匹配"):
+        resolve_artifact_binding(
+            identity_id="nonexistent_id",
+            purpose="review_allowed",
+            project_root=tmp_path,
+            registry=registry,
+        )
+
+    # 2. Identity with zero artifacts -> rejects
+    registry.create_model_identity(
+        ModelIdentityCreate(
+            model_identity_id="ident_empty",
+            label="Empty Identity",
+            kind="local_model",
+        )
+    )
+    # create_model_identity without artifact_path does not create artifacts
+    with pytest.raises(ValueError, match="0 match|未找到匹配"):
+        resolve_artifact_binding(
+            identity_id="ident_empty",
+            purpose="ladder_eligible",
+            project_root=tmp_path,
+            registry=registry,
+        )
+
+    # 3. Create two identities with distinct artifacts
+    i1 = registry.create_model_identity(
+        ModelIdentityCreate(
+            model_identity_id="ident_1",
+            label="Ident 1",
+            kind="local_model",
+            artifact_path=str(cp1),
+            stage="promoted",
+        )
+    )
+    art1_id = i1.artifacts[0].model_artifact_id
+
+    i2 = registry.create_model_identity(
+        ModelIdentityCreate(
+            model_identity_id="ident_2",
+            label="Ident 2",
+            kind="local_model",
+            artifact_path=str(cp2),
+            stage="candidate",
+        )
+    )
+    art2_id = i2.artifacts[0].model_artifact_id
+
+    # 4. Artifact belonging to another identity -> rejects
+    with pytest.raises(ValueError, match="不属于身份"):
+        resolve_artifact_binding(
+            identity_id="ident_1",
+            artifact_id=art2_id,
+            purpose="review_allowed",
+            project_root=tmp_path,
+            registry=registry,
+        )
+
+    # 5. Checkpoint mismatch -> rejects
+    with pytest.raises(ValueError, match="不一致"):
+        resolve_artifact_binding(
+            identity_id="ident_1",
+            artifact_id=art1_id,
+            checkpoint=str(cp2),
+            purpose="ladder_eligible",
+            project_root=tmp_path,
+            registry=registry,
+        )
+
+    # 6. Candidate stage for ladder_eligible -> rejects
+    with pytest.raises(ValueError, match="无正式天梯参赛资格"):
+        resolve_artifact_binding(
+            identity_id="ident_2",
+            artifact_id=art2_id,
+            purpose="ladder_eligible",
+            project_root=tmp_path,
+            registry=registry,
+        )
+
+    # 7. Candidate stage for playwithyou_allowed -> accepts
+    b_pwy = resolve_artifact_binding(
+        identity_id="ident_2",
+        artifact_id=art2_id,
+        purpose="playwithyou_allowed",
+        project_root=tmp_path,
+        registry=registry,
+    )
+    assert b_pwy.model_identity_id == "ident_2"
+    assert b_pwy.model_artifact_id == art2_id
+    assert b_pwy.resolved_checkpoint_path == cp2.resolve()
+
+    # 8. Promoted stage for ladder_eligible -> accepts exactly one
+    b_ladder = resolve_artifact_binding(
+        identity_id="ident_1",
+        artifact_id=art1_id,
+        purpose="ladder_eligible",
+        project_root=tmp_path,
+        registry=registry,
+    )
+    assert b_ladder.model_identity_id == "ident_1"
+    assert b_ladder.model_artifact_id == art1_id
+    assert b_ladder.resolved_checkpoint_path == cp1.resolve()
+
+    # 9. Retired stage -> blocks playwithyou but allows review
+    registry.retire_model_artifact("ident_1", art1_id)
+    with pytest.raises(ValueError, match="无法用于 Play-with-you"):
+        resolve_artifact_binding(
+            identity_id="ident_1",
+            artifact_id=art1_id,
+            purpose="playwithyou_allowed",
+            project_root=tmp_path,
+            registry=registry,
+        )
+    b_rev = resolve_artifact_binding(
+        identity_id="ident_1",
+        artifact_id=art1_id,
+        purpose="review_allowed",
+        project_root=tmp_path,
+        registry=registry,
+    )
+    assert b_rev.model_artifact_id == art1_id
+
+    # 10. Ambiguous match (>1 candidates with same checkpoint and neither current) -> rejects
+    cp_shared = tmp_path / "models" / "shared.pth"
+    cp_shared.write_text("shared", encoding="utf-8")
+    i_amb1 = registry.create_model_identity(
+        ModelIdentityCreate(
+            model_identity_id="ident_amb1",
+            label="Amb 1",
+            kind="local_model",
+            artifact_path=str(cp_shared),
+            stage="promoted",
+        )
+    )
+    i_amb2 = registry.create_model_identity(
+        ModelIdentityCreate(
+            model_identity_id="ident_amb2",
+            label="Amb 2",
+            kind="local_model",
+            artifact_path=str(cp_shared),
+            stage="promoted",
+        )
+    )
+    # Unset is_current to trigger ambiguity
+    with pytest.raises(ValueError, match="存在歧义|0 match"):
+        # Explicit search by checkpoint only across both identities
+        resolve_artifact_binding(
+            checkpoint=str(cp_shared),
+            purpose="ladder_eligible",
+            project_root=tmp_path,
+            registry=registry,
+        )
+
 

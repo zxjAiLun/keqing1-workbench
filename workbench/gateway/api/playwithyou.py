@@ -259,25 +259,16 @@ def _validate_roster_bindings(roster_bindings: List[dict], specs: List[str]) -> 
                 raise ValueError(
                     f"未知模型: {model_id!r}（可选: {sorted(_PLAYWITHYOU_MODEL_IDS)}）"
                 )
+            from participants.artifact_policy import resolve_artifact_binding
             try:
-                _kind, resolved = resolve_bot_spec(model_id, PROJECT_ROOT)
-                if resolved is not None:
-                    resolved_path = Path(str(resolved)).resolve()
-                    for identity in participant_registry.list_models():
-                        for artifact in identity.artifacts:
-                            try:
-                                if _resolve_artifact_path(artifact, PROJECT_ROOT) == resolved_path:
-                                    if getattr(artifact, "stage", None) == "retired" or (
-                                        hasattr(artifact, "is_playwithyou_allowed") and not artifact.is_playwithyou_allowed
-                                    ):
-                                        raise ValueError(f"模型 {model_id} 对应的产物 {artifact.model_artifact_id} 已退役 (retired)，无法用于 Play-with-you 对局")
-                            except (TypeError, ValueError) as exc:
-                                if "已退役" in str(exc):
-                                    raise
-                                continue
-            except Exception as exc:
-                if "已退役" in str(exc):
-                    raise
+                resolve_artifact_binding(
+                    checkpoint=model_id,
+                    purpose="playwithyou_allowed",
+                    project_root=PROJECT_ROOT,
+                    registry=participant_registry,
+                )
+            except ValueError as exc:
+                raise ValueError(f"模型 {model_id} 无法用于 Play-with-you 对局: {exc}") from exc
             continue
         if not (identity_id and artifact_id):
             if not account_id:
@@ -397,7 +388,7 @@ def _freeze_launcher_models(roster_bindings: List[dict], specs: List[str]) -> tu
     - ``frozen_launcher_specs`` 为按 launcher_slot 排序的**绝对 checkpoint 路径**，
       直接传给 launcher（child/runtime 不再按动态名字重新解析）。
     """
-    from workbench.runtime.resolver import resolve_bot_spec
+    from participants.artifact_policy import resolve_artifact_binding
     from participants import registry as participant_registry
 
     # launcher_slot → spec（specs 已按 launcher_slot 排序）
@@ -421,102 +412,40 @@ def _freeze_launcher_models(roster_bindings: List[dict], specs: List[str]) -> tu
         req_identity = entry.get("model_identity_id")
         req_artifact = entry.get("model_artifact_id")
         model_id = str(entry.get("model_id") or "").strip()
+
         if model_id:
-            # R11-B：model-only launcher——checkpoint 已由 start 阶段 resolve_bot_spec
-            # 冻结为绝对路径（launcher spec 与 frozen 路径同源）。
-            resolved_path = Path(spec).resolve()
-            for identity in participant_registry.list_models():
-                for artifact in identity.artifacts:
-                    try:
-                        if _resolve_artifact_path(artifact, PROJECT_ROOT) == resolved_path:
-                            if getattr(artifact, "stage", None) == "retired" or (
-                                hasattr(artifact, "is_playwithyou_allowed") and not artifact.is_playwithyou_allowed
-                            ):
-                                raise ValueError(f"模型 {model_id} 对应的产物 {artifact.model_artifact_id} 已退役 (retired)，无法用于 Play-with-you 对局")
-                    except (TypeError, ValueError) as exc:
-                        if "已退役" in str(exc):
-                            raise
-                        continue
+            binding = resolve_artifact_binding(
+                checkpoint=spec,
+                purpose="playwithyou_allowed",
+                project_root=PROJECT_ROOT,
+                registry=participant_registry,
+            )
             frozen.append(
                 {
                     **entry,
                     "model_id": model_id,
-                    "resolved_checkpoint_path": str(resolved_path),
+                    "model_identity_id": binding.model_identity_id,
+                    "model_artifact_id": binding.model_artifact_id,
+                    "resolved_checkpoint_path": str(binding.resolved_checkpoint_path),
                 }
             )
             continue
-        if not account_id:
-            # Play-with-you simplification：account-less launcher——所选 artifact 即 checkpoint
-            if not (req_identity and req_artifact):
-                raise ValueError(f"launcher slot {slot} 必须选择模型身份与产物")
-            identity = participant_registry.get_model_identity(req_identity)
-            if identity is None:
-                raise ValueError(f"model identity not found: {req_identity}")
-            artifact = next((a for a in identity.artifacts if a.model_artifact_id == req_artifact), None)
-            if artifact is None:
-                raise ValueError(f"model identity {req_identity} 无产物 {req_artifact}")
-            if getattr(artifact, "stage", None) == "retired" or (
-                hasattr(artifact, "is_playwithyou_allowed") and not artifact.is_playwithyou_allowed
-            ):
-                raise ValueError(f"模型产物 {req_artifact} 已退役 (retired)，无法用于 Play-with-you 对局")
-            resolved_path = _resolve_artifact_path(artifact, PROJECT_ROOT)
-            frozen.append(
-                {
-                    **entry,
-                    "model_identity_id": req_identity,
-                    "model_artifact_id": req_artifact,
-                    "resolved_checkpoint_path": str(resolved_path),
-                }
-            )
-            continue
-        try:
-            _kind, resolved_path = resolve_bot_spec(spec, PROJECT_ROOT)
-        except (ValueError, FileNotFoundError) as exc:
-            raise ValueError(f"launcher 账号 {account_id} 的 spec {spec!r} 无法解析: {exc}") from exc
-        resolved_path = Path(str(resolved_path)).resolve()
 
-        # 候选：账号可绑定的 identity 中，artifact 绝对路径与真实 checkpoint 精确一致且允许 Play-with-you
-        candidates: List[tuple] = []
-        for identity in participant_registry.list_models():
-            if not participant_registry.identity_belongs_to_account(identity.model_identity_id, account_id):
-                continue
-            for artifact in identity.artifacts:
-                if getattr(artifact, "stage", None) == "retired" or (
-                    hasattr(artifact, "is_playwithyou_allowed") and not artifact.is_playwithyou_allowed
-                ):
-                    continue
-                try:
-                    if _resolve_artifact_path(artifact, PROJECT_ROOT) == resolved_path:
-                        candidates.append((identity, artifact))
-                except (TypeError, ValueError):
-                    continue
-
-        req_identity = entry.get("model_identity_id")
-        req_artifact = entry.get("model_artifact_id")
-        if req_identity or req_artifact:
-            # 已提供：必须与实际 resolved_path 精确一致
-            matching = [\
-                (identity, artifact) for (identity, artifact) in candidates\
-                if identity.model_identity_id == req_identity and artifact.model_artifact_id == req_artifact\
-            ]
-            if not matching:
-                raise ValueError(
-                    f"launcher 账号 {account_id} 的模型产物与实际 checkpoint 不一致（spec={spec}）"\
-                )
-            identity, artifact = matching[0]
-        else:
-            if len(candidates) != 1:
-                raise ValueError(
-                    f"launcher 账号 {account_id} 的 checkpoint 无法唯一匹配模型产物"\
-                    f"（{len(candidates)} 个候选，spec={spec}），请显式指定"\
-                )
-            identity, artifact = candidates[0]
+        binding = resolve_artifact_binding(
+            account_id=account_id or None,
+            identity_id=req_identity,
+            artifact_id=req_artifact,
+            checkpoint=spec,
+            purpose="playwithyou_allowed",
+            project_root=PROJECT_ROOT,
+            registry=participant_registry,
+        )
         frozen.append(
             {
                 **entry,
-                "model_identity_id": identity.model_identity_id,
-                "model_artifact_id": artifact.model_artifact_id,
-                "resolved_checkpoint_path": str(resolved_path),
+                "model_identity_id": binding.model_identity_id,
+                "model_artifact_id": binding.model_artifact_id,
+                "resolved_checkpoint_path": str(binding.resolved_checkpoint_path),
             }
         )
     frozen_launcher_specs = [

@@ -130,6 +130,15 @@ export function MortalDecisionReviewPage() {
   const logitData = selectedCase ? reviewCaseLogitData(selectedCase) : [];
   const revealedOpponentHands = selectedCase ? reviewCaseRevealedHands(selectedCase) : null;
 
+  const loadText = (text: string) => {
+    const rows = text
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as ReviewCase);
+    setCases(rows);
+    setSelectedIndex(0);
+  };
+
   useEffect(() => {
     const casesUrl = new URLSearchParams(window.location.search).get('cases');
     if (!casesUrl) return;
@@ -150,15 +159,6 @@ export function MortalDecisionReviewPage() {
       cancelled = true;
     };
   }, []);
-
-  const loadText = (text: string) => {
-    const rows = text
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as ReviewCase);
-    setCases(rows);
-    setSelectedIndex(0);
-  };
 
   const loadFile = async (file: File) => {
     setLoadError(null);

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 
 from . import ledger, registry, stats, aliases, intake, projection
 from .schemas import (
@@ -18,6 +18,8 @@ from .schemas import (
     AccountCreate,
     AccountUpdate,
     ExternalAliasCreate,
+    ExternalModelRevisionCreate,
+    ExternalModelRevisionUpdate,
     IntakeAdmissionAssessment,
     IntakeAdmissionAssessmentRequest,
     IntakeConfirmRequest,
@@ -29,6 +31,7 @@ from .schemas import (
     MatchRevise,
     MatchVoid,
     ModelArtifactCreate,
+    ModelArtifactUpdate,
     ModelIdentity,
     ModelIdentityCreate,
     ModelIdentityUpdate,

@@ -162,23 +162,61 @@ def test_model_endpoints(four_account_ids):
         api.api_set_current_artifact("model-70k", art_id)
     assert exc_art_curr.value.status_code == 409
 
+    import asyncio
+    import json
     from pydantic import ValidationError
+    from replay.server import app
 
-    # ModelArtifactCreate with extra illegal field -> 422
+    # Helper to execute an ASGI request through FastAPI app directly without third-party testclient
+    def _call_asgi_http(method: str, path: str, json_body: dict) -> tuple[int, dict]:
+        body_bytes = json.dumps(json_body).encode("utf-8")
+        scope = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": method.upper(),
+            "path": path,
+            "raw_path": path.encode("utf-8"),
+            "query_string": b"",
+            "headers": [
+                (b"host", b"testserver"),
+                (b"content-type", b"application/json"),
+            ],
+        }
+        sent = {}
+
+        async def receive():
+            return {"type": "http.request", "body": body_bytes, "more_body": False}
+
+        async def send(message):
+            if message["type"] == "http.response.start":
+                sent["status"] = message["status"]
+            elif message["type"] == "http.response.body":
+                sent["body"] = sent.get("body", b"") + message.get("body", b"")
+
+        asyncio.run(app(scope, receive, send))
+        return sent.get("status", 500), json.loads(sent.get("body", b"{}").decode("utf-8"))
+
+    # Schema-level ValidationError
     with pytest.raises(ValidationError):
         ModelArtifactCreate.model_validate({"label": "test", "illegal": 123})
 
-    # ExternalModelRevisionCreate with extra illegal field -> 422
-    with pytest.raises(ValidationError):
-        ExternalModelRevisionCreate.model_validate({"provider": "mortal", "version": "1.0", "illegal": 123})
-
-    with pytest.raises(HTTPException) as exc:
-        api.api_add_artifact("model-ghost", ModelArtifactCreate(label="x", artifact_path="y"))
-    assert exc.value.status_code == 404
+    # FastAPI ASGI Request Validation -> HTTP 422 with extra_forbidden
+    status_art, body_art = _call_asgi_http("POST", "/api/participants/models/model-70k/artifacts", {"label": "test", "illegal": 123})
+    assert status_art == 422
+    assert any(err.get("type") == "extra_forbidden" for err in body_art.get("detail", []))
 
     # 2. External Agent & External Revision Lifecycle API (R13-D)
     ext_ident = api.api_create_model(ModelIdentityCreate(model_identity_id="model:mortal", label="Mortal", kind="external_agent"))
     assert ext_ident.model_identity_id == "model:mortal"
+
+    # Schema-level ValidationError
+    with pytest.raises(ValidationError):
+        ExternalModelRevisionCreate.model_validate({"provider": "mortal", "version": "1.0", "illegal": 123})
+
+    # FastAPI ASGI Request Validation -> HTTP 422 with extra_forbidden
+    status_ext, body_ext = _call_asgi_http("POST", "/api/participants/models/model:mortal/external-revisions", {"provider": "mortal", "version": "1.0", "illegal": 123})
+    assert status_ext == 422
+    assert any(err.get("type") == "extra_forbidden" for err in body_ext.get("detail", []))
 
     # POST external-revisions
     rev1 = api.api_add_external_revision(
@@ -188,6 +226,10 @@ def test_model_endpoints(four_account_ids):
     assert rev1["version"] == "4.1b"
     assert rev1["is_current"] is True
     rev1_id = rev1["external_revision_id"]
+
+    with pytest.raises(HTTPException) as exc:
+        api.api_add_artifact("model-ghost", ModelArtifactCreate(label="x", artifact_path="y"))
+    assert exc.value.status_code == 404
 
     # POST another revision 4.2
     rev2 = api.api_add_external_revision(

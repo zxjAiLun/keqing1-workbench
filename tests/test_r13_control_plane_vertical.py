@@ -221,6 +221,22 @@ def test_cross_layer_lifecycle_matrix_local_artifact(vertical_env):
     m_grp = next(m for m in season_cfg["models"] if m.get("model_identity_id") == "model:loc70k")
     assert m_grp["execution_provenance"]["model_artifact_id"] == art_cand.model_artifact_id
 
+    # 6. INVARIANT: New season enrollment with retired local artifact is strictly rejected
+    sr.create_season(configs_dir, season_id="s_loc_new_season", title="New Loc Season")
+    with pytest.raises(ValueError, match="已退役|不具备天梯资格|无正式天梯"):
+        sr.set_season_enrollment(
+            configs_dir,
+            "s_loc_new_season",
+            ["account:lh1", "account:lh2", "account:lh3", "account:loc_bot"],
+            provenance_by_model={
+                "model:loc70k": {
+                    "kind": "local_artifact",
+                    "model_identity_id": "model:loc70k",
+                    "model_artifact_id": art_cand.model_artifact_id,
+                }
+            },
+        )
+
 
 def test_catalog_current_decoupled_from_season_authority(vertical_env):
     """Proves Catalog Current != Season Authority under adversarial mutations."""
@@ -321,31 +337,26 @@ def test_p2_create_contract_extra_forbid_fails_closed():
     assert "extra_forbidden" in str(exc2.value)
 
 
-def test_production_state_read_only_invariant_audit():
-    """Read-only audit on live production data (official-ladder-v2 & participants catalog).
-
-    Strictly reads and asserts:
-    - Zero retired models in active season groups;
-    - All external_agents have valid ExternalRevisions;
-    - All local_models have valid artifacts;
-    - Model identities and account bindings are consistent.
-    """
-    from workbench.participants import paths
-    from workbench.runtime.resolver import data_path
+def audit_production_control_plane(
+    *,
+    participant_data_root: Path,
+    ladder_config_dir: Path,
+) -> None:
+    """Pure invariant audit function over participant models and ladder season configs."""
+    from workbench.participants import registry as custom_registry
     from workbench.replay import ladder as ladder_data
 
-    # Read live accounts and models
-    all_accounts = registry.list_accounts()
-    all_models = registry.list_models()
+    # Read accounts and models under specific participant root
+    all_accounts = custom_registry.list_accounts()
+    all_models = custom_registry.list_models()
 
-    assert len(all_accounts) > 0
-    assert len(all_models) > 0
+    assert len(all_accounts) > 0, "Production accounts must not be empty"
+    assert len(all_models) > 0, "Production models must not be empty"
 
     # 1. Verify identities shape
     for ident in all_models:
         if ident.kind == "external_agent":
             assert len(ident.external_revisions) > 0, f"External agent {ident.model_identity_id} must have registered external_revisions"
-            # Exactly one current revision if revisions exist
             curr_revs = [r for r in ident.external_revisions if r.is_current]
             assert len(curr_revs) <= 1, f"External agent {ident.model_identity_id} has multiple current revisions: {curr_revs}"
             assert len(ident.artifacts) == 0, f"External agent {ident.model_identity_id} must not have local artifacts"
@@ -355,19 +366,98 @@ def test_production_state_read_only_invariant_audit():
             assert len(ident.external_revisions) == 0, f"Local model {ident.model_identity_id} must not have external revisions"
 
     # 2. Verify official-ladder-v2 running season
-    cfg_dir = ladder_data.resolve_config_dir(REPO_ROOT if "REPO_ROOT" in globals() else Path.cwd())
-    if (cfg_dir / "official-ladder-v2.json").exists():
-        s_v2 = ladder_data.get_season_config(cfg_dir, "official-ladder-v2")
-        assert s_v2.get("status") == "running"
-        models = s_v2.get("models", [])
-        for m in models:
-            exec_prov = m.get("execution_provenance")
-            if exec_prov:
-                kind = exec_prov.get("kind")
-                if kind == "external_revision":
-                    rev_id = exec_prov.get("external_revision_id")
-                    assert rev_id is not None
-                    ident_id = exec_prov.get("model_identity_id")
-                    ident = registry.get_model_identity(ident_id)
-                    assert ident is not None
-                    assert any(r.external_revision_id == rev_id for r in ident.external_revisions)
+    season_file = ladder_config_dir / "official-ladder-v2.json"
+    assert season_file.exists(), f"Production season config missing: {season_file}"
+    s_v2 = ladder_data.get_season_config(ladder_config_dir, "official-ladder-v2")
+    assert s_v2.get("status") == "running"
+    models = s_v2.get("models", [])
+    for m in models:
+        exec_prov = m.get("execution_provenance")
+        if exec_prov:
+            kind = exec_prov.get("kind")
+            if kind == "external_revision":
+                rev_id = exec_prov.get("external_revision_id")
+                assert rev_id is not None
+                ident_id = exec_prov.get("model_identity_id")
+                ident = custom_registry.get_model_identity(ident_id)
+                assert ident is not None
+                assert any(r.external_revision_id == rev_id for r in ident.external_revisions)
+
+
+def test_audit_production_control_plane_hermetic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Hermetic unit test for audit_production_control_plane over a well-formed fixture."""
+    data_dir = tmp_path / "participants"
+    configs_dir = tmp_path / "configs"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    configs_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("KEQING_PARTICIPANT_DATA_ROOT", str(data_dir))
+    monkeypatch.setenv("KEQING_LADDER_CONFIG_DIR", str(configs_dir))
+
+    # Setup fixture
+    registry.create_account(AccountCreate(account_id="account:aud_user", display_name="AudUser", account_type="human"))
+    registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:mortal_aud", label="Mortal Aud", kind="external_agent"))
+    registry.add_external_revision("model:mortal_aud", ExternalModelRevisionCreate(provider="mortal", version="4.1b", is_current=True))
+
+    registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:loc_aud", label="Loc Aud", kind="local_model"))
+    registry.add_model_artifact("model:loc_aud", ModelArtifactCreate(label="loc.pth", artifact_path="loc.pth"))
+
+    # Write official-ladder-v2 season config
+    s_cfg = {
+        "schema": "keqing.ladder.season.v1",
+        "season_id": "official-ladder-v2",
+        "title": "Official V2",
+        "report_dir": "artifacts/official-ladder-v2",
+        "status": "running",
+        "models": [
+            {
+                "model_id": "mortal_aud",
+                "model_identity_id": "model:mortal_aud",
+                "accounts": [{"account_id": "account:aud_user"}],
+                "execution_provenance": {
+                    "kind": "external_revision",
+                    "model_identity_id": "model:mortal_aud",
+                    "external_revision_id": "external:mortal_aud:4.1b",
+                },
+            }
+        ],
+    }
+    (configs_dir / "official-ladder-v2.json").write_text(json.dumps(s_cfg, ensure_ascii=False), encoding="utf-8")
+
+    # Run audit in hermetic test -> passes
+    audit_production_control_plane(participant_data_root=data_dir, ladder_config_dir=configs_dir)
+
+
+def test_production_state_read_only_invariant_audit(monkeypatch: pytest.MonkeyPatch):
+    """Explicit production environment audit.
+
+    Gated by KEQING_RUN_PRODUCTION_AUDIT=1 or skips cleanly if production dataset is absent.
+    When KEQING_RUN_PRODUCTION_AUDIT=1 is set, fail-closed asserts on live dataset.
+    """
+    import os
+    from workbench.runtime.resolver import data_path
+    from workbench.replay import ladder as ladder_data
+
+    run_audit = os.environ.get("KEQING_RUN_PRODUCTION_AUDIT") == "1"
+
+    # Resolve production roots
+    prod_data_root = Path.cwd().parent / "keqing-data" / "participants"
+    if not prod_data_root.exists():
+        prod_data_root = data_path("participants")
+
+    prod_ladder_cfg = ladder_data.resolve_config_dir(Path.cwd())
+
+    if not run_audit:
+        if not prod_data_root.exists() or not (prod_data_root / "models.json").exists():
+            pytest.skip("Production participant dataset not present in clean workspace (set KEQING_RUN_PRODUCTION_AUDIT=1 to enforce)")
+
+    if not prod_data_root.exists() or not (prod_data_root / "models.json").exists():
+        pytest.fail(f"KEQING_RUN_PRODUCTION_AUDIT=1 was specified but production data root does not exist: {prod_data_root}")
+
+    monkeypatch.setenv("KEQING_PARTICIPANT_DATA_ROOT", str(prod_data_root))
+    monkeypatch.setenv("KEQING_LADDER_CONFIG_DIR", str(prod_ladder_cfg))
+
+    audit_production_control_plane(
+        participant_data_root=prod_data_root,
+        ladder_config_dir=prod_ladder_cfg,
+    )

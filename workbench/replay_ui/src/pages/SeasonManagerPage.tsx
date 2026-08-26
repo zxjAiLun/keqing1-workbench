@@ -111,6 +111,14 @@ export function SeasonManagerPage() {
     if (!config) return;
     await run(async () => {
       const updated = await ladderApi.setSeasonEnrollment(config.season_id, [...draftSelection]);
+      if (updated.status === 'draft') {
+        try {
+          const pre = await ladderApi.getSeasonPreflight(config.season_id);
+          setPreflight(pre);
+        } catch {
+          setPreflight(null);
+        }
+      }
       return updated;
     });
   };
@@ -157,9 +165,9 @@ export function SeasonManagerPage() {
   const status = config?.status ?? 'draft';
   const isCurrent = catalog?.default_season_id === selectedId;
   const enrolledIds = new Set(config?.models.flatMap((m) => m.accounts.map((a) => a.account_id)) ?? []);
-  // 编辑权限：draft 可增删；running 只增；completed/archived 只读（backend 硬 gate）
+  // 编辑权限：draft 可增删；legacy running（无 manifest）只增；frozen running 及 completed/archived 只读（backend 硬 gate）
   const canEdit = status === 'draft';
-  const canAddOnly = status === 'running';
+  const canAddOnly = status === 'running' && !config?.runtime_manifest;
 
   return (
     <PageShell>
@@ -263,27 +271,27 @@ export function SeasonManagerPage() {
             </div>
 
             {/* Preflight 就绪状态与 Manifest 卡片 */}
-            {status === 'draft' && preflight && (
+            {status === 'draft' && (
               <div
                 style={{
                   padding: '10px 12px',
                   borderRadius: 6,
                   marginBottom: 14,
-                  border: `1px solid ${preflight.can_start ? 'var(--success)' : 'var(--negative)'}`,
-                  background: preflight.can_start ? 'var(--surface-subtle)' : 'var(--surface-subtle)',
+                  border: `1px solid ${preflight?.can_start ? 'var(--success)' : 'var(--negative)'}`,
+                  background: 'var(--surface-subtle)',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                   <span style={{ fontWeight: 700, fontSize: 13 }}>
-                    运行时预检 (Preflight): {preflight.can_start ? '✅ 准备就绪' : '❌ 无法启动'}
+                    运行时预检 (Preflight): {preflight ? (preflight.can_start ? '✅ 准备就绪' : '❌ 无法启动') : '⚠️ 预检中或不可用'}
                   </span>
-                  {preflight.manifest && (
+                  {preflight?.manifest && (
                     <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto', fontFamily: 'monospace' }}>
                       Manifest ID: {preflight.manifest.manifest_id}
                     </span>
                   )}
                 </div>
-                {preflight.issues.length > 0 && (
+                {preflight && preflight.issues.length > 0 && (
                   <ul style={{ margin: '4px 0 0 16px', padding: 0, fontSize: 12, color: 'var(--negative)' }}>
                     {preflight.issues.map((iss, idx) => (
                       <li key={idx}>
@@ -291,6 +299,9 @@ export function SeasonManagerPage() {
                       </li>
                     ))}
                   </ul>
+                )}
+                {!preflight && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>尚未取得预检结果，请检查网络或重新选择赛季。</div>
                 )}
               </div>
             )}
@@ -323,7 +334,7 @@ export function SeasonManagerPage() {
                     borderColor: preflight?.can_start ? 'var(--success)' : 'var(--border)',
                     color: preflight?.can_start ? 'var(--success)' : 'var(--text-muted)',
                   }}
-                  disabled={busy || (preflight !== null && !preflight.can_start)}
+                  disabled={busy || !preflight || !preflight.can_start}
                   onClick={() => void run(() => ladderApi.startSeason(config.season_id))}
                 >
                   开始赛季
@@ -355,13 +366,6 @@ export function SeasonManagerPage() {
               {status === 'completed' && (
                 <>
                   <button
-                    style={{ ...ghostBtn, borderColor: 'var(--success)', color: 'var(--success)' }}
-                    disabled={busy}
-                    onClick={() => void run(() => ladderApi.startSeason(config.season_id))}
-                  >
-                    重新开启
-                  </button>
-                  <button
                     style={ghostBtn}
                     disabled={busy}
                     onClick={() => {
@@ -390,6 +394,9 @@ export function SeasonManagerPage() {
             <div style={{ fontWeight: 800, marginBottom: 8 }}>
               参赛阵容（{enrolledIds.size}）
               {canAddOnly && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>进行中：只可增加</span>}
+              {status === 'running' && config.runtime_manifest && (
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>🔒 Runtime Manifest 已冻结，阵容只读</span>
+              )}
               {status !== 'draft' && status !== 'running' && (
                 <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>只读</span>
               )}

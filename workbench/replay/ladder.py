@@ -194,6 +194,33 @@ def _validate_registry(raw: Any, filename: str) -> dict[str, Any]:
             if account_id in seen_accounts:
                 raise _fail(f"season {season_id}: 重复 account_id '{account_id}'（出现于 model {model_id}）")
             seen_accounts.add(account_id)
+
+    # R14-A: 强校验 runtime_manifest (若存在)
+    manifest_raw = raw.get("runtime_manifest")
+    if manifest_raw is not None:
+        if not isinstance(manifest_raw, dict):
+            raise _fail(f"season {season_id}: runtime_manifest 必须是对象")
+        from workbench.runtime.manifest import (
+            SeasonRuntimeManifest,
+            compute_season_authority_hash,
+        )
+        try:
+            manifest_obj = SeasonRuntimeManifest.model_validate(manifest_raw)
+        except Exception as exc:
+            raise _fail(f"season {season_id}: runtime_manifest 结构校验失败: {exc}") from exc
+
+        if manifest_obj.materialization != "frozen":
+            raise _fail(f"season {season_id}: 持久化的 runtime_manifest 其 materialization 必须为 'frozen' (当前为 '{manifest_obj.materialization}')")
+        if manifest_obj.season_id != season_id:
+            raise _fail(f"season {season_id}: runtime_manifest.season_id '{manifest_obj.season_id}' 与注册表 season_id '{season_id}' 不一致")
+        
+        expected_hash = compute_season_authority_hash(raw)
+        if manifest_obj.season_authority_hash != expected_hash:
+            raise _fail(
+                f"season {season_id}: runtime_manifest 的 season_authority_hash '{manifest_obj.season_authority_hash}' "
+                f"与当前配置权威哈希 '{expected_hash}' 不一致 (authority_hash_drift)"
+            )
+
     return raw
 
 

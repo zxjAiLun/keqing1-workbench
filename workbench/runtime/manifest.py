@@ -6,8 +6,8 @@
 2. 构造严格类型化的运行时规范（HumanRuntimeSpec, LocalArtifactRuntimeSpec, ExternalRevisionRuntimeSpec）；
 3. 按照 Season 冻结的 exact frozen provenance 构造确定性 SeasonRuntimeManifest（绝不查询 Catalog Current）；
 4. 提供纯只读 Preflight 校验（preflight_season_runtime）；
-5. 提供单文件原子写 Start 迁移逻辑（start_season_runtime）；
-6. 对历史运行/归档 Season 支持投影式只读 Manifest（projected_legacy）。
+5. 提供单文件原子写 Start 迁移逻辑（start_season_runtime，双锁保护：participants_data_lock -> _registry_lock）；
+6. 对历史运行/归档 Season 支持投影式只读 Manifest（projected_legacy，fail-closed 完整性保障）。
 """
 from __future__ import annotations
 
@@ -21,10 +21,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from workbench.participants import paths as participant_paths
 from workbench.participants import registry as participants_registry
 from workbench.participants.schemas import (
+    AccountType,
     ControllerType,
     FrozenExecutionProvenance,
 )
-from workbench.replay.ladder import SeasonRegistryError, _load_registry_file
 from workbench.runtime.resolver.base import REPO_ROOT
 from workbench.runtime.resolver.model import resolve_model_checkpoint
 
@@ -36,13 +36,13 @@ from workbench.runtime.resolver.model import resolve_model_checkpoint
 class HumanRuntimeSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     kind: Literal["human"] = "human"
-    controller_type: ControllerType = "human_ui"
+    controller_type: Literal["human_ui"] = "human_ui"
 
 
 class LocalArtifactRuntimeSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     kind: Literal["local_artifact"] = "local_artifact"
-    controller_type: ControllerType = "local_model"
+    controller_type: Literal["local_model"] = "local_model"
     model_identity_id: str
     model_artifact_id: str
     artifact_path: str
@@ -53,7 +53,7 @@ class LocalArtifactRuntimeSpec(BaseModel):
 class ExternalRevisionRuntimeSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     kind: Literal["external_revision"] = "external_revision"
-    controller_type: ControllerType = "external_agent"
+    controller_type: Literal["external_agent"] = "external_agent"
     model_identity_id: str
     external_revision_id: str
     provider: str
@@ -68,7 +68,7 @@ class SeasonRuntimeParticipant(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     account_id: str
     display_name: str
-    account_type: str
+    account_type: AccountType
     controller_type: ControllerType
     model_identity_id: str | None = None
     execution_provenance: FrozenExecutionProvenance
@@ -243,6 +243,17 @@ def build_runtime_manifest(
                 ))
                 continue
 
+            # 使用 Season enrollment 中已冻结的 display_name，绝不被当前 account 篡改
+            frozen_display_name = acc_entry.get("display_name") or account.display_name
+
+            # 检查 account 是否启用 (frozen 启动时必须可用)
+            if materialization == "frozen" and not getattr(account, "enabled", True):
+                issues.append(PreflightIssue(
+                    code="account_disabled",
+                    message=f"账号 {account_id} 已被禁用，无法用于赛季运行",
+                    account_id=account_id,
+                ))
+
             # 推导 ControllerType
             account_type = account.account_type
             controller_type: ControllerType
@@ -280,10 +291,40 @@ def build_runtime_manifest(
                     ))
                     continue
 
+            # ---------------------------------------------------------------
+            # 严格 Account / Provenance 一致性与控制器校验
+            # ---------------------------------------------------------------
+            if controller_type == "manual_only":
+                issues.append(PreflightIssue(
+                    code="controller_manual_only_not_startable",
+                    message=f"账号 {account_id} 的控制器为 manual_only，无法用于正式自动化天梯运行",
+                    account_id=account_id,
+                ))
+
             # 构建精确 RuntimeSpec
             runtime_spec: RuntimeSpecUnion
             if frozen_prov.kind == "human":
-                runtime_spec = HumanRuntimeSpec(kind="human", controller_type=controller_type)
+                if materialization == "frozen":
+                    if account_type != "human":
+                        issues.append(PreflightIssue(
+                            code="account_type_mismatch",
+                            message=f"真人组账号 {account_id} 的 account_type 必须为 human (当前为 {account_type})",
+                            account_id=account_id,
+                        ))
+                    if account.model_identity_id is not None:
+                        issues.append(PreflightIssue(
+                            code="human_account_has_model_binding",
+                            message=f"真人账号 {account_id} 不能绑定模型身份 (当前绑定 {account.model_identity_id})",
+                            account_id=account_id,
+                        ))
+                    if controller_type != "human_ui":
+                        issues.append(PreflightIssue(
+                            code="controller_type_mismatch",
+                            message=f"真人账号 {account_id} 控制器必须为 human_ui (当前为 {controller_type})",
+                            account_id=account_id,
+                        ))
+                runtime_spec = HumanRuntimeSpec(kind="human", controller_type="human_ui")
+
             elif frozen_prov.kind == "local_artifact":
                 target_ident_id = frozen_prov.model_identity_id or model_identity_id
                 target_art_id = frozen_prov.model_artifact_id
@@ -296,6 +337,36 @@ def build_runtime_manifest(
                     ))
                     continue
 
+                if materialization == "frozen":
+                    if account_type != "managed_bot":
+                        issues.append(PreflightIssue(
+                            code="account_type_mismatch",
+                            message=f"本地模型账号 {account_id} 的 account_type 必须为 managed_bot (当前为 {account_type})",
+                            account_id=account_id,
+                            model_identity_id=target_ident_id,
+                        ))
+                    if account.model_identity_id != target_ident_id:
+                        issues.append(PreflightIssue(
+                            code="account_binding_drift",
+                            message=f"账号 {account_id} 当前模型绑定 ({account.model_identity_id}) 与赛季冻结身份 ({target_ident_id}) 不一致",
+                            account_id=account_id,
+                            model_identity_id=target_ident_id,
+                        ))
+                    if model_identity_id and model_identity_id != target_ident_id:
+                        issues.append(PreflightIssue(
+                            code="group_identity_mismatch",
+                            message=f"组身份 {model_identity_id} 与凭据身份 {target_ident_id} 不一致",
+                            account_id=account_id,
+                            model_identity_id=target_ident_id,
+                        ))
+                    if controller_type != "local_model":
+                        issues.append(PreflightIssue(
+                            code="controller_type_mismatch",
+                            message=f"本地模型账号 {account_id} 控制器必须为 local_model (当前为 {controller_type})",
+                            account_id=account_id,
+                            model_identity_id=target_ident_id,
+                        ))
+
                 ident = registry.get_model_identity(target_ident_id)
                 if ident is None:
                     issues.append(PreflightIssue(
@@ -305,6 +376,14 @@ def build_runtime_manifest(
                         model_identity_id=target_ident_id,
                     ))
                     continue
+
+                if materialization == "frozen" and ident.kind != "local_model":
+                    issues.append(PreflightIssue(
+                        code="model_identity_kind_mismatch",
+                        message=f"模型身份 {target_ident_id} 的 kind 必须为 local_model (当前为 {ident.kind})",
+                        account_id=account_id,
+                        model_identity_id=target_ident_id,
+                    ))
 
                 # 必须 EXACT MATCH 指定 artifact_id，严禁 fallback 到 current!
                 exact_art = next((a for a in ident.artifacts if a.model_artifact_id == target_art_id), None)
@@ -380,7 +459,7 @@ def build_runtime_manifest(
 
                 runtime_spec = LocalArtifactRuntimeSpec(
                     kind="local_artifact",
-                    controller_type=controller_type,
+                    controller_type="local_model",
                     model_identity_id=target_ident_id,
                     model_artifact_id=target_art_id,
                     artifact_path=exact_art.artifact_path,
@@ -400,6 +479,36 @@ def build_runtime_manifest(
                     ))
                     continue
 
+                if materialization == "frozen":
+                    if account_type != "external_bot":
+                        issues.append(PreflightIssue(
+                            code="account_type_mismatch",
+                            message=f"外部模型账号 {account_id} 的 account_type 必须为 external_bot (当前为 {account_type})",
+                            account_id=account_id,
+                            model_identity_id=target_ident_id,
+                        ))
+                    if account.model_identity_id != target_ident_id:
+                        issues.append(PreflightIssue(
+                            code="account_binding_drift",
+                            message=f"账号 {account_id} 当前模型绑定 ({account.model_identity_id}) 与赛季冻结身份 ({target_ident_id}) 不一致",
+                            account_id=account_id,
+                            model_identity_id=target_ident_id,
+                        ))
+                    if model_identity_id and model_identity_id != target_ident_id:
+                        issues.append(PreflightIssue(
+                            code="group_identity_mismatch",
+                            message=f"组身份 {model_identity_id} 与凭据身份 {target_ident_id} 不一致",
+                            account_id=account_id,
+                            model_identity_id=target_ident_id,
+                        ))
+                    if controller_type != "external_agent":
+                        issues.append(PreflightIssue(
+                            code="controller_type_mismatch",
+                            message=f"外部模型账号 {account_id} 控制器必须为 external_agent (当前为 {controller_type})",
+                            account_id=account_id,
+                            model_identity_id=target_ident_id,
+                        ))
+
                 ident = registry.get_model_identity(target_ident_id)
                 if ident is None:
                     issues.append(PreflightIssue(
@@ -409,6 +518,14 @@ def build_runtime_manifest(
                         model_identity_id=target_ident_id,
                     ))
                     continue
+
+                if materialization == "frozen" and ident.kind != "external_agent":
+                    issues.append(PreflightIssue(
+                        code="model_identity_kind_mismatch",
+                        message=f"模型身份 {target_ident_id} 的 kind 必须为 external_agent (当前为 {ident.kind})",
+                        account_id=account_id,
+                        model_identity_id=target_ident_id,
+                    ))
 
                 # 必须 EXACT MATCH 指定 revision_id，严禁 fallback 到 current!
                 exact_rev = next((r for r in ident.external_revisions if r.external_revision_id == target_rev_id), None)
@@ -440,7 +557,7 @@ def build_runtime_manifest(
 
                 runtime_spec = ExternalRevisionRuntimeSpec(
                     kind="external_revision",
-                    controller_type=controller_type,
+                    controller_type="external_agent",
                     model_identity_id=target_ident_id,
                     external_revision_id=target_rev_id,
                     provider=exact_rev.provider,
@@ -457,7 +574,7 @@ def build_runtime_manifest(
 
             participants.append(SeasonRuntimeParticipant(
                 account_id=account.account_id,
-                display_name=account.display_name,
+                display_name=frozen_display_name,
                 account_type=account.account_type,
                 controller_type=controller_type,
                 model_identity_id=target_ident_id if frozen_prov.kind != "human" else None,
@@ -498,6 +615,8 @@ def preflight_season_runtime(
 
     严禁产生任何文件写入或状态修改副作用。
     """
+    from workbench.replay.ladder import _load_registry_file
+
     season_path = configs_dir / f"{season_id}.json"
     if not season_path.exists():
         return SeasonPreflightReport(
@@ -540,11 +659,17 @@ def preflight_season_runtime(
     )
     issues.extend(manifest_issues)
 
-    # 3. 参赛人数检查（至少 4 名合法成员）
+    # 3. 参赛人数与席位完整性检查（至少 4 名合法成员，且所有成员均需解析成功）
+    expected_accounts_count = sum(len(m.get("accounts") or []) for m in (season.get("models") or []) if isinstance(m, dict))
     if len(manifest.participants) < 4:
         issues.append(PreflightIssue(
             code="insufficient_participants",
-            message=f"赛季成员数量不足（当前 {len(manifest.participants)} 人，至少需要 4 人）",
+            message=f"赛季成员数量不足（当前有效 {len(manifest.participants)} 人，至少需要 4 人）",
+        ))
+    if len(manifest.participants) != expected_accounts_count:
+        issues.append(PreflightIssue(
+            code="participant_count_mismatch",
+            message=f"有效成员数 ({len(manifest.participants)}) 与配置成员数 ({expected_accounts_count}) 不一致",
         ))
 
     can_start = len(issues) == 0 and status == "draft"
@@ -561,7 +686,7 @@ def preflight_season_runtime(
 
 
 # ---------------------------------------------------------------------------
-# 5. Atomic Season Runtime Start (Single Canonical JSON Commit)
+# 5. Atomic Season Runtime Start (Dual Domain Locks + Single JSON Commit)
 # ---------------------------------------------------------------------------
 
 def start_season_runtime(
@@ -571,9 +696,9 @@ def start_season_runtime(
     project_root: Path = REPO_ROOT,
     registry=participants_registry,
 ) -> dict[str, Any]:
-    """激活赛季：draft → running 并固化 runtime_manifest（单文件原子提交）。
+    """激活赛季：draft → running 并固化 runtime_manifest（服务级双锁原子提交）。
 
-    在 _registry_lock 保护下：
+    顺序取得固定锁（participants_data_lock → season _registry_lock），在双锁临界区内：
     1. 重新读取 canonical season；
     2. 校验 status == "draft"；
     3. 执行 preflight 检查（若存在任何 issue 则直接抛错 fail-closed）；
@@ -581,8 +706,8 @@ def start_season_runtime(
     5. 一次 _atomic_write_json 写入运行状态与清单；
     6. 返回更新后的完整 Season dict。
     """
-    from workbench.participants.paths import now_iso
-    from replay.ladder import SeasonNotFoundError
+    from workbench.participants.paths import now_iso, data_lock as participants_data_lock
+    from replay.ladder import SeasonNotFoundError, SeasonRegistryError, _load_registry_file
     from workbench.replay.season_registry import (
         _registry_lock,
         _season_path,
@@ -590,7 +715,7 @@ def start_season_runtime(
         validate_registry_payload,
     )
 
-    with _registry_lock(configs_dir):
+    with participants_data_lock(), _registry_lock(configs_dir):
         path = _season_path(configs_dir, season_id)
         if not path.exists():
             raise SeasonNotFoundError(f"赛季不存在: {season_id}")
@@ -615,10 +740,16 @@ def start_season_runtime(
             registry=registry,
         )
 
+        expected_accounts_count = sum(len(m.get("accounts") or []) for m in (season.get("models") or []) if isinstance(m, dict))
         if len(manifest.participants) < 4:
             issues.append(PreflightIssue(
                 code="insufficient_participants",
-                message=f"赛季成员数量不足（当前 {len(manifest.participants)} 人，至少需要 4 人）",
+                message=f"赛季成员数量不足（当前有效 {len(manifest.participants)} 人，至少需要 4 人）",
+            ))
+        if len(manifest.participants) != expected_accounts_count:
+            issues.append(PreflightIssue(
+                code="participant_count_mismatch",
+                message=f"有效成员数 ({len(manifest.participants)}) 与配置成员数 ({expected_accounts_count}) 不一致",
             ))
 
         if issues:
@@ -651,8 +782,11 @@ def get_season_runtime_manifest(
     - 若已固化 runtime_manifest，直接返回；
     - 若为 legacy running/completed/archived 且无 runtime_manifest，则生成只读 projected_legacy Manifest；
     - 若为 draft 且无 runtime_manifest，则生成预览版 Manifest (materialization="frozen", generated_at=None)。
+
+    注意：对于 legacy projection，如果存在无法完整解析的成员凭据，禁止返回部分 Manifest，必须 fail-closed 抛错！
     """
-    from workbench.replay.ladder import SeasonNotFoundError
+    from replay.ladder import SeasonNotFoundError, SeasonRegistryError, _load_registry_file
+
     season_path = configs_dir / f"{season_id}.json"
     if not season_path.exists():
         raise SeasonNotFoundError(f"赛季配置不存在: {season_id}")
@@ -664,11 +798,17 @@ def get_season_runtime_manifest(
     status = season.get("status", "draft")
     mat_type: Literal["frozen", "projected_legacy"] = "projected_legacy" if status != "draft" else "frozen"
 
-    manifest, _ = build_runtime_manifest(
+    manifest, issues = build_runtime_manifest(
         season,
         materialization=mat_type,
         generated_at=None,
         project_root=project_root,
         registry=registry,
     )
+
+    expected_accounts_count = sum(len(m.get("accounts") or []) for m in (season.get("models") or []) if isinstance(m, dict))
+    if issues or len(manifest.participants) != expected_accounts_count:
+        detail_msgs = "; ".join(f"[{i.code}] {i.message}" for i in issues) if issues else "成员数量与配置不匹配"
+        raise SeasonRegistryError(f"无法生成历史运行时清单: {detail_msgs}")
+
     return manifest

@@ -20,6 +20,12 @@
 16. Retired-after-start: 已持久化 Manifest 不改变，GET /manifest 仍返回，历史 provenance 不漂移
 17. official-ladder-v2: 可生成 projected_legacy read-only manifest，不写回生产 Season
 18. Pure read-only preview 不写回 Season
+19. Account disabled before start -> Preflight blocked (account_disabled)
+20. Account model_identity_id rebind (A -> B while Season frozen A) -> Preflight blocked (account_binding_drift)
+21. Controller mismatch / manual_only -> Preflight blocked (controller_manual_only_not_startable)
+22. Persisted authority hash tamper -> canonical read raises authority_hash_drift
+23. Legacy projection with missing evidence -> fail-closed SeasonRegistryError (no silent partial manifest)
+24. Display name uses frozen enrollment snapshot, immune to subsequent Account display_name mutation
 """
 from __future__ import annotations
 
@@ -31,13 +37,14 @@ import pytest
 from workbench.participants import registry as part_registry
 from workbench.participants.schemas import (
     AccountCreate,
+    AccountUpdate,
     ExternalModelRevisionCreate,
     ModelArtifactCreate,
     ModelIdentityCreate,
 )
-from workbench.replay import season_registry as sr
-from workbench.replay.ladder import SeasonRegistryError
-from workbench.runtime.manifest import (
+from replay import season_registry as sr
+from replay.ladder import SeasonRegistryError, _load_registry_file
+from runtime.manifest import (
     build_season_authority_projection,
     compute_season_authority_hash,
     get_season_runtime_manifest,
@@ -119,7 +126,7 @@ def test_r14_preflight_candidate_retired_local_and_external(r14_env):
     part_registry.create_account(AccountCreate(account_id="account:bot_loc", display_name="BotLoc", account_type="managed_bot", model_identity_id="model:loc1"))
     part_registry.create_account(AccountCreate(account_id="account:bot_ext", display_name="BotExt", account_type="external_bot", model_identity_id="model:ext1"))
 
-    # 3. 绑定 Candidate Local Artifact（由于 R13 阶段 set_season_enrollment 自身已要求 promoted，此处直接写入 draft season 测试 preflight 阻断）
+    # 3. 绑定 Candidate Local Artifact
     sr.create_season(configs_dir, season_id="s_cand", title="Cand Season")
     s_cfg_cand = sr.get_season(configs_dir, "s_cand")
     s_cfg_cand["models"] = [{
@@ -134,7 +141,6 @@ def test_r14_preflight_candidate_retired_local_and_external(r14_env):
 
     # 4. 绑定 Retired Local Artifact
     sr.create_season(configs_dir, season_id="s_ret_loc", title="Ret Loc Season")
-    # 直接构造包含 retired artifact 的 season
     s_cfg = sr.get_season(configs_dir, "s_ret_loc")
     s_cfg["models"] = [{
         "model_id": "loc1", "model_identity_id": "model:loc1", "accounts": [{"account_id": "account:bot_loc"}],
@@ -307,7 +313,7 @@ def test_r14_preflight_determinism_and_no_side_effects(r14_env):
 
 
 def test_r14_start_atomic_transition_and_duplicate_rejection(r14_env):
-    """11, 12, 13, 15. Start 单文件原子写、重复 Start 拦截、Running 冻结 enrollment 拦截、历史状态启动拦截."""
+    """11, 12, 13, 15. Start 双锁原子写、重复 Start 拦截、Running 冻结 enrollment 拦截、历史状态启动拦截."""
     configs_dir = r14_env["configs_dir"]
     tmp_path = r14_env["tmp_path"]
     models_dir = r14_env["models_dir"]
@@ -412,3 +418,147 @@ def test_r14_retired_after_start_does_not_mutate_manifest(r14_env):
     bot_p = next(p for p in manifest.participants if p.account_id == "account:bot_ra")
     assert bot_p.execution_provenance.model_artifact_id == art.model_artifact_id
     assert bot_p.runtime_spec.model_artifact_id == art.model_artifact_id
+
+
+def test_r14_anti_drift_account_rebind_and_disabled(r14_env):
+    """19 & 20. 账号被禁用或发生改绑（漂移）时 Preflight 阻断启动."""
+    configs_dir = r14_env["configs_dir"]
+    tmp_path = r14_env["tmp_path"]
+    models_dir = r14_env["models_dir"]
+
+    cp = _create_checkpoint(models_dir, "drift.pth")
+    part_registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:m_orig", label="Orig", kind="local_model"))
+    part_registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:m_drift", label="Drift", kind="local_model"))
+    art_orig = part_registry.add_model_artifact("model:m_orig", ModelArtifactCreate(label="orig.pth", artifact_path=str(cp), stage="promoted"))
+    art_drift = part_registry.add_model_artifact("model:m_drift", ModelArtifactCreate(label="drift.pth", artifact_path=str(cp), stage="promoted"))
+
+    for i in range(1, 4):
+        part_registry.create_account(AccountCreate(account_id=f"account:h{i}", display_name=f"H{i}", account_type="human"))
+    part_registry.create_account(AccountCreate(account_id="account:bot_drift", display_name="BotDrift", account_type="managed_bot", model_identity_id="model:m_orig"))
+
+    sr.create_season(configs_dir, season_id="s_drift", title="Drift Season")
+    sr.set_season_enrollment(
+        configs_dir, "s_drift", ["account:h1", "account:h2", "account:h3", "account:bot_drift"],
+        provenance_by_model={"model:m_orig": {"kind": "local_artifact", "model_identity_id": "model:m_orig", "model_artifact_id": art_orig.model_artifact_id}}
+    )
+
+    # 19. 账号被禁用 -> blocked
+    part_registry.update_account("account:bot_drift", AccountUpdate(enabled=False))
+    rep_dis = preflight_season_runtime(configs_dir, "s_drift", project_root=tmp_path)
+    assert rep_dis.state == "blocked"
+    assert any(i.code == "account_disabled" for i in rep_dis.issues)
+
+    # 恢复启用，将账号改绑到 model:m_drift -> blocked (account_binding_drift)
+    part_registry.update_account("account:bot_drift", AccountUpdate(enabled=True, model_identity_id="model:m_drift"))
+    rep_rebind = preflight_season_runtime(configs_dir, "s_drift", project_root=tmp_path)
+    assert rep_rebind.state == "blocked"
+    assert any(i.code == "account_binding_drift" for i in rep_rebind.issues)
+
+
+def test_r14_anti_drift_controller_manual_only_and_mismatch(r14_env):
+    """21. manual_only 控制器或 controller_type 与 provenance 不匹配时阻断启动."""
+    configs_dir = r14_env["configs_dir"]
+    tmp_path = r14_env["tmp_path"]
+    models_dir = r14_env["models_dir"]
+
+    cp = _create_checkpoint(models_dir, "ctrl.pth")
+    part_registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:ctrl", label="Ctrl", kind="local_model"))
+    art = part_registry.add_model_artifact("model:ctrl", ModelArtifactCreate(label="ctrl.pth", artifact_path=str(cp), stage="promoted"))
+
+    for i in range(1, 4):
+        part_registry.create_account(AccountCreate(account_id=f"account:h{i}", display_name=f"H{i}", account_type="human"))
+    part_registry.create_account(AccountCreate(account_id="account:bot_ctrl", display_name="BotCtrl", account_type="managed_bot", model_identity_id="model:ctrl"))
+
+    sr.create_season(configs_dir, season_id="s_ctrl", title="Ctrl Season")
+    sr.set_season_enrollment(
+        configs_dir, "s_ctrl", ["account:h1", "account:h2", "account:h3", "account:bot_ctrl"],
+        provenance_by_model={"model:ctrl": {"kind": "local_artifact", "model_identity_id": "model:ctrl", "model_artifact_id": art.model_artifact_id}}
+    )
+
+    # 将账号控制器改为 manual_only
+    part_registry.update_account("account:bot_ctrl", AccountUpdate(default_controller="manual_only"))
+    rep_manual = preflight_season_runtime(configs_dir, "s_ctrl", project_root=tmp_path)
+    assert rep_manual.state == "blocked"
+    assert any(i.code == "controller_manual_only_not_startable" for i in rep_manual.issues)
+
+
+def test_r14_persisted_authority_hash_tamper_fails_closed(r14_env):
+    """22. 对抗测试：已固化的 running 赛季若磁盘 JSON 被非法篡改，加载时必须 fail-closed 抛错."""
+    configs_dir = r14_env["configs_dir"]
+    tmp_path = r14_env["tmp_path"]
+    models_dir = r14_env["models_dir"]
+
+    cp = _create_checkpoint(models_dir, "tamper.pth")
+    part_registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:tamp", label="Tamp", kind="local_model"))
+    art = part_registry.add_model_artifact("model:tamp", ModelArtifactCreate(label="tamp.pth", artifact_path=str(cp), stage="promoted"))
+    for i in range(1, 4):
+        part_registry.create_account(AccountCreate(account_id=f"account:h{i}", display_name=f"H{i}", account_type="human"))
+    part_registry.create_account(AccountCreate(account_id="account:bot_tamp", display_name="BotTamp", account_type="managed_bot", model_identity_id="model:tamp"))
+
+    sr.create_season(configs_dir, season_id="s_tamp", title="Tamp Season")
+    sr.set_season_enrollment(
+        configs_dir, "s_tamp", ["account:h1", "account:h2", "account:h3", "account:bot_tamp"],
+        provenance_by_model={"model:tamp": {"kind": "local_artifact", "model_identity_id": "model:tamp", "model_artifact_id": art.model_artifact_id}}
+    )
+
+    # 启动成功并写入 runtime_manifest
+    start_season_runtime(configs_dir, "s_tamp", project_root=tmp_path)
+
+    # 手工篡改磁盘上的 scoring 配置（制造权威哈希漂移）
+    season_path = configs_dir / "s_tamp.json"
+    raw_season = json.loads(season_path.read_text(encoding="utf-8"))
+    raw_season["scoring"]["tampered_rule"] = "malicious"
+    season_path.write_text(json.dumps(raw_season, ensure_ascii=False), encoding="utf-8")
+
+    # 尝试加载注册表，必须 fail-closed 拦截！
+    with pytest.raises(SeasonRegistryError, match="authority_hash_drift"):
+        _load_registry_file(season_path)
+
+
+def test_r14_legacy_manifest_projection_evidence_missing_fails_closed(r14_env):
+    """23. 历史 legacy 赛季在缺失某个成员凭据时，读取 Manifest 绝不返回部分成员，必须 fail-closed."""
+    configs_dir = r14_env["configs_dir"]
+    tmp_path = r14_env["tmp_path"]
+    models_dir = r14_env["models_dir"]
+
+    cp = _create_checkpoint(models_dir, "leg_mis.pth")
+    part_registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:leg_mis", label="LegMis", kind="local_model"))
+    art = part_registry.add_model_artifact("model:leg_mis", ModelArtifactCreate(label="lm.pth", artifact_path=str(cp), stage="promoted"))
+    for i in range(1, 4):
+        part_registry.create_account(AccountCreate(account_id=f"account:h{i}", display_name=f"H{i}", account_type="human"))
+    part_registry.create_account(AccountCreate(account_id="account:bot_lm", display_name="BotLM", account_type="managed_bot", model_identity_id="model:leg_mis"))
+
+    sr.create_season(configs_dir, season_id="s_leg_mis", title="Leg Mis Season")
+    sr.set_season_enrollment(
+        configs_dir, "s_leg_mis", ["account:h1", "account:h2", "account:h3", "account:bot_lm"],
+        provenance_by_model={"model:leg_mis": {"kind": "local_artifact", "model_identity_id": "model:leg_mis", "model_artifact_id": art.model_artifact_id}}
+    )
+    sr.set_season_status(configs_dir, "s_leg_mis", "running")
+
+    # 删除 checkpoint 文件使得 bot_lm 凭据损坏
+    cp.unlink()
+
+    # 读取 Manifest 必须抛错，绝不能返回 3 人的残缺 Manifest!
+    with pytest.raises(SeasonRegistryError, match="无法生成历史运行时清单"):
+        get_season_runtime_manifest(configs_dir, "s_leg_mis", project_root=tmp_path)
+
+
+def test_r14_display_name_uses_frozen_enrollment_snapshot(r14_env):
+    """24. Manifest 成员 display_name 使用 Season enrollment 冻结快照，不受后续 Account 改名影响."""
+    configs_dir = r14_env["configs_dir"]
+    tmp_path = r14_env["tmp_path"]
+
+    for i in range(1, 5):
+        part_registry.create_account(AccountCreate(account_id=f"account:fn{i}", display_name=f"Original_{i}", account_type="human"))
+
+    sr.create_season(configs_dir, season_id="s_display", title="Display Season")
+    sr.set_season_enrollment(configs_dir, "s_display", [f"account:fn{i}" for i in range(1, 5)])
+
+    # 修改 Account 1 的 display_name 为 NewName
+    part_registry.update_account("account:fn1", AccountUpdate(display_name="Mutated_1"))
+
+    # 启动赛季
+    started = start_season_runtime(configs_dir, "s_display", project_root=tmp_path)
+    manifest = started["runtime_manifest"]
+    p1 = next(p for p in manifest["participants"] if p["account_id"] == "account:fn1")
+    assert p1["display_name"] == "Original_1"

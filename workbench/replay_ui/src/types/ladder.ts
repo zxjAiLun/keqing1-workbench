@@ -1,6 +1,8 @@
 // src/replay_ui/src/types/ladder.ts
 // Model Ladder & Account Profiles 类型契约（与 /api/ladder/* 响应对齐）。
 
+import type { AccountType, ControllerType, FrozenExecutionProvenance } from './participants';
+
 export type LadderReadinessState = 'ready' | 'not_published' | 'invalid' | 'registry_mismatch';
 
 export interface LadderSeasonReadiness {
@@ -15,12 +17,12 @@ export type LadderDefaultSource = 'registry' | 'single_season' | null;
 
 export interface HumanRuntimeSpec {
   kind: 'human';
-  controller_type: string;
+  controller_type: 'human_ui';
 }
 
 export interface LocalArtifactRuntimeSpec {
   kind: 'local_artifact';
-  controller_type: string;
+  controller_type: 'local_model';
   model_identity_id: string;
   model_artifact_id: string;
   artifact_path: string;
@@ -30,7 +32,7 @@ export interface LocalArtifactRuntimeSpec {
 
 export interface ExternalRevisionRuntimeSpec {
   kind: 'external_revision';
-  controller_type: string;
+  controller_type: 'external_agent';
   model_identity_id: string;
   external_revision_id: string;
   provider: string;
@@ -43,10 +45,10 @@ export type RuntimeSpecUnion = HumanRuntimeSpec | LocalArtifactRuntimeSpec | Ext
 export interface SeasonRuntimeParticipant {
   account_id: string;
   display_name: string;
-  account_type: string;
-  controller_type: string;
+  account_type: AccountType;
+  controller_type: ControllerType;
   model_identity_id?: string | null;
-  execution_provenance: Record<string, unknown>;
+  execution_provenance: FrozenExecutionProvenance;
   runtime_spec: RuntimeSpecUnion;
 }
 

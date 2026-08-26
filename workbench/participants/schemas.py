@@ -145,6 +145,7 @@ class ExternalModelRevision(BaseModel):
 
 
 class ExternalModelRevisionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     external_revision_id: str | None = None
     provider: str = Field(min_length=1)
     version: str = Field(min_length=1)
@@ -193,6 +194,7 @@ class ModelIdentityUpdate(BaseModel):
 
 
 class ModelArtifactCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     model_artifact_id: str | None = None
     label: str = Field(min_length=1)
     artifact_path: str | None = None

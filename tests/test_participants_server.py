@@ -162,6 +162,16 @@ def test_model_endpoints(four_account_ids):
         api.api_set_current_artifact("model-70k", art_id)
     assert exc_art_curr.value.status_code == 409
 
+    from pydantic import ValidationError
+
+    # ModelArtifactCreate with extra illegal field -> 422
+    with pytest.raises(ValidationError):
+        ModelArtifactCreate.model_validate({"label": "test", "illegal": 123})
+
+    # ExternalModelRevisionCreate with extra illegal field -> 422
+    with pytest.raises(ValidationError):
+        ExternalModelRevisionCreate.model_validate({"provider": "mortal", "version": "1.0", "illegal": 123})
+
     with pytest.raises(HTTPException) as exc:
         api.api_add_artifact("model-ghost", ModelArtifactCreate(label="x", artifact_path="y"))
     assert exc.value.status_code == 404

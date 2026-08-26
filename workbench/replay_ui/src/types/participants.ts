@@ -41,6 +41,7 @@ export interface ModelArtifact {
 }
 
 export interface ModelArtifactUpdate {
+  label?: string | null;
   stage?: ArtifactStage;
   capabilities?: ArtifactCapability[];
   is_current?: boolean;
@@ -58,7 +59,6 @@ export interface ExternalModelRevision {
   capabilities?: ArtifactCapability[];
   created_at: string;
   retired_at?: string | null;
-  note?: string | null;
 }
 
 export interface ExternalModelRevisionCreate {

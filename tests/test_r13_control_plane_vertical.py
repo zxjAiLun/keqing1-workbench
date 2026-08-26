@@ -369,11 +369,8 @@ def load_control_plane_audit_snapshot(
     seasons = {}
     if ladder_config_dir.exists():
         for season_file in sorted(ladder_config_dir.glob("*.json")):
-            try:
-                cfg = ladder_data._load_registry_file(season_file)
-                seasons[cfg["season_id"]] = cfg
-            except Exception:
-                pass
+            cfg = ladder_data._load_registry_file(season_file)
+            seasons[cfg["season_id"]] = cfg
 
     return ControlPlaneAuditSnapshot(
         accounts=accounts_data.get("accounts", []),
@@ -583,3 +580,50 @@ def test_production_audit_gate_regression_skips_when_flag_unset(monkeypatch: pyt
 
     with pytest.raises(pytest.skip.Exception, match="requires explicit KEQING_RUN_PRODUCTION_AUDIT=1"):
         test_production_state_read_only_invariant_audit(monkeypatch)
+
+
+def test_audit_fails_closed_on_corrupted_season_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Adversarial test: valid official-ladder-v2 + corrupted secondary season file must fail-closed."""
+    from workbench.replay.ladder import SeasonRegistryError
+
+    data_dir = tmp_path / "participants"
+    configs_dir = tmp_path / "configs"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    configs_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("KEQING_PARTICIPANT_DATA_ROOT", str(data_dir))
+    monkeypatch.setenv("KEQING_LADDER_CONFIG_DIR", str(configs_dir))
+
+    # Valid participants
+    registry.create_account(AccountCreate(account_id="account:aud_user", display_name="AudUser", account_type="human"))
+    registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:mortal_aud", label="Mortal Aud", kind="external_agent"))
+    registry.add_external_revision("model:mortal_aud", ExternalModelRevisionCreate(provider="mortal", version="4.1b", is_current=True))
+
+    # Valid official-ladder-v2
+    s_cfg_valid = {
+        "schema": "keqing.ladder.season.v1",
+        "season_id": "official-ladder-v2",
+        "title": "Official V2",
+        "report_dir": "artifacts/official-ladder-v2",
+        "status": "running",
+        "models": [
+            {
+                "model_id": "mortal_aud",
+                "model_identity_id": "model:mortal_aud",
+                "accounts": [{"account_id": "account:aud_user"}],
+                "execution_provenance": {
+                    "kind": "external_revision",
+                    "model_identity_id": "model:mortal_aud",
+                    "external_revision_id": "external:mortal_aud:4.1b",
+                },
+            }
+        ],
+    }
+    (configs_dir / "official-ladder-v2.json").write_text(json.dumps(s_cfg_valid, ensure_ascii=False), encoding="utf-8")
+
+    # Corrupted second season file (invalid schema / malformed json structure)
+    (configs_dir / "corrupted-season.json").write_text(json.dumps({"schema": "invalid_schema", "season_id": "corrupted"}), encoding="utf-8")
+
+    # Calling audit must NOT silently pass or drop the corrupted file; it must fail-closed!
+    with pytest.raises(SeasonRegistryError, match="schema 无效"):
+        audit_production_control_plane(participant_data_root=data_dir, ladder_config_dir=configs_dir)

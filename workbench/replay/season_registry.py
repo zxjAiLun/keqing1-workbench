@@ -621,6 +621,10 @@ def set_season_enrollment(
             raise ValueError(f"账号不存在: {sorted(missing)}")
 
         if status == "running":
+            if season.get("runtime_manifest") is not None:
+                raise SeasonRegistryError(
+                    "runtime manifest 已冻结，running season 不允许修改 enrollment"
+                )
             _check_running_invariants(season, account_ids, accounts_by_id)
 
         groups = _build_enrollment_groups(

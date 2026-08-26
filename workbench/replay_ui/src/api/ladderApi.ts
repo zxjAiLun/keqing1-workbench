@@ -6,6 +6,8 @@ import type {
   LadderResponse,
   LadderSeasonConfig,
   LadderSeasonsResponse,
+  SeasonPreflightReport,
+  SeasonRuntimeManifest,
 } from '../types/ladder';
 
 const API_BASE = '/api';
@@ -47,6 +49,10 @@ export const ladderApi = {
   // ---- R11-E Season Manager（canonical runtime registry 写侧） ----
   getSeasonConfig: (seasonId: string): Promise<LadderSeasonConfig> =>
     api(`/ladder/seasons/${encodeURIComponent(seasonId)}/config`),
+  getSeasonPreflight: (seasonId: string): Promise<SeasonPreflightReport> =>
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/preflight`),
+  getSeasonManifest: (seasonId: string): Promise<SeasonRuntimeManifest> =>
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/manifest`),
   createSeason: (payload: { season_id: string; title?: string }): Promise<LadderSeasonConfig> =>
     api('/ladder/seasons', {
       method: 'POST',

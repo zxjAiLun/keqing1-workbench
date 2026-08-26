@@ -676,12 +676,19 @@ def _body(response) -> dict:
 @pytest.fixture
 def manager_server(tmp_path, monkeypatch):
     from replay import server
-
+    data_dir = tmp_path / "participants"
+    monkeypatch.setenv("KEQING_PARTICIPANT_DATA_ROOT", str(data_dir))
     monkeypatch.setattr(server, "_LADDER_SEASONS_DIR", tmp_path / "registries")
     return server
 
 
-def test_api_season_lifecycle(manager_server):
+def test_api_season_lifecycle(manager_server, tmp_path):
+    from participants.schemas import AccountCreate
+    from participants import registry as p_reg
+    # 创建 4 个合规 human 账号
+    for i in range(1, 5):
+        p_reg.create_account(AccountCreate(account_id=f"account:lifecycle_{i}", display_name=f"LC{i}", account_type="human"))
+
     server = manager_server
     # 创建（draft, default=False, 空阵容）
     resp = _run(server.create_ladder_season({"season_id": "s1", "title": "Season One"}))
@@ -689,6 +696,10 @@ def test_api_season_lifecycle(manager_server):
     season = _body(resp)
     assert season["status"] == "draft"
     assert season["default"] is False
+
+    # 配置 4 个成员以满足 R14 启动门禁
+    _run(server.set_ladder_season_enrollment("s1", {"account_ids": [f"account:lifecycle_{i}" for i in range(1, 5)]}))
+
     # 开始 → running
     assert _body(_run(server.start_ladder_season("s1")))["status"] == "running"
     # 设为当前

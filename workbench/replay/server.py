@@ -1636,12 +1636,31 @@ async def create_ladder_season(payload: dict):
     return JSONResponse(content=season)
 
 
+@app.get("/api/ladder/seasons/{season_id}/preflight", response_class=JSONResponse)
+async def preflight_ladder_season(season_id: str):
+    """R14-A: 只读预检赛季是否具备启动资格（纯只读，无状态副作用）。"""
+    from runtime.manifest import preflight_season_runtime
+    report = preflight_season_runtime(_LADDER_SEASONS_DIR, season_id, project_root=_LADDER_PROJECT_ROOT)
+    return JSONResponse(content=report.model_dump())
+
+
+@app.get("/api/ladder/seasons/{season_id}/manifest", response_class=JSONResponse)
+async def get_ladder_season_manifest(season_id: str):
+    """R14-A: 获取赛季运行时清单（已固化或历史投影）。"""
+    from runtime.manifest import get_season_runtime_manifest
+    try:
+        manifest = get_season_runtime_manifest(_LADDER_SEASONS_DIR, season_id, project_root=_LADDER_PROJECT_ROOT)
+    except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
+        return _manager_errors(exc)
+    return JSONResponse(content=manifest.model_dump())
+
+
 @app.post("/api/ladder/seasons/{season_id}/start", response_class=JSONResponse)
 async def start_ladder_season(season_id: str):
-    """开始赛季：draft → running。"""
-    sr = _season_manager()
+    """开始赛季：draft → running，并固化 runtime_manifest（R14-A 强门禁原子写）。"""
+    from runtime.manifest import start_season_runtime
     try:
-        season = sr.set_season_status(_LADDER_SEASONS_DIR, season_id, "running")
+        season = start_season_runtime(_LADDER_SEASONS_DIR, season_id, project_root=_LADDER_PROJECT_ROOT)
     except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
         return _manager_errors(exc)
     return JSONResponse(content=season)

@@ -13,6 +13,72 @@ export interface LadderSeasonReadiness {
 
 export type LadderDefaultSource = 'registry' | 'single_season' | null;
 
+export interface HumanRuntimeSpec {
+  kind: 'human';
+  controller_type: string;
+}
+
+export interface LocalArtifactRuntimeSpec {
+  kind: 'local_artifact';
+  controller_type: string;
+  model_identity_id: string;
+  model_artifact_id: string;
+  artifact_path: string;
+  resolved_checkpoint_path: string;
+  artifact_hash?: string | null;
+}
+
+export interface ExternalRevisionRuntimeSpec {
+  kind: 'external_revision';
+  controller_type: string;
+  model_identity_id: string;
+  external_revision_id: string;
+  provider: string;
+  version: string;
+  external_ref?: string | null;
+}
+
+export type RuntimeSpecUnion = HumanRuntimeSpec | LocalArtifactRuntimeSpec | ExternalRevisionRuntimeSpec;
+
+export interface SeasonRuntimeParticipant {
+  account_id: string;
+  display_name: string;
+  account_type: string;
+  controller_type: string;
+  model_identity_id?: string | null;
+  execution_provenance: Record<string, unknown>;
+  runtime_spec: RuntimeSpecUnion;
+}
+
+export interface SeasonRuntimeManifest {
+  schema_version: 'keqing.season.runtime_manifest.v1';
+  manifest_id: string;
+  season_id: string;
+  season_authority_hash: string;
+  materialization: 'frozen' | 'projected_legacy';
+  participants: SeasonRuntimeParticipant[];
+  scoring_summary: Record<string, unknown>;
+  generated_at?: string | null;
+}
+
+export interface PreflightIssue {
+  code: string;
+  message: string;
+  severity: 'error' | 'warning';
+  account_id?: string | null;
+  model_identity_id?: string | null;
+  detail?: string | null;
+}
+
+export interface SeasonPreflightReport {
+  season_id: string;
+  season_status: string;
+  can_start: boolean;
+  state: 'ready' | 'blocked';
+  issues: PreflightIssue[];
+  manifest?: SeasonRuntimeManifest | null;
+}
+
 export interface LadderSeasonConfig {
   schema: string;
   season_id: string;
@@ -28,6 +94,7 @@ export interface LadderSeasonConfig {
     checkpoint?: string | null;
     accounts: Array<{ account_id: string; display_name?: string | null }>;
   }>;
+  runtime_manifest?: SeasonRuntimeManifest | null;
   created_at?: string;
   updated_at?: string;
 }

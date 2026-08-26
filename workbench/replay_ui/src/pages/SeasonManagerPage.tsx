@@ -6,7 +6,7 @@ import { PageHeader, PageShell } from '../components/Layout/PageScaffold';
 import { ladderApi } from '../api/ladderApi';
 import { participantsApi } from '../api/participantsApi';
 import type { Account, ModelIdentity } from '../types/participants';
-import type { LadderSeason, LadderSeasonConfig, LadderSeasonsResponse } from '../types/ladder';
+import type { LadderSeason, LadderSeasonConfig, LadderSeasonsResponse, SeasonPreflightReport } from '../types/ladder';
 
 const STATUS_LABELS: Record<string, string> = {
   draft: '草稿',
@@ -26,6 +26,7 @@ const STATUS_COLORS: Record<string, string> = {
 export function SeasonManagerPage() {
   const [catalog, setCatalog] = useState<LadderSeasonsResponse | null>(null);
   const [config, setConfig] = useState<LadderSeasonConfig | null>(null);
+  const [preflight, setPreflight] = useState<SeasonPreflightReport | null>(null);
   const [selectedId, setSelectedId] = useState<string>('');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [identities, setIdentities] = useState<ModelIdentity[]>([]);
@@ -59,8 +60,12 @@ export function SeasonManagerPage() {
     setSelectedId(seasonId);
     setError(null);
     try {
-      const cfg = await ladderApi.getSeasonConfig(seasonId);
+      const [cfg, pre] = await Promise.all([
+        ladderApi.getSeasonConfig(seasonId),
+        ladderApi.getSeasonPreflight(seasonId).catch(() => null),
+      ]);
       setConfig(cfg);
+      setPreflight(pre);
       setDraftSelection(new Set(cfg.models.flatMap((m) => m.accounts.map((a) => a.account_id))));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -257,10 +262,70 @@ export function SeasonManagerPage() {
               </span>
             </div>
 
+            {/* Preflight 就绪状态与 Manifest 卡片 */}
+            {status === 'draft' && preflight && (
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: 6,
+                  marginBottom: 14,
+                  border: `1px solid ${preflight.can_start ? 'var(--success)' : 'var(--negative)'}`,
+                  background: preflight.can_start ? 'var(--surface-subtle)' : 'var(--surface-subtle)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13 }}>
+                    运行时预检 (Preflight): {preflight.can_start ? '✅ 准备就绪' : '❌ 无法启动'}
+                  </span>
+                  {preflight.manifest && (
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto', fontFamily: 'monospace' }}>
+                      Manifest ID: {preflight.manifest.manifest_id}
+                    </span>
+                  )}
+                </div>
+                {preflight.issues.length > 0 && (
+                  <ul style={{ margin: '4px 0 0 16px', padding: 0, fontSize: 12, color: 'var(--negative)' }}>
+                    {preflight.issues.map((iss, idx) => (
+                      <li key={idx}>
+                        [{iss.code}] {iss.message}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {status === 'running' && config.runtime_manifest && (
+              <div
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 6,
+                  marginBottom: 14,
+                  border: '1px solid var(--border)',
+                  background: 'var(--surface-subtle)',
+                  fontSize: 12,
+                }}
+              >
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <span style={{ fontWeight: 700 }}>🔒 已冻结 Runtime Manifest:</span>
+                  <span style={{ fontFamily: 'monospace', color: 'var(--accent)' }}>{config.runtime_manifest.manifest_id}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>Authority Hash: {config.runtime_manifest.season_authority_hash.slice(0, 12)}…</span>
+                </div>
+              </div>
+            )}
+
             {/* lifecycle 按钮（backend 是硬 gate；非法按钮直接 disabled） */}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
               {status === 'draft' && (
-                <button style={ghostBtn} disabled={busy} onClick={() => void run(() => ladderApi.startSeason(config.season_id))}>
+                <button
+                  style={{
+                    ...ghostBtn,
+                    borderColor: preflight?.can_start ? 'var(--success)' : 'var(--border)',
+                    color: preflight?.can_start ? 'var(--success)' : 'var(--text-muted)',
+                  }}
+                  disabled={busy || (preflight !== null && !preflight.can_start)}
+                  onClick={() => void run(() => ladderApi.startSeason(config.season_id))}
+                >
                   开始赛季
                 </button>
               )}

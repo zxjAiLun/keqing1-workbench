@@ -270,6 +270,47 @@ def find_sessions_for_log(tenhou_log_id: str) -> list[RuntimeExecutionSession]:
     return list(sessions.values())
 
 
+def resolve_execution_session_for_log(
+    tenhou_log_id: str,
+    requested_session_id: str | None = None,
+) -> str | None:
+    """R14-C Repair 4 (P1): 统一解析某一 Tenhou log 的唯一 execution origin。
+
+    唯一合同：``RuntimeMatchBinding.session_id`` 必须是该 log **唯一可证明**
+    的 execution session——auto 与显式请求共用同一语义，人工指定不能把不唯一
+    的客观证据变成唯一：
+
+    - 0 个候选：返回 ``None``（无 R14 observation，调用方走 manual/legacy 语义；
+      若 caller 显式请求了某个 session，返回该请求值——由 admission 的
+      evidence verifier 决定接受或拒绝）；
+    - 1 个候选：返回 unique；显式请求与之不同 → ValueError（fail-closed）；
+    - >1 个候选：**永远** ValueError ambiguous——即使 caller 显式传了其中
+      一个 session 也不得覆盖证据歧义。
+
+    返回解析出的 session_id（或 None）。所有 ValueError 均为 fail-closed。
+    """
+    candidates = find_sessions_for_log(tenhou_log_id)
+    if len(candidates) > 1:
+        ids = ", ".join(s.session_id for s in candidates)
+        raise ValueError(
+            f"同一 Tenhou log {tenhou_log_id} 被多个 R14 execution sessions 声称观测 "
+            f"({ids})——运行时来源不唯一，禁止正式 runtime-bound intake；"
+            "需人工检查 runtime evidence"
+        )
+    if len(candidates) == 1:
+        unique = candidates[0].session_id
+        if requested_session_id and requested_session_id != unique:
+            raise ValueError(
+                f"对局 {tenhou_log_id} 唯一可证明的 execution session 是 {unique}，"
+                f"与显式请求的 {requested_session_id} 不一致——"
+                "runtime-bound 对局的执行来源不可被人工覆盖"
+            )
+        return unique
+    # 0 个候选：无 R14 evidence。显式请求保留（verifier 会校验该 session
+    # 是否真的观察到该 log——未观察到即拒绝），否则 None → legacy。
+    return requested_session_id or None
+
+
 __all__ = [
     "EXECUTION_SESSION_SCHEMA",
     "OBSERVED_LOG_SCHEMA",
@@ -287,5 +328,6 @@ __all__ = [
     "observed_log_file",
     "persist_execution_session_locked",
     "record_observed_log",
+    "resolve_execution_session_for_log",
     "session_observer_ids",
 ]

@@ -809,26 +809,20 @@ def resolve_and_create_match(
     # R11-C Repair 2：Confirm 与 Preview 必须复用同一个 provenance。前端可能
     # 只带 ?url=（刷新/分享后无 SPA state），这里按 log_id 恢复 session_id，
     # 使 _resolve_seat 能重新校验 session alias（NoName-N → frozen model）。
-    if not session_id:
-        # R14-C Repair 3 (P1-1/P1-3): 从 R14-B execution session 的 worker
-        # 观测记录反查（真实 runtime evidence）。多个不同 session 对同一
-        # log 都有证据 = ambiguous → fail-closed，绝不能 first-match。
-        try:
-            from workbench.runtime.execution_session import find_sessions_for_log
+    # R14-C Repair 4 (P1): auto 与显式请求共用同一唯一性语义——
+    # resolve_execution_session_for_log 保证返回的 session_id 是该 log
+    # 唯一可证明的 execution origin（ambiguous 永远 fail-closed，人工
+    # 指定不能覆盖证据歧义）。无 R14 evidence 时回退 legacy pwy capture。
+    from workbench.runtime.execution_session import resolve_execution_session_for_log
 
-            r14_sessions = find_sessions_for_log(log_id)
-        except Exception:  # noqa: BLE001
-            r14_sessions = []
-        if len(r14_sessions) > 1:
-            ids = ", ".join(s.session_id for s in r14_sessions)
-            raise ValueError(
-                f"对局 {log_id} 被多个 R14 execution session 声称观测 ({ids})——"
-                "无法唯一确定运行时来源，请显式指定 session_id"
-            )
-        if r14_sessions:
-            session_id = r14_sessions[0].session_id
-        else:
-            session_id = _session_id_for_log_id(log_id)
+    try:
+        session_id = resolve_execution_session_for_log(log_id, session_id)
+    except ValueError:
+        raise
+    except Exception:  # noqa: BLE001
+        session_id = None
+    if not session_id:
+        session_id = _session_id_for_log_id(log_id)
     preview = build_preview(f"https://tenhou.net/3/?log={log_id}", session_id=session_id)
     tenhou6 = download_tenhou6(log_id)
     events = tenhou6_events(tenhou6)
@@ -1111,6 +1105,13 @@ def assess_intake_admission(
     ]
     res_by_seat = {int(r["seat"]): r for r in norm_res}
 
+    # R14-C Repair 4 (P1): preflight 与 confirm 共用同一唯一性语义
+    from workbench.runtime.execution_session import resolve_execution_session_for_log
+
+    try:
+        session_id = resolve_execution_session_for_log(log_id, session_id)
+    except Exception:  # noqa: BLE001
+        session_id = None
     if not session_id:
         session_id = _session_id_for_log_id(log_id)
 

@@ -1523,7 +1523,7 @@ def test_r14c_two_sessions_claim_same_log_auto_intake_ambiguous_blocked(r14c_env
     _record_worker_log(s2, log_id)
 
     # auto intake（不带 session_id）→ ambiguous，fail-closed
-    with pytest.raises(ValueError, match="多个 R14 execution session 声称观测"):
+    with pytest.raises(ValueError, match="多个 R14 execution sessions 声称观测.*运行时来源不唯一"):
         intake.resolve_and_create_match(
             log_id=log_id,
             resolutions=[
@@ -1602,3 +1602,127 @@ def test_r14c_tampered_session_provenance_blocked(r14c_env, monkeypatch):
             session_id=session_id,
         )
     assert ledger.list_matches().total == 0
+
+
+# ---------------------------------------------------------------------------
+# R14-C Repair 4: Execution Origin Uniqueness Seal
+# ---------------------------------------------------------------------------
+
+def _r4_ambiguous_setup(r14c_env, monkeypatch):
+    """S1、S2 都完整观察同一 log X 的公共 setup."""
+    setup = _setup_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+    manifest = setup["manifest"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    log_id = "2026082712gm-00a9-0000-r4_unique"
+    s1 = "r14c_r4_session_1"
+    s2 = "r14c_r4_session_2"
+    _create_execution_session(r14c_env, s1, manifest)
+    _create_execution_session(r14c_env, s2, manifest)
+    _record_worker_log(s1, log_id)
+    _record_worker_log(s2, log_id)
+
+    def _resolutions():
+        return [
+            {"seat": 0, "action": "assign", "account_id": "account:h1"},
+            {"seat": 1, "action": "assign", "account_id": "account:h2"},
+            {"seat": 2, "action": "assign", "account_id": "account:h3"},
+            {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+        ]
+
+    return setup, log_id, s1, s2, _resolutions
+
+
+def test_r14c_r4_ambiguous_auto_intake_blocked(r14c_env, monkeypatch):
+    """R4-1. S1、S2 都完整观察 X：auto intake → blocked ambiguous."""
+    setup, log_id, _s1, _s2, resolutions = _r4_ambiguous_setup(r14c_env, monkeypatch)
+
+    with pytest.raises(ValueError, match="多个 R14 execution sessions 声称观测.*运行时来源不唯一"):
+        intake.resolve_and_create_match(
+            log_id=log_id,
+            resolutions=resolutions(),
+            season_id=setup["season_id"],
+            rating_eligible=True,
+        )
+    assert ledger.list_matches().total == 0
+
+
+def test_r14c_r4_ambiguous_explicit_session_still_blocked(r14c_env, monkeypatch):
+    """R4-2. 同样状态：显式传 S1（或 S2）也必须 blocked——人工指定不能覆盖证据歧义."""
+    setup, log_id, s1, s2, resolutions = _r4_ambiguous_setup(r14c_env, monkeypatch)
+
+    for explicit in (s1, s2):
+        with pytest.raises(ValueError, match="多个 R14 execution sessions 声称观测.*运行时来源不唯一"):
+            intake.resolve_and_create_match(
+                log_id=log_id,
+                resolutions=resolutions(),
+                season_id=setup["season_id"],
+                rating_eligible=True,
+                session_id=explicit,
+            )
+    assert ledger.list_matches().total == 0
+
+
+def test_r14c_r4_unique_session_explicit_mismatch_blocked(r14c_env, monkeypatch):
+    """R4-3. 只有 S1 观察 X：显式请求 S2 → blocked；显式请求 S1 → success."""
+    setup = _setup_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+    manifest = setup["manifest"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    log_id = "2026082712gm-00a9-0000-r4_mismatch"
+    s1 = "r14c_r4_unique_session"
+    s2 = "r14c_r4_other_session"
+    _create_execution_session(r14c_env, s1, manifest)
+    _create_execution_session(r14c_env, s2, manifest)
+    # 只有 S1 观察了 X
+    _record_worker_log(s1, log_id)
+
+    resolutions = [
+        {"seat": 0, "action": "assign", "account_id": "account:h1"},
+        {"seat": 1, "action": "assign", "account_id": "account:h2"},
+        {"seat": 2, "action": "assign", "account_id": "account:h3"},
+        {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+    ]
+
+    # 显式请求 S2（没观察到该 log）→ blocked
+    with pytest.raises(ValueError, match="唯一可证明的 execution session.*与显式请求.*不一致"):
+        intake.resolve_and_create_match(
+            log_id=log_id,
+            resolutions=resolutions,
+            season_id=setup["season_id"],
+            rating_eligible=True,
+            session_id=s2,
+        )
+    assert ledger.list_matches().total == 0
+
+    # 显式请求 S1（正确唯一来源）→ success
+    res = intake.resolve_and_create_match(
+        log_id=log_id,
+        resolutions=resolutions,
+        season_id=setup["season_id"],
+        rating_eligible=True,
+        session_id=s1,
+    )
+    m = ledger.get_match(res["match_id"])
+    assert m.runtime_binding is not None
+    assert m.runtime_binding.session_id == s1

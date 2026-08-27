@@ -169,6 +169,8 @@ def set_season_status(configs_dir: Path, season_id: str, status: str) -> dict[st
 
     - 非法迁移 → 409（SeasonRegistryError）；
     - ``completed → running`` 是管理员 reopen（修正误结束）：
+      - **R14-D: 带 archive_summary 的 sealed 赛季永不 reopen**（一旦封存
+        就是历史）；legacy completed（无 summary）保留旧 reopen 行为；
       - archived 永不 reopen；
       - reopen 不自动抢占当前赛季（default 保持 false，由用户显式"设为当前"）；
       - 写入 ``reopened_at`` 审计字段；
@@ -181,6 +183,13 @@ def set_season_status(configs_dir: Path, season_id: str, status: str) -> dict[st
     complete 无法插入——彻底封住 "Season 已 completed 但 Match 在其后才提交"
     的竞态窗口。取得 data lock 后先 recovery pending（crash 残留的 intake
     事务必须先落账，再判定 lifecycle）。
+
+    R14-D Phase 2: R14 frozen 赛季（有 persisted runtime_manifest）的
+    ``running → completed`` 若无 archive_summary 则走 legacy 裸迁移；
+    推荐/规范路径是 ``finalize_season()``（构建并封存终局摘要）。
+    ``running → archived`` 对 frozen 赛季禁止 bypass——必须先 finalize。
+    ``completed → archived`` 只改 status/default/updated_at，
+    archive_summary 必须 byte-for-byte 保持不变。
     """
     status = (status or "").strip()
     if status not in SEASON_STATUSES:
@@ -196,6 +205,84 @@ def set_season_status(configs_dir: Path, season_id: str, status: str) -> dict[st
     return _set_season_status_locked(configs_dir, season_id, status)
 
 
+def finalize_season(configs_dir: Path, season_id: str) -> dict[str, Any]:
+    """R14-D Phase 2: 结束赛季并封存不可变终局摘要（running → completed）。
+
+    单一跨域事务，锁层级 ``participants data_lock → _registry_lock →
+    runtime_lock``：
+
+    1. 取 data lock → recovery pending Match transaction（crash 残留先落账，
+       其内容自然进入终局摘要）；
+    2. registry lock 内 re-read Season，要求 status == running 且带
+       persisted runtime_manifest（legacy 无 manifest 赛季走
+       ``set_season_status`` 裸迁移）；
+    3. runtime lock 内 reconcile process records、断言无 OWNED_LIVE /
+       OWNERSHIP_UNKNOWN；
+    4. 从 locked canonical state 构建 archive projection，以唯一的
+       completed_at seal；
+    5. 校验最终 Season payload（含 summary seal 自校验）；
+    6. **一次原子 JSON 写**：status/completed_at/archive_summary/default/
+       updated_at——绝不做 projection drain（dirty marker / ladder snapshot
+       是独立的派生管线，不耦合进 lifecycle 权威）。
+
+    返回更新后的 Season dict。
+    """
+    from participants import ledger as participants_ledger
+    from participants.paths import data_lock as participants_data_lock
+
+    with participants_data_lock():
+        participants_ledger.recover_pending_transaction_locked()
+        with _registry_lock(configs_dir):
+            season = get_season_config(configs_dir, season_id)
+            current = str(season.get("status") or "draft")
+            if current != "running":
+                raise SeasonRegistryError(
+                    f"只能 finalize running 赛季 (当前为 {current})"
+                )
+            manifest_raw = season.get("runtime_manifest")
+            if not isinstance(manifest_raw, dict):
+                raise SeasonRegistryError(
+                    f"赛季 {season_id} 缺少 persisted runtime_manifest——"
+                    "legacy 赛季请使用 set_season_status 裸迁移"
+                )
+
+            from runtime.supervisor import (
+                assert_no_live_runtime_processes_locked,
+                runtime_lock,
+            )
+
+            with runtime_lock(season_id):
+                assert_no_live_runtime_processes_locked(season_id)
+
+                from runtime.archive_summary import (
+                    ArchiveSummaryError,
+                    build_archive_summary_projection,
+                    seal_archive_summary,
+                )
+
+                try:
+                    projection = build_archive_summary_projection(season)
+                    completed_at = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+                    summary = seal_archive_summary(projection, completed_at)
+                except ArchiveSummaryError as exc:
+                    raise SeasonRegistryError(
+                        f"赛季 {season_id} 终局摘要构建失败: {exc}"
+                    ) from exc
+
+            updated = dict(season)
+            updated["status"] = "completed"
+            updated["completed_at"] = completed_at
+            updated["archive_summary"] = summary.model_dump()
+            if updated.get("default") is True:
+                updated["default"] = False
+            updated["updated_at"] = completed_at
+            # 写前验证（含 archive_summary seal 自校验）
+            validate_registry_payload(updated)
+            path = _season_path(configs_dir, season_id)
+            _atomic_write_json(path, updated)
+            return read_registry(path)
+
+
 def _set_season_status_locked(configs_dir: Path, season_id: str, status: str) -> dict[str, Any]:
     """set_season_status 的锁内实现：调用方保证跨域锁层级已满足。"""
     with _registry_lock(configs_dir):
@@ -204,6 +291,21 @@ def _set_season_status_locked(configs_dir: Path, season_id: str, status: str) ->
         allowed = _STATUS_TRANSITIONS.get(current, set())
         if status not in allowed:
             raise SeasonRegistryError(f"赛季 {season_id} 状态迁移非法: {current} → {status}")
+
+        # R14-D Phase 2: sealed 赛季（有 archive_summary）永不 reopen
+        if current == "completed" and status == "running" and season.get("archive_summary") is not None:
+            raise SeasonRegistryError(
+                f"赛季 {season_id} 已封存终局摘要 (archive_summary)——"
+                "sealed 历史赛季不可 reopen"
+            )
+
+        # R14-D Phase 2: frozen 赛季（有 runtime_manifest）禁止 running→archived
+        # bypass——必须先 finalize_season 拿到 archive_summary
+        if current == "running" and status == "archived" and season.get("runtime_manifest") is not None:
+            raise SeasonRegistryError(
+                f"赛季 {season_id} 是 R14 frozen 赛季——不能从 running 直接归档，"
+                "请先 finalize（完成并封存终局摘要），再 completed → archived"
+            )
 
         # R14-B Interlock: 当从 running 迁移到 completed 或 archived 时，在持有 _registry_lock 下取得 runtime_lock 原子断言
         if current == "running" and status in ("completed", "archived"):
@@ -215,6 +317,24 @@ def _set_season_status_locked(configs_dir: Path, season_id: str, status: str) ->
                 assert_no_live_runtime_processes_locked(season_id)
 
         updated = dict(season)
+        # R14-D Phase 2: completed → archived 时 archive_summary 必须
+        # byte-for-byte 保持不变（连同 completed_at 一起冻结）。
+        if current == "completed" and status == "archived" and season.get("archive_summary") is not None:
+            frozen_summary = season["archive_summary"]
+            frozen_completed_at = season.get("completed_at")
+            updated["status"] = status
+            if updated.get("default") is True:
+                updated["default"] = False
+            updated["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+            # 显式保留冻结字段（防御性 copy——dict(season) 已是浅拷贝，这里
+            # 确认未被改动）
+            assert updated["archive_summary"] == frozen_summary
+            assert updated.get("completed_at") == frozen_completed_at
+            validate_registry_payload(updated)
+            path = _season_path(configs_dir, season_id)
+            _atomic_write_json(path, updated)
+            return read_registry(path)
+
         updated["status"] = status
         if status == "running":
             # R13-B Freeze Gate: 所有正式 model group 必须具有完整合法的 execution_provenance

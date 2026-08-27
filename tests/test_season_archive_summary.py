@@ -545,3 +545,191 @@ def test_r14d_seal_excludes_only_self_referencing_fields(r14d_env):
         "operation_summary",
         "completed_at",
     }
+
+
+# ---------------------------------------------------------------------------
+# R14-D Phase 2: finalize_season + sealed lifecycle rules
+# ---------------------------------------------------------------------------
+
+def test_r14d_finalize_season_seals_summary(r14d_env):
+    """P2-1. finalize_season: running → completed，一次性原子写 status/completed_at/
+    archive_summary/default，summary seal 自校验通过。"""
+    setup = _setup_running_season(r14d_env)
+    configs_dir = r14d_env["configs_dir"]
+
+    finalized = sr.finalize_season(configs_dir, "s_r14d")
+    assert finalized["status"] == "completed"
+    assert finalized["completed_at"] == finalized["updated_at"]
+    assert finalized["default"] is not True
+
+    summary = finalized["archive_summary"]
+    validated = validate_persisted_archive_summary(finalized, summary)
+    assert validated.manifest_id == setup["manifest"].manifest_id
+    assert validated.completed_at == finalized["completed_at"]
+    assert validated.match_summary.total_matches == 1
+    assert validated.match_summary.rating_eligible_matches == 1
+    assert validated.operation_summary.session_count == 1
+
+    # registry 读取（含 seal 校验 hook）正常
+    reloaded = sr.get_season(configs_dir, "s_r14d")
+    assert reloaded["archive_summary"] == summary
+
+
+def test_r14d_finalize_requires_running(r14d_env):
+    """P2-2. 非 running 赛季不能 finalize。"""
+    _setup_running_season(r14d_env)
+    configs_dir = r14d_env["configs_dir"]
+
+    sr.finalize_season(configs_dir, "s_r14d")
+    with pytest.raises(sr.SeasonRegistryError, match="只能 finalize running"):
+        sr.finalize_season(configs_dir, "s_r14d")
+
+    # draft 赛季也不能
+    sr.create_season(configs_dir, season_id="s_draft_d", title="Draft")
+    with pytest.raises(sr.SeasonRegistryError, match="只能 finalize running"):
+        sr.finalize_season(configs_dir, "s_draft_d")
+
+
+def test_r14d_finalize_rejects_legacy_without_manifest(r14d_env):
+    """P2-3. 无 runtime_manifest 的 legacy 赛季不能 finalize。"""
+    configs_dir = r14d_env["configs_dir"]
+    sr.create_season(configs_dir, season_id="s_legacy_d", title="Legacy")
+    with pytest.raises(sr.SeasonRegistryError, match="只能 finalize running"):
+        sr.finalize_season(configs_dir, "s_legacy_d")
+
+
+def test_r14d_sealed_reopen_forbidden(r14d_env):
+    """P2-4. 带 archive_summary 的 completed 赛季 reopen → 拒绝；legacy 无
+    summary 的 completed 保留旧 reopen 行为。"""
+    _setup_running_season(r14d_env)
+    configs_dir = r14d_env["configs_dir"]
+
+    sr.finalize_season(configs_dir, "s_r14d")
+    with pytest.raises(sr.SeasonRegistryError, match="不可 reopen"):
+        sr.set_season_status(configs_dir, "s_r14d", "running")
+
+    # legacy completed（无 summary）仍可 reopen
+    sr.create_season(configs_dir, season_id="s_legacy_reopen", title="Legacy Reopen")
+    legacy = sr.get_season(configs_dir, "s_legacy_reopen")
+    legacy["status"] = "completed"
+    legacy["updated_at"] = "2026-08-27T00:00:00+08:00"
+    (configs_dir / "s_legacy_reopen.json").write_text(
+        json.dumps(legacy, ensure_ascii=False), encoding="utf-8"
+    )
+    reopened = sr.set_season_status(configs_dir, "s_legacy_reopen", "running")
+    assert reopened["status"] == "running"
+    assert "reopened_at" in reopened
+
+
+def test_r14d_running_to_archived_bypass_forbidden_for_frozen(r14d_env):
+    """P2-5. frozen 赛季 running → archived 直接绕过 summary → 拒绝。"""
+    _setup_running_season(r14d_env)
+    configs_dir = r14d_env["configs_dir"]
+
+    with pytest.raises(sr.SeasonRegistryError, match="不能从 running 直接归档"):
+        sr.set_season_status(configs_dir, "s_r14d", "archived")
+
+    # 赛季仍是 running（未受影响）
+    assert sr.get_season(configs_dir, "s_r14d")["status"] == "running"
+
+
+def test_r14d_completed_to_archived_preserves_summary_byte_for_byte(r14d_env):
+    """P2-6. completed → archived：archive_summary 与 completed_at byte-for-byte 不变。"""
+    _setup_running_season(r14d_env)
+    configs_dir = r14d_env["configs_dir"]
+
+    finalized = sr.finalize_season(configs_dir, "s_r14d")
+    frozen_summary = json.dumps(finalized["archive_summary"], sort_keys=True)
+    frozen_completed_at = finalized["completed_at"]
+
+    archived = sr.set_season_status(configs_dir, "s_r14d", "archived")
+    assert archived["status"] == "archived"
+    assert json.dumps(archived["archive_summary"], sort_keys=True) == frozen_summary
+    assert archived["completed_at"] == frozen_completed_at
+    # summary seal 仍可校验（completed/archived 有 summary 强校验）
+    validate_persisted_archive_summary(archived, archived["archive_summary"])
+
+    # archived 永不 reopen
+    with pytest.raises(sr.SeasonRegistryError):
+        sr.set_season_status(configs_dir, "s_r14d", "running")
+
+
+def test_r14d_finalize_after_complete_blocked_intake(r14d_env):
+    """P2-7. finalize 后 intake 被 Season gate 拒绝（终局摘要不被新 match 污染）。"""
+    setup = _setup_running_season(r14d_env)
+    configs_dir = r14d_env["configs_dir"]
+    art_a = setup["art_a"]
+
+    finalized = sr.finalize_season(configs_dir, "s_r14d")
+    frozen_summary = json.dumps(finalized["archive_summary"], sort_keys=True)
+
+    seats = [
+        MatchSeat(seat=0, account_id="account:h1", controller_type="human_ui"),
+        MatchSeat(seat=1, account_id="account:h2", controller_type="human_ui"),
+        MatchSeat(seat=2, account_id="account:h3", controller_type="human_ui"),
+        MatchSeat(
+            seat=3,
+            account_id="account:bot_a",
+            controller_type="local_model",
+            model_identity_id="model:ma",
+            model_artifact_id=art_a.model_artifact_id,
+        ),
+    ]
+    payload = MatchCreate(
+        occurred_at="2026-08-27T16:00:00+08:00",
+        game_length="hanchan",
+        season_id="s_r14d",
+        rating_eligible=True,
+        seats=seats,
+        final_scores=[25000, 25000, 25000, 25000],
+    )
+    with pytest.raises(ValueError, match="不是 running"):
+        ledger.create_match(payload, registry=part_registry)
+
+    # summary 不变
+    after = sr.get_season(configs_dir, "s_r14d")
+    assert json.dumps(after["archive_summary"], sort_keys=True) == frozen_summary
+
+
+def test_r14d_finalize_immutability_under_catalog_drift(r14d_env):
+    """P2-8. finalize 后 Catalog retire/disable/rebind → summary 不变。"""
+    setup = _setup_running_season(r14d_env)
+    configs_dir = r14d_env["configs_dir"]
+    art_a = setup["art_a"]
+
+    finalized = sr.finalize_season(configs_dir, "s_r14d")
+    frozen_summary = json.dumps(finalized["archive_summary"], sort_keys=True)
+
+    from participants.schemas import AccountUpdate, ModelArtifactUpdate
+
+    part_registry.update_model_artifact(
+        "model:ma", art_a.model_artifact_id,
+        ModelArtifactUpdate(stage="retired", is_current=False),
+    )
+    part_registry.update_account("account:bot_a", AccountUpdate(enabled=False))
+
+    after = sr.get_season(configs_dir, "s_r14d")
+    assert json.dumps(after["archive_summary"], sort_keys=True) == frozen_summary
+
+
+def test_r14d_finalize_immutability_under_runtime_cleanup(r14d_env):
+    """P2-9. finalize 后 runtime evidence 清理（删 session 文件）→ sealed summary 不变且可读。"""
+    _setup_running_season(r14d_env)
+    configs_dir = r14d_env["configs_dir"]
+
+    finalized = sr.finalize_season(configs_dir, "s_r14d")
+    frozen_summary = json.dumps(finalized["archive_summary"], sort_keys=True)
+
+    # 模拟 runtime cleanup：删除 execution session evidence
+    from runtime.execution_session import execution_sessions_root
+
+    for p in execution_sessions_root().iterdir():
+        if p.is_dir():
+            for f in p.rglob("*"):
+                if f.is_file():
+                    f.unlink()
+            p.rmdir()
+
+    after = sr.get_season(configs_dir, "s_r14d")
+    assert json.dumps(after["archive_summary"], sort_keys=True) == frozen_summary
+    validate_persisted_archive_summary(after, after["archive_summary"])

@@ -1303,6 +1303,7 @@ def assess_intake_admission(
                 mem_seats,
                 registry=active_registry,
                 session_id=session_id,
+                tenhou_log_id=log_id,
                 project_root=active_root,
             )
             for sa in seats_assessment:

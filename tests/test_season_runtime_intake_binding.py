@@ -1806,3 +1806,62 @@ def test_r14c_r5_preflight_explicit_mismatch_blocked_unique_ok(r14c_env, monkeyp
     assert ready.state == "ready"
     assert len(ready.issues) == 0
     assert all(s.is_ladder_eligible for s in ready.seats)
+
+
+def test_r14c_r5_preflight_requires_all_local_observers(r14c_env, monkeypatch):
+    """R14-C Closure: 双 bot session 只记录 Bot A 的 observation → preflight blocked；
+    补 Bot B observation 后同一请求 ready。Preflight 与 Confirm 共用完整的
+    exact-log observer gate（tenhou_log_id 贯穿）。
+    """
+    setup = _setup_two_bot_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+    manifest = setup["manifest"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "BotA", "BotB"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotB", account_id="account:bot_b", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    session_id = "r14c_closure_observer_session"
+    _create_execution_session(
+        r14c_env, session_id, manifest,
+        accounts=["account:h1", "account:h2", "account:bot_a", "account:bot_b"],
+    )
+    log_id = "2026082712gm-00a9-0000-closure_obs"
+    resolutions = [
+        {"seat": 0, "action": "assign", "account_id": "account:h1"},
+        {"seat": 1, "action": "assign", "account_id": "account:h2"},
+        {"seat": 2, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+        {"seat": 3, "action": "assign", "account_id": "account:bot_b", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+    ]
+
+    # 只有 Bot A 写了 observation——Bot B 缺失 → preflight 必须 blocked
+    _record_worker_log(session_id, log_id, account_id="account:bot_a")
+    blocked = intake.assess_intake_admission(
+        log_id=log_id,
+        resolutions=resolutions,
+        season_id=setup["season_id"],
+        rating_eligible=True,
+        session_id=session_id,
+    )
+    assert blocked.state == "blocked"
+    assert any("没有观察到对局" in i.message for i in blocked.issues)
+    assert all(not s.is_ladder_eligible for s in blocked.seats)
+
+    # 补上 Bot B 的 observation → 同一请求 ready
+    _record_worker_log(session_id, log_id, account_id="account:bot_b")
+    ready = intake.assess_intake_admission(
+        log_id=log_id,
+        resolutions=resolutions,
+        season_id=setup["season_id"],
+        rating_eligible=True,
+        session_id=session_id,
+    )
+    assert ready.state == "ready"
+    assert len(ready.issues) == 0
+    assert all(s.is_ladder_eligible for s in ready.seats)

@@ -8,6 +8,7 @@ import type {
   LadderSeasonsResponse,
   SeasonPreflightReport,
   SeasonRuntimeManifest,
+  SeasonRuntimeStatusResponse,
 } from '../types/ladder';
 
 const API_BASE = '/api';
@@ -75,4 +76,12 @@ export const ladderApi = {
     }),
   deleteSeason: (seasonId: string): Promise<{ season_id: string; deleted: boolean }> =>
     api(`/ladder/seasons/${encodeURIComponent(seasonId)}`, { method: 'DELETE' }),
+
+  // ---- R14-B Runtime Process Supervision ----
+  spawnSeasonRuntime: (seasonId: string): Promise<SeasonRuntimeStatusResponse> =>
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/runtime/spawn`, { method: 'POST' }),
+  stopSeasonRuntime: (seasonId: string): Promise<SeasonRuntimeStatusResponse> =>
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/runtime/stop`, { method: 'POST' }),
+  getSeasonRuntimeStatus: (seasonId: string): Promise<SeasonRuntimeStatusResponse> =>
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/runtime/status`),
 };

@@ -72,6 +72,32 @@ export interface PreflightIssue {
   detail?: string | null;
 }
 
+export type ProcessState = 'pending' | 'starting' | 'healthy' | 'stopped' | 'failed';
+
+export interface SeasonRuntimeProcessRecord {
+  runtime_id: string;
+  season_id: string;
+  manifest_id: string;
+  account_id: string;
+  controller_type: ControllerType;
+  pid?: number | null;
+  state: ProcessState;
+  started_at?: string | null;
+  stopped_at?: string | null;
+  exit_code?: number | null;
+  failure_reason?: string | null;
+  command?: string[];
+  log_path?: string | null;
+}
+
+export interface SeasonRuntimeStatusResponse {
+  season_id: string;
+  manifest_id: string;
+  season_status: string;
+  processes: SeasonRuntimeProcessRecord[];
+  is_active: boolean;
+}
+
 export interface SeasonPreflightReport {
   season_id: string;
   season_status: string;

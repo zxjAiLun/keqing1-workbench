@@ -6,7 +6,7 @@ import { PageHeader, PageShell } from '../components/Layout/PageScaffold';
 import { ladderApi } from '../api/ladderApi';
 import { participantsApi } from '../api/participantsApi';
 import type { Account, ModelIdentity } from '../types/participants';
-import type { LadderSeason, LadderSeasonConfig, LadderSeasonsResponse, SeasonPreflightReport } from '../types/ladder';
+import type { LadderSeason, LadderSeasonConfig, LadderSeasonsResponse, SeasonPreflightReport, SeasonRuntimeStatusResponse } from '../types/ladder';
 
 const STATUS_LABELS: Record<string, string> = {
   draft: '草稿',
@@ -27,6 +27,7 @@ export function SeasonManagerPage() {
   const [catalog, setCatalog] = useState<LadderSeasonsResponse | null>(null);
   const [config, setConfig] = useState<LadderSeasonConfig | null>(null);
   const [preflight, setPreflight] = useState<SeasonPreflightReport | null>(null);
+  const [runtimeStatus, setRuntimeStatus] = useState<SeasonRuntimeStatusResponse | null>(null);
   const [selectedId, setSelectedId] = useState<string>('');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [identities, setIdentities] = useState<ModelIdentity[]>([]);
@@ -60,15 +61,45 @@ export function SeasonManagerPage() {
     setSelectedId(seasonId);
     setError(null);
     try {
-      const [cfg, pre] = await Promise.all([
+      const [cfg, pre, rt] = await Promise.all([
         ladderApi.getSeasonConfig(seasonId),
         ladderApi.getSeasonPreflight(seasonId).catch(() => null),
+        ladderApi.getSeasonRuntimeStatus(seasonId).catch(() => null),
       ]);
       setConfig(cfg);
       setPreflight(pre);
+      setRuntimeStatus(rt);
       setDraftSelection(new Set(cfg.models.flatMap((m) => m.accounts.map((a) => a.account_id))));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleSpawnRuntime = async () => {
+    if (!config) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const rt = await ladderApi.spawnSeasonRuntime(config.season_id);
+      setRuntimeStatus(rt);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleStopRuntime = async () => {
+    if (!config) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const rt = await ladderApi.stopSeasonRuntime(config.season_id);
+      setRuntimeStatus(rt);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -310,7 +341,7 @@ export function SeasonManagerPage() {
             {status === 'running' && config.runtime_manifest && (
               <div
                 style={{
-                  padding: '8px 12px',
+                  padding: '10px 12px',
                   borderRadius: 6,
                   marginBottom: 14,
                   border: '1px solid var(--border)',
@@ -318,11 +349,70 @@ export function SeasonManagerPage() {
                   fontSize: 12,
                 }}
               >
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
                   <span style={{ fontWeight: 700 }}>🔒 已冻结 Runtime Manifest:</span>
                   <span style={{ fontFamily: 'monospace', color: 'var(--accent)' }}>{config.runtime_manifest.manifest_id}</span>
                   <span style={{ color: 'var(--text-muted)' }}>Authority Hash: {config.runtime_manifest.season_authority_hash.slice(0, 12)}…</span>
                 </div>
+
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, marginBottom: 8 }}>
+                  <span style={{ fontWeight: 700 }}>进程监管 (Process Supervision):</span>
+                  <span style={{ color: runtimeStatus?.is_active ? 'var(--success)' : 'var(--text-muted)', fontWeight: 600 }}>
+                    {runtimeStatus?.is_active ? '● 运行中' : '○ 未运行 / 已停止'}
+                  </span>
+                  <span style={{ flex: 1 }} />
+                  <button
+                    style={{ ...ghostBtn, borderColor: 'var(--success)', color: 'var(--success)', padding: '2px 8px', fontSize: 12 }}
+                    disabled={busy || runtimeStatus?.is_active}
+                    onClick={() => void handleSpawnRuntime()}
+                  >
+                    启动本地模型进程
+                  </button>
+                  <button
+                    style={{ ...ghostBtn, borderColor: 'var(--negative)', color: 'var(--negative)', padding: '2px 8px', fontSize: 12 }}
+                    disabled={busy || !runtimeStatus?.is_active}
+                    onClick={() => void handleStopRuntime()}
+                  >
+                    停止进程
+                  </button>
+                </div>
+
+                {runtimeStatus && runtimeStatus.processes.length > 0 && (
+                  <div style={{ display: 'grid', gap: 4, marginTop: 6 }}>
+                    {runtimeStatus.processes.map((p) => (
+                      <div
+                        key={p.runtime_id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '4px 8px',
+                          borderRadius: 4,
+                          background: 'var(--surface)',
+                          border: '1px solid var(--border)',
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                        }}
+                      >
+                        <span style={{ fontWeight: 600 }}>{p.account_id}</span>
+                        <span style={{ color: 'var(--text-muted)' }}>PID: {p.pid ?? '—'}</span>
+                        <span
+                          style={{
+                            padding: '1px 5px',
+                            borderRadius: 3,
+                            color: p.state === 'healthy' ? 'var(--success)' : p.state === 'failed' ? 'var(--negative)' : 'var(--text-muted)',
+                            background: 'var(--surface-subtle)',
+                            fontWeight: 700,
+                          }}
+                        >
+                          {p.state}
+                        </span>
+                        {p.failure_reason && <span style={{ color: 'var(--negative)' }}>({p.failure_reason})</span>}
+                        {p.started_at && <span style={{ color: 'var(--text-muted)', marginLeft: 'auto' }}>启动于: {p.started_at}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

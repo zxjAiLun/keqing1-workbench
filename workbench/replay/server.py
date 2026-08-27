@@ -1666,6 +1666,39 @@ async def start_ladder_season(season_id: str):
     return JSONResponse(content=season)
 
 
+@app.post("/api/ladder/seasons/{season_id}/runtime/spawn", response_class=JSONResponse)
+async def spawn_ladder_season_runtime(season_id: str):
+    """R14-B: 消费已冻结 Runtime Manifest 为 running 赛季启动本地进程。"""
+    from runtime.supervisor import spawn_season_runtime
+    try:
+        resp = spawn_season_runtime(_LADDER_SEASONS_DIR, season_id, project_root=_LADDER_PROJECT_ROOT)
+    except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
+        return _manager_errors(exc)
+    return JSONResponse(content=resp.model_dump())
+
+
+@app.post("/api/ladder/seasons/{season_id}/runtime/stop", response_class=JSONResponse)
+async def stop_ladder_season_runtime(season_id: str):
+    """R14-B: 幂等停止指定赛季的所有运行中本地进程。"""
+    from runtime.supervisor import stop_season_runtime
+    try:
+        resp = stop_season_runtime(_LADDER_SEASONS_DIR, season_id)
+    except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
+        return _manager_errors(exc)
+    return JSONResponse(content=resp.model_dump())
+
+
+@app.get("/api/ladder/seasons/{season_id}/runtime/status", response_class=JSONResponse)
+async def get_ladder_season_runtime_status(season_id: str):
+    """R14-B: 查询赛季运行时本地进程列表与健康状态。"""
+    from runtime.supervisor import get_season_runtime_status
+    try:
+        resp = get_season_runtime_status(_LADDER_SEASONS_DIR, season_id)
+    except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
+        return _manager_errors(exc)
+    return JSONResponse(content=resp.model_dump())
+
+
 @app.post("/api/ladder/seasons/{season_id}/complete", response_class=JSONResponse)
 async def complete_ladder_season(season_id: str):
     """结束赛季：running → completed（当前 default 自动摘除 default）。"""

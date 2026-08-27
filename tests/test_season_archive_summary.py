@@ -733,3 +733,144 @@ def test_r14d_finalize_immutability_under_runtime_cleanup(r14d_env):
     after = sr.get_season(configs_dir, "s_r14d")
     assert json.dumps(after["archive_summary"], sort_keys=True) == frozen_summary
     validate_persisted_archive_summary(after, after["archive_summary"])
+
+
+# ---------------------------------------------------------------------------
+# R14-D Phase 3: read-only API (sealed vs preview)
+# ---------------------------------------------------------------------------
+
+def _r14d_api_setup(env):
+    """running frozen season setup（复用）+ server module 指向测试 configs。"""
+    _setup_running_season(env)
+    from replay import server
+
+    env["_server"] = server
+
+
+def test_r14d_api_archive_summary_preview_for_running(r14d_env):
+    """P3-1. running 赛季 → kind=preview 的实时 projection（无 completed_at/seal）。"""
+    _r14d_api_setup(r14d_env)
+    from replay import server
+
+    # monkeypatch server 的 configs dir 指向测试环境
+    original_dir = server._LADDER_SEASONS_DIR
+    server._LADDER_SEASONS_DIR = r14d_env["configs_dir"]
+    try:
+        import asyncio
+
+        resp = asyncio.run(server.get_ladder_season_archive_summary("s_r14d"))
+        assert resp.status_code == 200
+        body = json.loads(resp.body)
+        assert body["kind"] == "preview"
+        assert body["season_status"] == "running"
+        assert "archive_summary_projection" in body
+        assert "completed_at" not in body
+        assert "archive_summary_hash" not in body["archive_summary_projection"]
+        assert body["archive_summary_projection"]["season_id"] == "s_r14d"
+    finally:
+        server._LADDER_SEASONS_DIR = original_dir
+
+
+def test_r14d_api_archive_summary_sealed_after_finalize(r14d_env):
+    """P3-2. finalize 后 → kind=sealed 返回 persisted summary（不实时重算）。"""
+    _r14d_api_setup(r14d_env)
+    from replay import server
+
+    original_dir = server._LADDER_SEASONS_DIR
+    server._LADDER_SEASONS_DIR = r14d_env["configs_dir"]
+    try:
+        import asyncio
+
+        # finalize via API endpoint
+        resp = asyncio.run(server.finalize_ladder_season("s_r14d"))
+        assert resp.status_code == 200
+        sealed_season = json.loads(resp.body)
+        assert sealed_season["status"] == "completed"
+
+        # sealed summary endpoint
+        resp2 = asyncio.run(server.get_ladder_season_archive_summary("s_r14d"))
+        assert resp2.status_code == 200
+        body = json.loads(resp2.body)
+        assert body["kind"] == "sealed"
+        assert body["season_status"] == "completed"
+        assert body["archive_summary"] == sealed_season["archive_summary"]
+        assert body["completed_at"] == sealed_season["completed_at"]
+
+        # runtime evidence 清理后 sealed summary 仍可读（persisted，不重算）
+        from runtime.execution_session import execution_sessions_root
+
+        for p in execution_sessions_root().iterdir():
+            if p.is_dir():
+                for f in p.rglob("*"):
+                    if f.is_file():
+                        f.unlink()
+                p.rmdir()
+        resp3 = asyncio.run(server.get_ladder_season_archive_summary("s_r14d"))
+        assert resp3.status_code == 200
+        body3 = json.loads(resp3.body)
+        assert body3["archive_summary"] == sealed_season["archive_summary"]
+    finally:
+        server._LADDER_SEASONS_DIR = original_dir
+
+
+def test_r14d_api_archive_summary_legacy_unsealed(r14d_env):
+    """P3-3. legacy completed（无 summary）→ 409 提示未封存。"""
+    _r14d_api_setup(r14d_env)
+    from replay import server
+
+    original_dir = server._LADDER_SEASONS_DIR
+    server._LADDER_SEASONS_DIR = r14d_env["configs_dir"]
+    try:
+        import asyncio
+
+        sr.create_season(r14d_env["configs_dir"], season_id="s_legacy_api", title="L")
+        legacy = sr.get_season(r14d_env["configs_dir"], "s_legacy_api")
+        legacy["status"] = "completed"
+        (r14d_env["configs_dir"] / "s_legacy_api.json").write_text(
+            json.dumps(legacy, ensure_ascii=False), encoding="utf-8"
+        )
+        resp = asyncio.run(server.get_ladder_season_archive_summary("s_legacy_api"))
+        assert resp.status_code == 409
+        assert "未封存" in json.loads(resp.body)["error"]
+    finally:
+        server._LADDER_SEASONS_DIR = original_dir
+
+
+def test_r14d_api_archive_summary_draft_rejected(r14d_env):
+    """P3-4. draft 赛季 → 409。"""
+    _r14d_api_setup(r14d_env)
+    from replay import server
+
+    original_dir = server._LADDER_SEASONS_DIR
+    server._LADDER_SEASONS_DIR = r14d_env["configs_dir"]
+    try:
+        import asyncio
+
+        sr.create_season(r14d_env["configs_dir"], season_id="s_draft_api", title="D")
+        resp = asyncio.run(server.get_ladder_season_archive_summary("s_draft_api"))
+        assert resp.status_code == 409
+    finally:
+        server._LADDER_SEASONS_DIR = original_dir
+
+
+def test_r14d_api_finalize_error_mapping(r14d_env):
+    """P3-5. finalize 非 running / 不存在的赛季 → 409 / 404。"""
+    _r14d_api_setup(r14d_env)
+    from replay import server
+
+    original_dir = server._LADDER_SEASONS_DIR
+    server._LADDER_SEASONS_DIR = r14d_env["configs_dir"]
+    try:
+        import asyncio
+
+        # 不存在 → 404
+        resp = asyncio.run(server.finalize_ladder_season("s_nope"))
+        assert resp.status_code == 404
+
+        # 已 finalize → 再 finalize 409
+        resp = asyncio.run(server.finalize_ladder_season("s_r14d"))
+        assert resp.status_code == 200
+        resp = asyncio.run(server.finalize_ladder_season("s_r14d"))
+        assert resp.status_code == 409
+    finally:
+        server._LADDER_SEASONS_DIR = original_dir

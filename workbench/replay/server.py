@@ -1701,13 +1701,87 @@ async def get_ladder_season_runtime_status(season_id: str):
 
 @app.post("/api/ladder/seasons/{season_id}/complete", response_class=JSONResponse)
 async def complete_ladder_season(season_id: str):
-    """结束赛季：running → completed（当前 default 自动摘除 default）。"""
+    """结束赛季：running → completed（当前 default 自动摘除 default）。
+
+    R14-D: R14 frozen 赛季（有 runtime_manifest）的规范路径是
+    ``/finalize``（完成 + 封存终局摘要）；本端点保留为 legacy 裸迁移。
+    """
     sr = _season_manager()
     try:
         season = sr.set_season_status(_LADDER_SEASONS_DIR, season_id, "completed")
     except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
         return _manager_errors(exc)
     return JSONResponse(content=season)
+
+
+@app.post("/api/ladder/seasons/{season_id}/finalize", response_class=JSONResponse)
+async def finalize_ladder_season(season_id: str):
+    """R14-D: 结束赛季并封存不可变终局摘要（running → completed + sealed archive summary）。"""
+    sr = _season_manager()
+    try:
+        season = sr.finalize_season(_LADDER_SEASONS_DIR, season_id)
+    except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
+        return _manager_errors(exc)
+    return JSONResponse(content=season)
+
+
+@app.get("/api/ladder/seasons/{season_id}/archive-summary", response_class=JSONResponse)
+async def get_ladder_season_archive_summary(season_id: str):
+    """R14-D: 只读终局摘要。
+
+    - completed/archived：只返回 **persisted sealed summary**（历史权威版本，
+      不实时重算——runtime evidence 清理后仍可读）；
+    - running：返回明确标记为 ``preview`` 的实时 projection（不是权威历史
+      版本，不带 completed_at / seal）；draft → 409；
+    - legacy completed/archived 无 summary → 409 提示未封存。
+    """
+    from runtime.archive_summary import ArchiveSummaryError, build_archive_summary_projection
+
+    sr = _season_manager()
+    try:
+        season = sr.get_season(_LADDER_SEASONS_DIR, season_id)
+    except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
+        return _manager_errors(exc)
+    status = str(season.get("status") or "draft")
+    if status in ("completed", "archived"):
+        summary_raw = season.get("archive_summary")
+        if summary_raw is None:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": (
+                        f"赛季 {season_id} 是 legacy 未封存赛季（无 archive_summary）；"
+                        "历史数据未迁移，无终局摘要可读"
+                    )
+                },
+            )
+        return JSONResponse(
+            content={
+                "season_id": season_id,
+                "kind": "sealed",
+                "season_status": status,
+                "completed_at": season.get("completed_at"),
+                "archive_summary": summary_raw,
+            }
+        )
+    if status == "running":
+        try:
+            projection = build_archive_summary_projection(season)
+        except ArchiveSummaryError as exc:
+            return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(
+            content={
+                "season_id": season_id,
+                "kind": "preview",
+                "season_status": status,
+                "note": "实时预览（非权威历史版本）：未封存，不含 completed_at / seal",
+                "archive_summary_projection": projection,
+            }
+        )
+    return JSONResponse(
+        status_code=409,
+        content={"error": f"赛季 {season_id} 当前状态为 {status}，无终局摘要"},
+    )
 
 
 @app.post("/api/ladder/seasons/{season_id}/archive", response_class=JSONResponse)

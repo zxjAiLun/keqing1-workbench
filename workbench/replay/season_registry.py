@@ -299,6 +299,15 @@ def _set_season_status_locked(configs_dir: Path, season_id: str, status: str) ->
                 "sealed 历史赛季不可 reopen"
             )
 
+        # R14-D Repair 1 (P1-1): frozen 赛季（有 runtime_manifest）禁止
+        # running → completed 裸迁移——必须走 finalize_season 封存终局摘要，
+        # 否则会产生 unsealed completed frozen 赛季（可被 reopen、无历史权威）。
+        if current == "running" and status == "completed" and season.get("runtime_manifest") is not None:
+            raise SeasonRegistryError(
+                f"赛季 {season_id} 是 R14 frozen 赛季——完成必须走 finalize_season "
+                "（封存终局摘要），不允许 bare completed 迁移"
+            )
+
         # R14-D Phase 2: frozen 赛季（有 runtime_manifest）禁止 running→archived
         # bypass——必须先 finalize_season 拿到 archive_summary
         if current == "running" and status == "archived" and season.get("runtime_manifest") is not None:

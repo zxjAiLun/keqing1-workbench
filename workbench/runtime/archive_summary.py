@@ -161,50 +161,290 @@ def compute_archive_summary_id(season_id: str, seal_hash: str) -> str:
 # Layer 1: deterministic canonical projection (no completed_at / no seal)
 # ---------------------------------------------------------------------------
 
-def _load_execution_sessions(season_id: str) -> list[dict[str, Any]]:
-    """扫描该 season 的全部 execution session 文件；损坏 → fail-closed。"""
-    from workbench.runtime.execution_session import (
-        execution_sessions_root,
-        load_execution_session,
-    )
+def _load_execution_sessions_strict(
+    season_id: str,
+    manifest: Any,
+) -> list[dict[str, Any]]:
+    """严格扫描该 season 的全部 execution session 文件（损坏 → fail-closed）。
+
+    R14-D Repair 1 (P1-2): 目录下**任何**无法解析 / 无法通过 typed schema
+    的 session 文件都 fail-closed——绝不能静默跳过后把不完整运行历史封成
+    "合法历史"。属于该 Season 的 session 还必须与 Frozen Manifest 精确
+    cross-integrity：manifest_id、season_authority_hash、逐 participant 的
+    controller_type + FrozenExecutionProvenance（R14-C 同一语义，归档不降级）。
+    """
+    import json as _json
+
+    from workbench.runtime.execution_session import execution_sessions_root
 
     root = execution_sessions_root()
     if not root.is_dir():
         return []
+
+    from workbench.runtime.execution_session import RuntimeExecutionSession
+
+    manifest_by_account = {p.account_id: p for p in manifest.participants}
+
     sessions: list[dict[str, Any]] = []
     for session_dir in sorted(root.iterdir()):
         if not session_dir.is_dir():
             continue
-        session = load_execution_session(session_dir.name)
-        if session is None:
-            continue  # 无效 session 文件（非本 season / 损坏 schema）不属于本 season 的证据
-        if session.season_id != season_id:
+        session_file = session_dir / "session.json"
+        if not session_file.exists():
             continue
+        try:
+            raw = _json.loads(session_file.read_text(encoding="utf-8"))
+            session = RuntimeExecutionSession.model_validate(raw)
+        except (OSError, ValueError) as exc:
+            raise ArchiveSummaryError(
+                f"season {season_id}: execution session 文件损坏 "
+                f"({session_dir.name})，无法构建终局摘要: {exc}"
+            ) from exc
+
+        if session.season_id != season_id:
+            # 目录存在合法 session 文件但不属于本 season——合法共存，跳过
+            continue
+
+        # 属于本 season 的 session 必须与 Frozen Manifest 精确一致
+        if session.manifest_id != manifest.manifest_id:
+            raise ArchiveSummaryError(
+                f"season {season_id}: execution session {session.session_id} 的 "
+                f"manifest_id ({session.manifest_id}) 与 Frozen Manifest "
+                f"({manifest.manifest_id}) 不一致"
+            )
+        if session.season_authority_hash != manifest.season_authority_hash:
+            raise ArchiveSummaryError(
+                f"season {season_id}: execution session {session.session_id} 的 "
+                "season_authority_hash 与 Frozen Manifest 不一致"
+            )
+        _session_participants_cross_check(
+            season_id, session.session_id, session, manifest_by_account
+        )
         sessions.append(session.model_dump())
     return sessions
 
 
-def _load_process_records(season_id: str) -> list[dict[str, Any]]:
-    """读取该 season 的 final process ledger；损坏 → fail-closed。"""
-    from workbench.runtime.supervisor import runtime_records_file
+def _session_participants_cross_check(
+    season_id: str,
+    session_id: str,
+    session: Any,
+    manifest_by_account: dict[str, Any],
+) -> None:
+    """session participant 与 Frozen Manifest 逐 account 精确比对。"""
+    session_accounts = {p.account_id for p in session.participants}
+    if session_accounts != set(manifest_by_account):
+        raise ArchiveSummaryError(
+            f"season {season_id}: execution session {session_id} 的参与者集合 "
+            f"({sorted(session_accounts)}) 与 Frozen Manifest "
+            f"({sorted(manifest_by_account)}) 不一致"
+        )
+    for p in session.participants:
+        m_part = manifest_by_account[p.account_id]
+        if p.controller_type != m_part.controller_type:
+            raise ArchiveSummaryError(
+                f"season {season_id}: execution session {session_id} 的参与者 "
+                f"{p.account_id} controller ({p.controller_type}) 与 Manifest "
+                f"({m_part.controller_type}) 不一致"
+            )
+        if p.execution_provenance != m_part.execution_provenance:
+            raise ArchiveSummaryError(
+                f"season {season_id}: execution session {session_id} 的参与者 "
+                f"{p.account_id} execution_provenance 与 Frozen Manifest 不一致"
+            )
 
-    path = runtime_records_file(season_id)
-    if not path.exists():
-        return []
+
+def _load_process_records_strict(
+    season_id: str,
+    manifest: Any,
+) -> list[Any]:
+    """typed 读取该 season 的 final process ledger 并校验归属（fail-closed）。
+
+    R14-D Repair 1 (P1-2): 复用 supervisor 的 typed loader（不平行实现弱版）；
+    每条 record 必须属于当前 season 与 Frozen Manifest（season_id /
+    manifest_id 精确一致），account/controller 必须是 Manifest 的合法
+    runtime participant。
+    """
+    from workbench.runtime.supervisor import (
+        RuntimeSupervisorStateError,
+        load_process_records_locked,
+    )
+
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        records = load_process_records_locked(season_id)
+    except RuntimeSupervisorStateError as exc:
         raise ArchiveSummaryError(
             f"season {season_id}: runtime process ledger 损坏，无法构建终局摘要: {exc}"
         ) from exc
-    if not isinstance(raw, list):
-        raise ArchiveSummaryError(
-            f"season {season_id}: runtime process ledger 结构损坏（应为列表）"
-        )
-    return raw
+    manifest_by_account = {p.account_id: p for p in manifest.participants}
+    for rec in records:
+        if str(rec.season_id or "") != season_id:
+            raise ArchiveSummaryError(
+                f"season {season_id}: process record {rec.runtime_id} 的 "
+                f"season_id ({rec.season_id}) 不属于本 season"
+            )
+        if str(rec.manifest_id or "") != manifest.manifest_id:
+            raise ArchiveSummaryError(
+                f"season {season_id}: process record {rec.runtime_id} 的 "
+                f"manifest_id ({rec.manifest_id}) 与 Frozen Manifest "
+                f"({manifest.manifest_id}) 不一致"
+            )
+        m_part = manifest_by_account.get(str(rec.account_id or ""))
+        if m_part is None:
+            raise ArchiveSummaryError(
+                f"season {season_id}: process record {rec.runtime_id} 的账号 "
+                f"{rec.account_id} 不在 Frozen Manifest 参与者中"
+            )
+        if str(rec.controller_type or "") != str(m_part.controller_type):
+            raise ArchiveSummaryError(
+                f"season {season_id}: process record {rec.runtime_id} 的 "
+                f"controller ({rec.controller_type}) 与 Manifest participant "
+                f"({m_part.controller_type}) 不一致"
+            )
+    return records
 
 
-def _account_stats_from_matches(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _validate_season_match_rows(
+    season_id: str,
+    match_rows: list[dict[str, Any]],
+) -> list[Any]:
+    """typed 校验本 Season 的全部 Match 行（fail-closed）。
+
+    R14-D Repair 1 (P1-2): raw ledger 行必须通过 ``Match.model_validate``；
+    再检查四座、seat 编号 0..3 唯一、账号唯一、rank 0..3 完整。
+    """
+    from workbench.participants.schemas import Match
+
+    typed_matches: list[Any] = []
+    for row in match_rows:
+        if not isinstance(row, dict):
+            raise ArchiveSummaryError("Match Ledger 存在非对象行，无法构建终局摘要")
+        if str(row.get("season_id") or "") != season_id:
+            continue
+        try:
+            match = Match.model_validate(row)
+        except Exception as exc:
+            raise ArchiveSummaryError(
+                f"season {season_id}: match {row.get('match_id')} 未通过 typed "
+                f"schema 校验，无法构建终局摘要: {exc}"
+            ) from exc
+
+        if len(match.seats) != 4:
+            raise ArchiveSummaryError(
+                f"match {match.match_id}: seats 不是 4 座，无法构建终局摘要"
+            )
+        seat_nums = [s.seat for s in match.seats]
+        if sorted(seat_nums) != [0, 1, 2, 3]:
+            raise ArchiveSummaryError(
+                f"match {match.match_id}: seat 编号必须覆盖 0..3 且唯一"
+            )
+        account_ids = [s.account_id for s in match.seats]
+        if len(set(account_ids)) != 4:
+            raise ArchiveSummaryError(
+                f"match {match.match_id}: 同一对局不能重复出现同一账号"
+            )
+        if len(match.ranks) != 4 or not all(isinstance(r, int) for r in match.ranks):
+            raise ArchiveSummaryError(
+                f"match {match.match_id}: ranks 必须是 4 个整数（0-based）"
+            )
+        if sorted(match.ranks) != [0, 1, 2, 3]:
+            raise ArchiveSummaryError(
+                f"match {match.match_id}: ranks 必须是 0..3 的完整排列"
+            )
+        typed_matches.append(match)
+    return typed_matches
+
+
+def _validate_runtime_bindings(
+    season_id: str,
+    typed_matches: list[Any],
+    manifest: Any,
+) -> None:
+    """runtime_binding 的 season/manifest/authority 必须与 Frozen Manifest 精确一致。"""
+    for match in typed_matches:
+        binding = match.runtime_binding
+        if binding is None:
+            continue
+        if binding.season_id != season_id:
+            raise ArchiveSummaryError(
+                f"match {match.match_id}: runtime_binding.season_id "
+                f"({binding.season_id}) 与本 season ({season_id}) 不一致"
+            )
+        if binding.manifest_id != manifest.manifest_id:
+            raise ArchiveSummaryError(
+                f"match {match.match_id}: runtime_binding.manifest_id "
+                f"({binding.manifest_id}) 与 Frozen Manifest "
+                f"({manifest.manifest_id}) 不一致"
+            )
+        if binding.season_authority_hash != manifest.season_authority_hash:
+            raise ArchiveSummaryError(
+                f"match {match.match_id}: runtime_binding.season_authority_hash "
+                "与 Frozen Manifest 不一致"
+            )
+
+
+def _validate_revision_chains(
+    season_id: str,
+    typed_matches: list[Any],
+    revision_rows: list[dict[str, Any]],
+) -> int:
+    """校验本 Season 每个 match 的 revision chain 并返回总行数（fail-closed）。
+
+    R14-D Repair 1 (P1-2): 不能只按 match_id 数行——每局 revisions 必须：
+    - 唯一（无重复行）；
+    - 连续 ``1..match.revision``；
+    - 最后一行 revision == match.revision 且 revision_id ==
+      match.latest_revision_id；
+    - 每行 match_id 都属于本 Season 最终 Match 集合（伪造行 fail-closed）。
+    """
+    from workbench.participants.schemas import Match as MatchModel
+
+    match_ids = {m.match_id for m in typed_matches}
+    by_match: dict[str, list[dict[str, Any]]] = {}
+    for row in revision_rows:
+        if not isinstance(row, dict):
+            raise ArchiveSummaryError("Revision Ledger 存在非对象行，无法构建终局摘要")
+        row_match_id = str(row.get("match_id") or "")
+        if row_match_id not in match_ids:
+            # 属于其他 season / 其他 match 的 revision 行——只有当该 match_id
+            # 在整个 ledger 中都不存在时才是伪造；否则它只是别的 season 的
+            # 合法 revision。这里无法区分，按 match 集合过滤即可。
+            continue
+        try:
+            revision_no = int(row.get("revision"))
+        except (TypeError, ValueError) as exc:
+            raise ArchiveSummaryError(
+                f"season {season_id}: match {row_match_id} 存在非法 revision 行"
+                f"（revision 不是整数）: {row.get('revision')!r}"
+            ) from exc
+        by_match.setdefault(row_match_id, []).append({**row, "_revision_no": revision_no})
+
+    total = 0
+    for match in typed_matches:
+        rows = by_match.get(match.match_id, [])
+        revision_numbers = [r["_revision_no"] for r in rows]
+        if len(revision_numbers) != len(set(revision_numbers)):
+            raise ArchiveSummaryError(
+                f"season {season_id}: match {match.match_id} 存在重复 revision 行"
+            )
+        expected = list(range(1, match.revision + 1))
+        if sorted(revision_numbers) != expected:
+            raise ArchiveSummaryError(
+                f"season {season_id}: match {match.match_id} 的 revision 链不完整"
+                f"（期望 1..{match.revision}，实际 {sorted(revision_numbers)}）"
+            )
+        last_row = max(rows, key=lambda r: r["_revision_no"])
+        if str(last_row.get("revision_id") or "") != match.latest_revision_id:
+            raise ArchiveSummaryError(
+                f"season {season_id}: match {match.match_id} 最后一行 revision_id "
+                f"({last_row.get('revision_id')}) 与 match.latest_revision_id "
+                f"({match.latest_revision_id}) 不一致"
+            )
+        total += len(rows)
+    del MatchModel
+    return total
+
+
+def _account_stats_from_matches(typed_matches: list[Any]) -> list[dict[str, Any]]:
     """按 account 聚合（仅整数）；只统计 active + rating_eligible 的 rank。"""
     stats: dict[str, dict[str, int]] = {}
 
@@ -222,28 +462,13 @@ def _account_stats_from_matches(matches: list[dict[str, Any]]) -> list[dict[str,
             },
         )
 
-    for match in matches:
-        if str(match.get("status") or "active") != "active":
+    for match in typed_matches:
+        if match.status != "active":
             continue
-        if not match.get("rating_eligible"):
+        if not match.rating_eligible:
             continue
-        ranks = match.get("ranks") or []
-        seats = match.get("seats") or []
-        if len(ranks) != 4 or len(seats) != 4:
-            raise ArchiveSummaryError(
-                f"match {match.get('match_id')}: ranks/seats 不是 4 座，无法聚合"
-            )
-        for seat, rank in zip(seats, ranks):
-            account_id = str(seat.get("account_id") or "")
-            if not account_id:
-                raise ArchiveSummaryError(
-                    f"match {match.get('match_id')}: 存在无 account 的座位，无法聚合"
-                )
-            if not isinstance(rank, int):
-                raise ArchiveSummaryError(
-                    f"match {match.get('match_id')}: rank 不是整数: {rank!r}"
-                )
-            bucket = _bucket(account_id)
+        for seat, rank in zip(match.seats, match.ranks):
+            bucket = _bucket(seat.account_id)
             bucket["games"] += 1
             bucket["rank_sum"] += rank
             # ranks 是 0-based（0 = 一位）
@@ -258,13 +483,6 @@ def _account_stats_from_matches(matches: list[dict[str, Any]]) -> list[dict[str,
     return [stats[k] for k in sorted(stats)]
 
 
-def _revision_total_for_matches(
-    match_ids: set[str], revision_rows: list[dict[str, Any]]
-) -> int:
-    """当前 Season 最终 Match 集合中，各 match_id 对应的 Revision 行数总和。"""
-    return sum(1 for row in revision_rows if str(row.get("match_id") or "") in match_ids)
-
-
 def build_archive_summary_projection(
     season: dict[str, Any],
     *,
@@ -276,6 +494,15 @@ def build_archive_summary_projection(
     只读取 Frozen Manifest / Execution Sessions / Process Ledger / Match Ledger；
     不查询 Participants Catalog Current。同一 locked source state 重复 build
     得到完全相同的 projection。
+
+    R14-D Repair 1 (P1-2): canonical evidence fail-closed——seal 前证明这些
+    evidence 相互属于同一个 Frozen Authority：
+    - Manifest 先经 ``validate_persisted_manifest_against_season`` typed 校验；
+    - Execution Sessions strict read + 与 Manifest 的 exact cross-integrity；
+    - Process Records typed read + season/manifest/account/controller 归属校验；
+    - Match rows 全部 typed validate + 结构完整性 + runtime_binding 与
+      Manifest 精确一致；
+    - Revision chains 唯一、连续、末端一致。
     """
     season_id = str(season.get("season_id") or "")
     manifest_raw = season.get("runtime_manifest")
@@ -283,14 +510,20 @@ def build_archive_summary_projection(
         raise ArchiveSummaryError(
             f"season {season_id}: 缺少 persisted runtime_manifest，无法构建终局摘要"
         )
-    manifest_id = str(manifest_raw.get("manifest_id") or "")
-    authority_hash = str(manifest_raw.get("season_authority_hash") or "")
-    if not manifest_id or not authority_hash:
-        raise ArchiveSummaryError(
-            f"season {season_id}: runtime_manifest 缺少 manifest_id / season_authority_hash"
-        )
+    from workbench.runtime.manifest import (
+        SeasonRuntimeManifest,
+        validate_persisted_manifest_against_season,
+    )
 
-    # --- Match Ledger（canonical 当前态行；损坏行 fail-closed）---
+    try:
+        manifest = SeasonRuntimeManifest.model_validate(manifest_raw)
+        validate_persisted_manifest_against_season(season, manifest_raw)
+    except Exception as exc:
+        raise ArchiveSummaryError(
+            f"season {season_id}: runtime_manifest 校验失败，无法构建终局摘要: {exc}"
+        ) from exc
+
+    # --- Match Ledger（typed validate + 结构完整性 + binding 一致性）---
     if match_rows is None:
         from workbench.participants import ledger as participants_ledger
 
@@ -300,28 +533,17 @@ def build_archive_summary_projection(
 
         revision_rows = participants_ledger._read_revision_rows()
 
-    season_matches: list[dict[str, Any]] = []
-    for row in match_rows:
-        if not isinstance(row, dict):
-            raise ArchiveSummaryError("Match Ledger 存在非对象行，无法构建终局摘要")
-        if str(row.get("season_id") or "") == season_id:
-            season_matches.append(row)
+    typed_matches = _validate_season_match_rows(season_id, match_rows)
+    _validate_runtime_bindings(season_id, typed_matches, manifest)
+    total_revisions = _validate_revision_chains(season_id, typed_matches, revision_rows)
 
-    total_matches = len(season_matches)
-    active_matches = sum(
-        1 for m in season_matches if str(m.get("status") or "active") == "active"
-    )
+    total_matches = len(typed_matches)
+    active_matches = sum(1 for m in typed_matches if m.status == "active")
     void_matches = total_matches - active_matches
-    rating_eligible_matches = sum(1 for m in season_matches if m.get("rating_eligible"))
-    runtime_bound_matches = sum(
-        1 for m in season_matches if m.get("runtime_binding") is not None
-    )
-    match_ids = {str(m.get("match_id") or "") for m in season_matches}
-    total_revisions = _revision_total_for_matches(match_ids, revision_rows)
+    rating_eligible_matches = sum(1 for m in typed_matches if m.rating_eligible)
+    runtime_bound_matches = sum(1 for m in typed_matches if m.runtime_binding is not None)
 
-    occurred = sorted(
-        str(m.get("occurred_at") or "") for m in season_matches if m.get("occurred_at")
-    )
+    occurred = sorted(m.occurred_at for m in typed_matches if m.occurred_at)
 
     match_summary = {
         "total_matches": total_matches,
@@ -332,11 +554,11 @@ def build_archive_summary_projection(
         "total_revisions": total_revisions,
         "first_match_occurred_at": occurred[0] if occurred else None,
         "last_match_occurred_at": occurred[-1] if occurred else None,
-        "account_stats": _account_stats_from_matches(season_matches),
+        "account_stats": _account_stats_from_matches(typed_matches),
     }
 
-    # --- Execution Sessions（spawn epochs）---
-    session_rows = _load_execution_sessions(season_id)
+    # --- Execution Sessions（strict read + cross-integrity）---
+    session_rows = _load_execution_sessions_strict(season_id, manifest)
     sessions = [
         {
             "session_id": str(s.get("session_id") or ""),
@@ -354,19 +576,19 @@ def build_archive_summary_projection(
     ]
     sessions.sort(key=lambda s: (s["created_at"], s["session_id"]))
 
-    # --- Final Process Ledger（最终进程状态的唯一权威）---
-    process_rows = _load_process_records(season_id)
+    # --- Final Process Ledger（typed read + 归属校验）---
+    process_records = _load_process_records_strict(season_id, manifest)
     processes = [
         {
-            "runtime_id": str(r.get("runtime_id") or ""),
-            "account_id": str(r.get("account_id") or ""),
-            "controller_type": str(r.get("controller_type") or ""),
-            "state": str(r.get("state") or ""),
-            "started_at": r.get("started_at"),
-            "stopped_at": r.get("stopped_at"),
-            "exit_code": r.get("exit_code"),
+            "runtime_id": r.runtime_id,
+            "account_id": r.account_id,
+            "controller_type": str(r.controller_type),
+            "state": str(r.state),
+            "started_at": r.started_at,
+            "stopped_at": r.stopped_at,
+            "exit_code": r.exit_code,
         }
-        for r in process_rows
+        for r in process_records
     ]
     processes.sort(key=lambda p: (p["account_id"], p["runtime_id"]))
 
@@ -379,8 +601,8 @@ def build_archive_summary_projection(
     return {
         "schema_version": ARCHIVE_SUMMARY_SCHEMA,
         "season_id": season_id,
-        "manifest_id": manifest_id,
-        "season_authority_hash": authority_hash,
+        "manifest_id": manifest.manifest_id,
+        "season_authority_hash": manifest.season_authority_hash,
         "match_summary": match_summary,
         "operation_summary": operation_summary,
     }

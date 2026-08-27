@@ -829,7 +829,7 @@ def test_r14c_runtime_bound_match_rejects_controller_change(r14c_env, monkeypatc
 def test_r14c_completed_season_blocks_intake(r14c_env):
     """8. completed 赛季禁止摄入新 rating-eligible match."""
     setup = _setup_frozen_season(r14c_env)
-    sr.set_season_status(r14c_env["configs_dir"], setup["season_id"], "completed")
+    sr.finalize_season(r14c_env["configs_dir"], setup["season_id"])
 
     seats = _make_seats(setup["art_a"])
     payload = MatchCreate(
@@ -892,7 +892,7 @@ def test_r14c_intake_vs_complete_barrier_no_completed_plus_new_match(r14c_env, m
     def _do_complete():
         barrier.wait()
         try:
-            cfg = sr.set_season_status(r14c_env["configs_dir"], setup["season_id"], "completed")
+            cfg = sr.finalize_season(r14c_env["configs_dir"], setup["season_id"])
             results.append(("complete", cfg["status"]))
         except Exception as e:
             results.append(("complete_err", str(e)))
@@ -998,7 +998,7 @@ def test_r14c_intake_commit_barrier_complete_blocked(r14c_env, monkeypatch):
 
     def _do_complete():
         try:
-            cfg = sr.set_season_status(r14c_env["configs_dir"], setup["season_id"], "completed")
+            cfg = sr.finalize_season(r14c_env["configs_dir"], setup["season_id"])
             complete_result.append(("complete", cfg["status"]))
         except Exception as e:  # noqa: BLE001
             complete_result.append(("complete_err", str(e)))
@@ -1073,8 +1073,8 @@ def test_r14c_complete_recovers_crash_pending_before_lifecycle(r14c_env, monkeyp
     monkeypatch.setattr(ledger, "_rewrite_match", _real_rewrite_match)
     assert ledger.pending_transaction_path().exists(), "crash 应留下 pending"
 
-    # 直接调用 complete：锁内必须先 recovery pending（Match 落账），再写 completed
-    cfg = sr.set_season_status(r14c_env["configs_dir"], setup["season_id"], "completed")
+    # 直接调用 finalize：锁内必须先 recovery pending（Match 落账），再写 completed
+    cfg = sr.finalize_season(r14c_env["configs_dir"], setup["season_id"])
     assert cfg["status"] == "completed"
     assert not ledger.pending_transaction_path().exists(), "complete 后 pending 必须已被 recovery"
 

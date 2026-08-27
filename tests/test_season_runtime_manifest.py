@@ -352,7 +352,7 @@ def test_r14_start_atomic_transition_and_duplicate_rejection(r14_env):
         sr.set_season_enrollment(configs_dir, "s_start_flow", ["account:h1", "account:h2", "account:h3", "account:bot_st", "account:h4"])
 
     # 15. Completed / Archived 启动拦截 -> 409
-    sr.set_season_status(configs_dir, "s_start_flow", "completed")
+    sr.finalize_season(configs_dir, "s_start_flow")
     with pytest.raises(SeasonRegistryError, match="season_not_startable|无法启动"):
         start_season_runtime(configs_dir, "s_start_flow", project_root=tmp_path)
 

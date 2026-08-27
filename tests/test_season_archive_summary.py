@@ -391,7 +391,8 @@ def test_r14d_corrupted_match_row_fails_closed(r14d_env):
     with open(matches_path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(bad_row, ensure_ascii=False) + "\n")
 
-    with pytest.raises(ArchiveSummaryError, match="不是 4 座"):
+    # typed schema 校验先于结构检查 fail-closed
+    with pytest.raises(ArchiveSummaryError, match="未通过 typed schema 校验"):
         build_archive_summary_projection(season)
 
 
@@ -874,3 +875,368 @@ def test_r14d_api_finalize_error_mapping(r14d_env):
         assert resp.status_code == 409
     finally:
         server._LADDER_SEASONS_DIR = original_dir
+
+
+# ---------------------------------------------------------------------------
+# R14-D Repair 1 (P1-1): Canonical Completion Gate
+# ---------------------------------------------------------------------------
+
+def test_r14d_r1_frozen_direct_bare_complete_blocked(r14d_env):
+    """R1-1. frozen running → 直接 set_season_status(completed) → 拒绝（不能产生 unsealed completed）。"""
+    _setup_running_season(r14d_env)
+    configs_dir = r14d_env["configs_dir"]
+
+    with pytest.raises(sr.SeasonRegistryError, match="必须走 finalize_season"):
+        sr.set_season_status(configs_dir, "s_r14d", "completed")
+
+    # 赛季仍是 running
+    assert sr.get_season(configs_dir, "s_r14d")["status"] == "running"
+
+
+def test_r14d_r1_api_complete_frozen_routes_to_finalize(r14d_env):
+    """R1-2. /complete frozen → 内部走 finalize_season → 得到 sealed archive_summary。"""
+    _setup_running_season(r14d_env)
+    from replay import server
+
+    original_dir = server._LADDER_SEASONS_DIR
+    server._LADDER_SEASONS_DIR = r14d_env["configs_dir"]
+    try:
+        import asyncio
+
+        resp = asyncio.run(server.complete_ladder_season("s_r14d"))
+        assert resp.status_code == 200
+        season = json.loads(resp.body)
+        assert season["status"] == "completed"
+        assert "archive_summary" in season
+        assert season["archive_summary"]["archive_summary_hash"]
+        # sealed：不可 reopen
+        with pytest.raises(sr.SeasonRegistryError, match="不可 reopen"):
+            sr.set_season_status(r14d_env["configs_dir"], "s_r14d", "running")
+    finally:
+        server._LADDER_SEASONS_DIR = original_dir
+
+
+def test_r14d_r1_api_complete_finalize_failure_never_falls_back(r14d_env):
+    """R1-3. finalize 失败（evidence 损坏）→ /complete 绝不能 fallback 到 bare completed。"""
+    _setup_running_season(r14d_env)
+    from replay import server
+
+    # 损坏 execution session evidence → finalize 必然失败
+    from runtime.execution_session import execution_sessions_root
+
+    for session_dir in execution_sessions_root().iterdir():
+        if session_dir.is_dir():
+            (session_dir / "session.json").write_text("{corrupted", encoding="utf-8")
+
+    original_dir = server._LADDER_SEASONS_DIR
+    server._LADDER_SEASONS_DIR = r14d_env["configs_dir"]
+    try:
+        import asyncio
+
+        resp = asyncio.run(server.complete_ladder_season("s_r14d"))
+        # 必须是错误（409/500），绝不能是 200 bare completed
+        assert resp.status_code in (409, 500)
+        # 赛季必须仍是 running——没有产生 unsealed completed
+        assert sr.get_season(r14d_env["configs_dir"], "s_r14d")["status"] == "running"
+        assert sr.get_season(r14d_env["configs_dir"], "s_r14d").get("archive_summary") is None
+    finally:
+        server._LADDER_SEASONS_DIR = original_dir
+
+
+# ---------------------------------------------------------------------------
+# R14-D Repair 1 (P1-2): Evidence Integrity Seal adversarial tests
+# ---------------------------------------------------------------------------
+
+def _append_match_row(env, row: dict) -> None:
+    matches_path = env["data_dir"] / "matches.jsonl"
+    with open(matches_path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _rewrite_match_rows(env, rows: list[dict]) -> None:
+    matches_path = env["data_dir"] / "matches.jsonl"
+    with open(matches_path, "w", encoding="utf-8") as fh:
+        fh.writelines(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+
+
+def _append_revision_row(env, row: dict) -> None:
+    revisions_path = env["data_dir"] / "match_revisions.jsonl"
+    with open(revisions_path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _read_all_rows(path) -> list[dict]:
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            rows.append(json.loads(line))
+    return rows
+
+
+def test_r14d_r1_typed_invalid_void_match_blocked(r14d_env):
+    """E1. typed-invalid void Match row（缺 canonical 字段）→ finalize blocked。"""
+    setup = _setup_running_season(r14d_env)
+    season = setup["season"]
+
+    # 构造 typed-invalid 的 void row（缺 game_length/revisions 等必需字段）
+    bad_void = {
+        "schema": "keqing.participant.match.v1",
+        "match_id": "m_bad_void",
+        "occurred_at": "2026-08-27T15:00:00+08:00",
+        "season_id": "s_r14d",
+        "rating_eligible": False,
+        "status": "void",
+        "void_reason": "test",
+    }
+    _append_match_row(r14d_env, bad_void)
+
+    with pytest.raises(ArchiveSummaryError, match="未通过 typed schema 校验"):
+        build_archive_summary_projection(season)
+
+
+def test_r14d_r1_runtime_binding_wrong_manifest_blocked(r14d_env):
+    """E2. typed-valid Match + runtime_binding 指向错误 manifest/hash → blocked。"""
+    setup = _setup_running_season(r14d_env)
+    season = setup["season"]
+
+    # 取现有 match，篡改其 runtime_binding 的 manifest_id
+    matches_path = r14d_env["data_dir"] / "matches.jsonl"
+    rows = _read_all_rows(matches_path)
+    for row in rows:
+        if row.get("season_id") == "s_r14d":
+            row["runtime_binding"] = {
+                "schema_version": "keqing.runtime.match_binding.v1",
+                "season_id": "s_r14d",
+                "manifest_id": "manifest:fake:deadbeef",
+                "season_authority_hash": "0" * 64,
+                "admitted_at": "2026-08-27T12:00:00+08:00",
+            }
+    _rewrite_match_rows(r14d_env, rows)
+
+    with pytest.raises(ArchiveSummaryError, match="runtime_binding.manifest_id.*不一致"):
+        build_archive_summary_projection(season)
+
+
+def test_r14d_r1_missing_revision_row_blocked(r14d_env):
+    """E3a. 缺失 revision 行（chain 不连续）→ blocked。"""
+    setup = _setup_running_season(r14d_env)
+    season = setup["season"]
+
+    # match1 有 create(rev1)+revise(rev2) 两行；删掉 rev1
+    revisions_path = r14d_env["data_dir"] / "match_revisions.jsonl"
+    rows = _read_all_rows(revisions_path)
+    target = next(r for r in rows if r.get("revision") == 1)
+    rows.remove(target)
+    with open(revisions_path, "w", encoding="utf-8") as fh:
+        fh.writelines(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+
+    with pytest.raises(ArchiveSummaryError, match="revision 链不完整"):
+        build_archive_summary_projection(season)
+
+
+def test_r14d_r1_duplicate_revision_row_blocked(r14d_env):
+    """E3b. 重复 revision 行 → blocked。"""
+    setup = _setup_running_season(r14d_env)
+    season = setup["season"]
+
+    revisions_path = r14d_env["data_dir"] / "match_revisions.jsonl"
+    rows = _read_all_rows(revisions_path)
+    dup = next(r for r in rows if r.get("revision") == 1)
+    rows.append(dict(dup))
+    with open(revisions_path, "w", encoding="utf-8") as fh:
+        fh.writelines(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+
+    with pytest.raises(ArchiveSummaryError, match="重复 revision 行"):
+        build_archive_summary_projection(season)
+
+
+def test_r14d_r1_forged_revision_row_blocked(r14d_env):
+    """E3c. 伪造 revision 行（revision_no 超出 match.revision 且 id 不匹配）→ blocked。"""
+    setup = _setup_running_season(r14d_env)
+    season = setup["season"]
+
+    match1 = setup["match1"]
+    forged = {
+        "schema": "keqing.participant.match_revision.v1",
+        "revision_id": f"{match1.match_id}_rev_99",
+        "match_id": match1.match_id,
+        "revision": 99,
+        "action": "revise",
+        "created_at": "2026-08-27T16:00:00+08:00",
+        "by": "attacker",
+        "validation": {"passed": True, "issues": []},
+        "before": None,
+        "after": {},
+    }
+    _append_revision_row(r14d_env, forged)
+
+    with pytest.raises(ArchiveSummaryError, match="revision 链不完整|revision_id.*不一致"):
+        build_archive_summary_projection(season)
+
+
+def test_r14d_r1_corrupted_execution_session_blocked(r14d_env):
+    """E4. 损坏的 execution session 文件（该 season 的第二个 epoch）→ blocked，不能静默少一个 epoch。"""
+    setup = _setup_running_season(r14d_env)
+    season = setup["season"]
+
+    # 增加第二个（损坏的）session 文件
+    from runtime.execution_session import execution_sessions_root
+
+    corrupt_dir = execution_sessions_root() / "rtx_s_r14d_corrupt"
+    corrupt_dir.mkdir(parents=True, exist_ok=True)
+    (corrupt_dir / "session.json").write_text("{corrupted", encoding="utf-8")
+
+    with pytest.raises(ArchiveSummaryError, match="execution session 文件损坏"):
+        build_archive_summary_projection(season)
+
+
+def test_r14d_r1_session_wrong_manifest_blocked(r14d_env):
+    """E5. typed-valid execution session 但 manifest_id 错误 → blocked。"""
+    setup = _setup_running_season(r14d_env)
+    season = setup["season"]
+    manifest = setup["manifest"]
+
+    from runtime.execution_session import (
+        ExecutionSessionParticipant,
+        RuntimeExecutionSession,
+        persist_execution_session_locked,
+    )
+
+    wrong = RuntimeExecutionSession(
+        session_id="rtx_s_r14d_wrong_manifest",
+        season_id="s_r14d",
+        manifest_id="manifest:fake:00000000",
+        season_authority_hash=manifest.season_authority_hash,
+        participants=[
+            ExecutionSessionParticipant(
+                account_id=p.account_id,
+                controller_type=p.controller_type,
+                execution_provenance=p.execution_provenance,
+            )
+            for p in manifest.participants
+        ],
+        created_at="2026-08-27T12:30:00+08:00",
+    )
+    persist_execution_session_locked(wrong)
+
+    with pytest.raises(ArchiveSummaryError, match="manifest_id.*不一致"):
+        build_archive_summary_projection(season)
+
+
+def test_r14d_r1_session_participant_drift_blocked(r14d_env):
+    """E6. typed-valid session 但 participant controller/provenance 漂移 → blocked。"""
+    setup = _setup_running_season(r14d_env)
+    season = setup["season"]
+    manifest = setup["manifest"]
+
+    from runtime.execution_session import (
+        ExecutionSessionParticipant,
+        RuntimeExecutionSession,
+        persist_execution_session_locked,
+    )
+
+    drift_parts = []
+    for p in manifest.participants:
+        if p.account_id == "account:bot_a":
+            # controller 漂移：local_model → human_ui
+            drift_parts.append(
+                ExecutionSessionParticipant(
+                    account_id=p.account_id,
+                    controller_type="human_ui",
+                    execution_provenance=p.execution_provenance,
+                )
+            )
+        else:
+            drift_parts.append(
+                ExecutionSessionParticipant(
+                    account_id=p.account_id,
+                    controller_type=p.controller_type,
+                    execution_provenance=p.execution_provenance,
+                )
+            )
+    drift = RuntimeExecutionSession(
+        session_id="rtx_s_r14d_drift",
+        season_id="s_r14d",
+        manifest_id=manifest.manifest_id,
+        season_authority_hash=manifest.season_authority_hash,
+        participants=drift_parts,
+        created_at="2026-08-27T12:45:00+08:00",
+    )
+    persist_execution_session_locked(drift)
+
+    with pytest.raises(ArchiveSummaryError, match="controller.*不一致"):
+        build_archive_summary_projection(season)
+
+
+def test_r14d_r1_process_record_wrong_season_blocked(r14d_env):
+    """E7a. typed-valid stopped process record 但 season_id 错误 → blocked。"""
+    setup = _setup_running_season(r14d_env)
+    season = setup["season"]
+    manifest = setup["manifest"]
+
+    from runtime.supervisor import (
+        SeasonRuntimeProcessRecord,
+        save_process_records_locked,
+    )
+
+    bot_part = next(p for p in manifest.participants if p.controller_type == "local_model")
+    bad_rec = SeasonRuntimeProcessRecord(
+        runtime_id="proc_wrong_season_bot",
+        season_id="s_other_season",
+        manifest_id=manifest.manifest_id,
+        account_id=bot_part.account_id,
+        controller_type=bot_part.controller_type,
+        state="stopped",
+        started_at="2026-08-27T11:00:00+08:00",
+        stopped_at="2026-08-27T17:00:00+08:00",
+        exit_code=0,
+    )
+    save_process_records_locked("s_r14d", [bad_rec])
+
+    with pytest.raises(ArchiveSummaryError, match="season_id.*不属于本 season"):
+        build_archive_summary_projection(season)
+
+
+def test_r14d_r1_process_record_wrong_manifest_blocked(r14d_env):
+    """E7b. typed-valid stopped process record 但 manifest_id 错误 → blocked。"""
+    setup = _setup_running_season(r14d_env)
+    season = setup["season"]
+    manifest = setup["manifest"]
+
+    from runtime.supervisor import (
+        SeasonRuntimeProcessRecord,
+        save_process_records_locked,
+    )
+
+    bot_part = next(p for p in manifest.participants if p.controller_type == "local_model")
+    bad_rec = SeasonRuntimeProcessRecord(
+        runtime_id="proc_wrong_manifest_bot",
+        season_id="s_r14d",
+        manifest_id="manifest:fake:99999999",
+        account_id=bot_part.account_id,
+        controller_type=bot_part.controller_type,
+        state="stopped",
+        started_at="2026-08-27T11:00:00+08:00",
+        stopped_at="2026-08-27T17:00:00+08:00",
+        exit_code=0,
+    )
+    save_process_records_locked("s_r14d", [bad_rec])
+
+    with pytest.raises(ArchiveSummaryError, match="manifest_id.*不一致"):
+        build_archive_summary_projection(season)
+
+
+def test_r14d_r1_ranks_not_permutation_blocked(r14d_env):
+    """E8. typed-valid 但 ranks 不是 0..3 排列（如全 0）→ blocked。"""
+    setup = _setup_running_season(r14d_env)
+    season = setup["season"]
+
+    matches_path = r14d_env["data_dir"] / "matches.jsonl"
+    rows = _read_all_rows(matches_path)
+    for row in rows:
+        if row.get("season_id") == "s_r14d":
+            row["ranks"] = [0, 0, 0, 0]
+    _rewrite_match_rows(r14d_env, rows)
+
+    with pytest.raises(ArchiveSummaryError, match="ranks 必须是 0..3 的完整排列"):
+        build_archive_summary_projection(season)

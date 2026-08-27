@@ -439,7 +439,7 @@ def test_r14b_ownership_unknown_record_safety_and_stop_rejection(r14b_env, monke
 
     # 1. 阻断 Complete/Delete
     with pytest.raises(SeasonRegistryError, match="runtime_active|正在运行或归属未知"):
-        sr.set_season_status(configs_dir, "s_unk", "completed")
+        sr.finalize_season(configs_dir, "s_unk")
 
     # 2. 阻断 Duplicate spawn
     spawn_resp = spawn_season_runtime(configs_dir, "s_unk", project_root=tmp_path)
@@ -509,7 +509,7 @@ def test_r14b_failed_or_stopped_but_live_process_blocks_lifecycle(r14b_env):
 
     # 1. 尝试 Complete 赛季：基于 OS 事实，发现进程实际存活 -> 拦截 409！
     with pytest.raises(SeasonRegistryError, match="runtime_active|正在运行或归属未知"):
-        sr.set_season_status(configs_dir, "s_cnt", "completed")
+        sr.finalize_season(configs_dir, "s_cnt")
 
     # 2. 改写为 state="stopped" 但 PID 存活，且将 season 设为 completed（模拟异常残留孤儿）：尝试 Delete -> 依然强行拦截！
     rec_failed_but_live.state = "stopped"
@@ -566,7 +566,7 @@ def test_r14b_spawn_vs_complete_concurrency_race(r14b_env):
 
     def _do_complete():
         try:
-            cfg = sr.set_season_status(configs_dir, "s_race", "completed")
+            cfg = sr.finalize_season(configs_dir, "s_race")
             results.append(("complete", cfg))
         except Exception as e:
             results.append(("complete_err", str(e)))

@@ -1701,14 +1701,20 @@ async def get_ladder_season_runtime_status(season_id: str):
 
 @app.post("/api/ladder/seasons/{season_id}/complete", response_class=JSONResponse)
 async def complete_ladder_season(season_id: str):
-    """结束赛季：running → completed（当前 default 自动摘除 default）。
+    """结束赛季（当前 default 自动摘除 default）。
 
-    R14-D: R14 frozen 赛季（有 runtime_manifest）的规范路径是
-    ``/finalize``（完成 + 封存终局摘要）；本端点保留为 legacy 裸迁移。
+    R14-D Repair 1 (P1-1): R14 frozen 赛季（有 runtime_manifest）内部路由到
+    ``finalize_season()``——canonical sealed completion（与 ``/finalize``
+    同一条路径）；evidence 损坏等 finalize 失败**绝不 fallback** 到 bare
+    completed（直接返回错误）。legacy 无 manifest 赛季保持旧 bare complete。
     """
     sr = _season_manager()
     try:
-        season = sr.set_season_status(_LADDER_SEASONS_DIR, season_id, "completed")
+        season = sr.get_season(_LADDER_SEASONS_DIR, season_id)
+        if season.get("runtime_manifest") is not None:
+            season = sr.finalize_season(_LADDER_SEASONS_DIR, season_id)
+        else:
+            season = sr.set_season_status(_LADDER_SEASONS_DIR, season_id, "completed")
     except (ValueError, SeasonRegistryError, SeasonNotFoundError) as exc:
         return _manager_errors(exc)
     return JSONResponse(content=season)

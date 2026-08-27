@@ -1726,3 +1726,83 @@ def test_r14c_r4_unique_session_explicit_mismatch_blocked(r14c_env, monkeypatch)
     m = ledger.get_match(res["match_id"])
     assert m.runtime_binding is not None
     assert m.runtime_binding.session_id == s1
+
+
+# ---------------------------------------------------------------------------
+# R14-C Repair 5: Preflight 与 Confirm 的 runtime-origin 唯一性语义一致
+# ---------------------------------------------------------------------------
+
+def _r5_preflight_resolutions(art_a):
+    return [
+        {"seat": 0, "action": "assign", "account_id": "account:h1"},
+        {"seat": 1, "action": "assign", "account_id": "account:h2"},
+        {"seat": 2, "action": "assign", "account_id": "account:h3"},
+        {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+    ]
+
+
+def test_r14c_r5_preflight_ambiguous_origin_blocked(r14c_env, monkeypatch):
+    """R5-1. S1+S2 都观察 X → assess_intake_admission 返回 blocked + runtime_origin_ambiguous."""
+    setup, log_id, _s1, _s2, _ = _r4_ambiguous_setup(r14c_env, monkeypatch)
+    art_a = setup["art_a"]
+
+    assessment = intake.assess_intake_admission(
+        log_id=log_id,
+        resolutions=_r5_preflight_resolutions(art_a),
+        season_id=setup["season_id"],
+        rating_eligible=True,
+    )
+    assert assessment.state == "blocked"
+    codes = [i.code for i in assessment.issues]
+    assert "runtime_origin_ambiguous" in codes
+    # 所有 seat 不可计分
+    assert all(not s.is_ladder_eligible for s in assessment.seats)
+
+
+def test_r14c_r5_preflight_explicit_mismatch_blocked_unique_ok(r14c_env, monkeypatch):
+    """R5-2. 唯一 S1 观察 X：显式请求 S2 → preflight blocked；显式 S1 → ready."""
+    setup = _setup_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+    manifest = setup["manifest"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    log_id = "2026082712gm-00a9-0000-r5_mismatch"
+    s1 = "r14c_r5_unique_session"
+    s2 = "r14c_r5_other_session"
+    _create_execution_session(r14c_env, s1, manifest)
+    _create_execution_session(r14c_env, s2, manifest)
+    _record_worker_log(s1, log_id)
+
+    # 显式请求 S2（未观察到该 log）→ preflight blocked
+    blocked = intake.assess_intake_admission(
+        log_id=log_id,
+        resolutions=_r5_preflight_resolutions(art_a),
+        season_id=setup["season_id"],
+        rating_eligible=True,
+        session_id=s2,
+    )
+    assert blocked.state == "blocked"
+    codes = [i.code for i in blocked.issues]
+    assert "runtime_origin_mismatch" in codes
+    assert all(not s.is_ladder_eligible for s in blocked.seats)
+
+    # 显式请求 S1（正确唯一来源）→ ready
+    ready = intake.assess_intake_admission(
+        log_id=log_id,
+        resolutions=_r5_preflight_resolutions(art_a),
+        season_id=setup["season_id"],
+        rating_eligible=True,
+        session_id=s1,
+    )
+    assert ready.state == "ready"
+    assert len(ready.issues) == 0
+    assert all(s.is_ladder_eligible for s in ready.seats)

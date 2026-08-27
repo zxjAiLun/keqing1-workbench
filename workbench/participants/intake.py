@@ -1105,14 +1105,27 @@ def assess_intake_admission(
     ]
     res_by_seat = {int(r["seat"]): r for r in norm_res}
 
-    # R14-C Repair 4 (P1): preflight 与 confirm 共用同一唯一性语义
+    # R14-C Repair 5 (P1): preflight 与 confirm 共用同一唯一性 fail-closed 语义。
+    # helper 的业务 ValueError（runtime_origin_ambiguous / 显式 mismatch）必须
+    # 外显为结构化 admission issue（ready=false、所有 seat 不可计分），不得
+    # 吞掉后按无 runtime session 继续评估——否则 Preflight 会给出与 Confirm
+    # 矛盾的 readiness。
     from workbench.runtime.execution_session import resolve_execution_session_for_log
 
+    origin_issue: AdmissionIssue | None = None
     try:
         session_id = resolve_execution_session_for_log(log_id, session_id)
+    except ValueError as exc:
+        code = (
+            "runtime_origin_mismatch"
+            if "唯一可证明的 execution session" in str(exc)
+            else "runtime_origin_ambiguous"
+        )
+        origin_issue = AdmissionIssue(code=code, message=str(exc))
+        session_id = None
     except Exception:  # noqa: BLE001
         session_id = None
-    if not session_id:
+    if not session_id and origin_issue is None:
         session_id = _session_id_for_log_id(log_id)
 
     # 下载/读取 player names（若失败让网络/解析错误抛出，走 transport 502）
@@ -1155,6 +1168,9 @@ def assess_intake_admission(
 
     normalized_season_id = str(season_id).strip()
     top_issues: list[AdmissionIssue] = []
+    # R14-C Repair 5 (P1): runtime-origin 唯一性错误必须作为顶级 issue 外显
+    if origin_issue is not None:
+        top_issues.append(origin_issue)
 
     configs_dir = ladder_data.resolve_config_dir(active_root)
     season_config: dict[str, Any] | None = None

@@ -2,7 +2,7 @@
 """R14-B: Runtime Launcher & Process Records
 
 数据模型与 Plan 构建：
-1. SeasonRuntimeProcessRecord: 描述单个参赛者本地运行进程的持久化事实；
+1. SeasonRuntimeProcessRecord: 描述单个参赛者本地运行进程的持久化事实（含 owner_token 与 birth_identity 防 PID 复用）；
 2. SeasonRuntimeLauncherPlan: 依据 Frozen Runtime Manifest 生成的可执行部署计划；
 3. 严格禁止重新访问 Catalog Current，命令参数与路径完全来自 Manifest.
 """
@@ -33,6 +33,8 @@ class SeasonRuntimeProcessRecord(BaseModel):
     account_id: str
     controller_type: ControllerType
     pid: int | None = None
+    birth_identity: str | None = None  # Linux: starttime ticks, Windows: creation time
+    owner_token: str | None = None
     state: ProcessState = "pending"
     started_at: str | None = None
     stopped_at: str | None = None
@@ -105,27 +107,32 @@ def build_process_command(
     *,
     project_root: Path,
     python_executable: str = sys.executable,
+    custom_command_builder: Any | None = None,
 ) -> list[str]:
     """根据 Participant 的 runtime_spec 构建子进程启动命令。
 
     严格使用 Manifest 中的 resolved_checkpoint_path，严禁重新 resolve catalog current!
+    生产环境下启动 workbench.runtime.bot_worker CLI 入口。
     """
     if not isinstance(participant.runtime_spec, LocalArtifactRuntimeSpec):
         raise ValueError(f"参与者 {participant.account_id} 不是本地模型规范")
 
+    if custom_command_builder is not None:
+        return custom_command_builder(participant, project_root, python_executable)
+
     spec: LocalArtifactRuntimeSpec = participant.runtime_spec
     model_cp = spec.resolved_checkpoint_path
 
-    # 使用标准 worker / bot runner 入口（以 mock 或 standard runtime bot script 运行）
-    # 保持模块化可执行，统一传入 checkpoint 路径与 account 身份
     return [
         python_executable,
         "-m",
-        "workbench.gateway.tenhou_bot_client",
+        "workbench.runtime.bot_worker",
         "--account-id",
         participant.account_id,
         "--model-path",
         model_cp,
         "--name",
         participant.display_name,
+        "--project-root",
+        str(project_root),
     ]

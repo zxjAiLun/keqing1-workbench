@@ -185,6 +185,11 @@ def set_season_status(configs_dir: Path, season_id: str, status: str) -> dict[st
         if status not in allowed:
             raise SeasonRegistryError(f"赛季 {season_id} 状态迁移非法: {current} → {status}")
 
+        # R14-B Interlock: 当从 running 迁移到 completed 或 archived 时，严禁有进程存活
+        if current == "running" and status in ("completed", "archived"):
+            from runtime.supervisor import ensure_no_active_runtime_processes
+            ensure_no_active_runtime_processes(season_id)
+
         updated = dict(season)
         updated["status"] = status
         if status == "running":
@@ -291,6 +296,10 @@ def delete_season(
             raise SeasonRegistryError(
                 f"该赛季仍被 {referenced} 场历史对局引用，拒绝删除"
             )
+
+        # R14-B Interlock: 删除赛季前严禁有残留运行进程
+        from runtime.supervisor import ensure_no_active_runtime_processes
+        ensure_no_active_runtime_processes(season_id)
 
         path = _season_path(configs_dir, season_id)
         path.unlink(missing_ok=True)

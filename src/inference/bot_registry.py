@@ -198,11 +198,23 @@ def create_runtime_bot(
     """Create a runtime bot. ``bot_name`` may be a named checkpoint, ``rulebase``,
     or an explicit checkpoint path. An explicit ``model_path`` overrides the
     resolved checkpoint location."""
+    # 若显式指定了 model_path，直接以此路径为准，不依赖 named checkpoint 的解析
+    if model_path is not None:
+        explicit_path = Path(model_path).resolve()
+        if not explicit_path.exists():
+            raise FileNotFoundError(f"explicit model checkpoint not found: {explicit_path}")
+        return MortalReviewBot(
+            player_id=player_id,
+            model_path=explicit_path,
+            mortal_root=Path(project_root) / "third_party" / "Mortal",
+            device=device,
+            verbose=verbose,
+            enable_review_log=enable_review_log,
+        )
+
     kind, resolved = resolve_bot_spec(bot_name, project_root)
     if kind == "rulebase":
         return RulebaseBot(player_id=player_id, verbose=verbose)
-    if model_path is not None:
-        resolved = Path(model_path).resolve()
     return MortalReviewBot(
         player_id=player_id,
         model_path=resolved,

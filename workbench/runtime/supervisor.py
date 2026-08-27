@@ -1,24 +1,24 @@
 # -*- coding: utf-8 -*-
-"""R14-B: Runtime Process Supervision & State Persistence (Repair 2 封板版)
+"""R14-B: Runtime Process Supervision & State Persistence (Repair 3 终极封板版)
 
 核心职责与架构防护：
-1. 确定性锁顺序 (Global Lock Hierarchy)：
+1. 进程归属三态仲裁 (Ownership Tri-State Model):
+   - `OWNED_LIVE`: 具有有效 pid 与 birth_identity，且经 is_pid_alive_and_matched 严格确认为归属于当前系统记录的活进程；
+   - `NOT_LIVE`: 进程未运行或已确认退出死亡；
+   - `OWNERSHIP_UNKNOWN`: 记录中存在 pid 但缺少 birth_identity，且该 pid 在当前系统存活（疑似 PID 复用或历史损坏记录）。
+   -> Lifecycle (Complete/Archive/Delete) 及 Duplicate Spawn 对 `OWNED_LIVE` 与 `OWNERSHIP_UNKNOWN` 统一 fail-closed 拦截；
+   -> **Stop 操作仅允许对 `OWNED_LIVE` 下发停机信号；对 `OWNERSHIP_UNKNOWN` 坚决禁止下发信号，绝不误杀无关进程**。
+2. 运行时锁 `runtime_lock` 自洽性保证：
+   - 获取锁前强制校验 `get_process_birth_identity(my_pid)`，若无法获取 birth_identity 则直接抛出 `RuntimeSupervisorStateError` fail-closed，杜绝创建无 owner 凭证的锁。
+3. 全局严格确定性锁顺序 (Global Lock Hierarchy)：
    `participants_data_lock` -> `_registry_lock` -> `runtime_lock`；
-   `spawn_season_runtime` 与 `set_season_status`/`delete_season` 全程持有双/三域锁，彻底消除 TOCTOU 竞态；
-2. 进程活跃性基于 OS Fact 唯一仲裁 (OS Process Fact Model)：
-   `record_has_live_owned_process(record)` 严格依据 `is_pid_alive_and_matched(pid, birth_identity)`，
-   绝不信任 record.state；无论是 failed 还是 stopped 状态，只要 OS PID 存活即视为 ACTIVE 并阻断生命周期；
-3. Birth Identity Fail-Closed 门禁：
-   若获取进程 `birth_identity` 失败，立刻强杀新创建的孤儿进程并落盘 `state="failed"`，绝不误入 `healthy`；
-4. 锁文件 Owner 身份包含 `birth_identity`：
-   支持在 OS PID 复用场景下安全判定旧锁 owner 已失效并 reclaim；
-5. 停机原因与退出码审计真实记录：
-   区分 `graceful` (SIGTERM exit) 与 `forced` (SIGKILL 强杀)，真实记录 SIGKILL 退出码 (-9)；
-6. 账本损坏严密 Fail-Closed。
+4. 真实审计退出码与停机模式 (SIGTERM graceful 0 vs SIGKILL forced -9)；
+5. 损坏账本 Fail-Closed。
 """
 from __future__ import annotations
 
 import contextlib
+import enum
 import json
 import os
 import signal
@@ -53,6 +53,12 @@ from runtime.resolver.ladder import ladder_data_root
 
 class RuntimeSupervisorStateError(SeasonRegistryError):
     """运行时进程记录或锁状态异常，必须 fail-closed 拦截。"""
+
+
+class ProcessOwnershipStatus(enum.Enum):
+    OWNED_LIVE = "owned_live"
+    NOT_LIVE = "not_live"
+    OWNERSHIP_UNKNOWN = "ownership_unknown"
 
 
 def runtime_records_dir(season_id: str) -> Path:
@@ -183,20 +189,35 @@ def is_pid_alive_and_matched(pid: int | None, expected_birth_identity: str | Non
         return True
 
 
-def record_has_live_owned_process(record: SeasonRuntimeProcessRecord) -> bool:
-    """基于 OS 事实唯一判定进程记录当前是否真实有进程在运行。
+def evaluate_process_ownership(record: SeasonRuntimeProcessRecord) -> ProcessOwnershipStatus:
+    """基于 OS 事实与 birth_identity 精确判定进程归属三态。
 
-    规则：
-    - 若 pid 为空，返回 False；
-    - 若存在 pid，必须由 is_pid_alive_and_matched 判定；
-    - 绝不信任 record.state！即使 state='failed' 或 'stopped'，只要底层 PID 仍存活即视为 ACTIVE！
+    - `pid is None or pid <= 0`: NOT_LIVE
+    - `birth_identity` 有效且 `is_pid_alive_and_matched(pid, birth_identity) == True`: OWNED_LIVE
+    - `birth_identity` 有效但 `is_pid_alive_and_matched(pid, birth_identity) == False`: NOT_LIVE
+    - `birth_identity` 缺失但 `is_pid_alive_and_matched(pid, None) == True`: OWNERSHIP_UNKNOWN
+    - `birth_identity` 缺失且 `is_pid_alive_and_matched(pid, None) == False`: NOT_LIVE
     """
     if record.pid is None or record.pid <= 0:
-        return False
-    if not record.birth_identity:
-        # 如果有 PID 但从未取得合法 birth_identity，保守视为未知异常，若 PID 存活则必须拦截
-        return is_pid_alive_and_matched(record.pid, None)
-    return is_pid_alive_and_matched(record.pid, record.birth_identity)
+        return ProcessOwnershipStatus.NOT_LIVE
+
+    if record.birth_identity:
+        if is_pid_alive_and_matched(record.pid, record.birth_identity):
+            return ProcessOwnershipStatus.OWNED_LIVE
+        return ProcessOwnershipStatus.NOT_LIVE
+
+    # birth_identity 缺失
+    if is_pid_alive_and_matched(record.pid, None):
+        return ProcessOwnershipStatus.OWNERSHIP_UNKNOWN
+    return ProcessOwnershipStatus.NOT_LIVE
+
+
+def record_has_live_owned_process(record: SeasonRuntimeProcessRecord) -> bool:
+    """只要进程是 OWNED_LIVE 或 OWNERSHIP_UNKNOWN，在生命周期与防重门禁中均视为需要保护/拦截。"""
+    return evaluate_process_ownership(record) in (
+        ProcessOwnershipStatus.OWNED_LIVE,
+        ProcessOwnershipStatus.OWNERSHIP_UNKNOWN,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -212,17 +233,21 @@ def runtime_lock(
     """带 owner 身份与 dead-owner 判定的跨进程运行时锁（记录 birth_identity 防 PID 复用）。
 
     - 严禁纯根据 mtime 删除活跃 owner 的锁；
+    - 当前进程若无法取得合法 birth_identity，直接抛错 fail-closed，禁止创建无法证明身份的锁；
     - 记录 {"pid": ..., "birth_identity": ..., "token": ...}；
     - 仅当 mtime 超时且经 is_pid_alive_and_matched 确认 owner 已死，在 OS advisory lock 临界区内安全回收；
     - 退出时仅当 token 匹配才删除锁文件。
     """
+    my_pid = os.getpid()
+    my_birth = get_process_birth_identity(my_pid)
+    if not my_birth:
+        raise RuntimeSupervisorStateError(f"当前进程 (PID={my_pid}) 无法获取 birth_identity，禁止获取运行时锁 (fail-closed)")
+
     lock_dir = runtime_records_dir(season_id)
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_path = lock_dir / ".runtime.lock"
     reclaim_path = lock_dir / ".runtime.lock.reclaim"
     token = uuid.uuid4().hex
-    my_pid = os.getpid()
-    my_birth = get_process_birth_identity(my_pid)
     acquired = False
     start_time = time.time()
 
@@ -239,6 +264,7 @@ def runtime_lock(
             os.write(fd, payload)
             os.close(fd)
             acquired = True
+            break
         except FileExistsError:
             # 尝试通过 reclaim advisory lock 判定前任 owner 是否存活
             reclaim_fd = _try_advisory_lock(reclaim_path)
@@ -267,7 +293,7 @@ def runtime_lock(
                         os.close(reclaim_fd)
                     except OSError:
                         pass
-            time.sleep(0.05)
+            time.sleep(0.02)
 
     try:
         yield
@@ -319,17 +345,18 @@ def sync_process_states_locked(season_id: str) -> list[SeasonRuntimeProcessRecor
     now = now_iso()
 
     for r in records:
-        is_live = record_has_live_owned_process(r)
+        ownership = evaluate_process_ownership(r)
         if r.state in ("starting", "healthy"):
-            if not is_live:
+            if ownership == ProcessOwnershipStatus.NOT_LIVE:
                 r.state = "stopped"
                 r.stopped_at = r.stopped_at or now
                 if r.exit_code is None:
                     r.exit_code = -1  # 标记外部终止/未知退出
                 mutated = True
-        elif is_live and r.state in ("stopped", "failed"):
-            # 账本自相矛盾（标记为 stopped/failed 但实际 PID 仍活着）：保持状态并标记告警
-            pass
+            elif ownership == ProcessOwnershipStatus.OWNERSHIP_UNKNOWN:
+                r.state = "failed"
+                r.failure_reason = "进程缺少 birth_identity 无法验证归属 (ownership_unknown)"
+                mutated = True
 
     if mutated:
         save_process_records_locked(season_id, records)
@@ -358,7 +385,7 @@ def get_season_runtime_status(
     with runtime_lock(season_id):
         records = sync_process_states_locked(season_id)
 
-    is_active = any(record_has_live_owned_process(r) for r in records)
+    is_active = any(evaluate_process_ownership(r) == ProcessOwnershipStatus.OWNED_LIVE for r in records)
 
     return SeasonRuntimeStatusResponse(
         season_id=season_id,
@@ -420,7 +447,7 @@ def spawn_season_runtime(
                 aid = participant.account_id
                 existing = records_by_account.get(aid)
 
-                # 防重复 spawn：只要底层 OS PID 存活即阻断
+                # 防重复 spawn：只要底层 OS PID 存活 (OWNED_LIVE 或 OWNERSHIP_UNKNOWN) 即阻断
                 if existing and record_has_live_owned_process(existing):
                     continue
 
@@ -518,7 +545,7 @@ def spawn_season_runtime(
             final_records = list(records_by_account.values())
             save_process_records_locked(season_id, final_records)
 
-            is_active = any(record_has_live_owned_process(r) for r in final_records)
+            is_active = any(evaluate_process_ownership(r) == ProcessOwnershipStatus.OWNED_LIVE for r in final_records)
             return SeasonRuntimeStatusResponse(
                 season_id=season_id,
                 manifest_id=manifest.manifest_id,
@@ -534,7 +561,7 @@ def stop_season_runtime(
     *,
     timeout_seconds: float = 3.0,
 ) -> SeasonRuntimeStatusResponse:
-    """幂等停止指定赛季的所有运行中本地进程（进程组级杀灭与最终死亡确认）。"""
+    """幂等停止指定赛季的所有运行中本地进程（仅对 OWNED_LIVE 进程发信号；OWNERSHIP_UNKNOWN 抛错拒绝杀进程）。"""
     season_path = configs_dir / f"{season_id}.json"
     if not season_path.exists():
         raise SeasonNotFoundError(f"赛季配置不存在: {season_id}")
@@ -549,8 +576,18 @@ def stop_season_runtime(
     with runtime_lock(season_id):
         records = sync_process_states_locked(season_id)
 
+        # 检查是否存在 OWNERSHIP_UNKNOWN 记录：坚决禁止发信号误杀无辜进程，必须抛出错误并要求人工介入
+        unknown_records = [r for r in records if evaluate_process_ownership(r) == ProcessOwnershipStatus.OWNERSHIP_UNKNOWN]
+        if unknown_records:
+            unknown_pids = ", ".join(f"{r.account_id}(PID={r.pid})" for r in unknown_records)
+            raise SeasonRegistryError(
+                f"赛季 {season_id} 存在缺失 birth_identity 的疑似残留 PID ({unknown_pids})，"
+                "为防止误杀系统无关进程，禁止执行自动停机，请手动确认该 PID 状态 (ownership_unknown)"
+            )
+
         for r in records:
-            if r.pid and record_has_live_owned_process(r):
+            ownership = evaluate_process_ownership(r)
+            if ownership == ProcessOwnershipStatus.OWNED_LIVE and r.pid:
                 used_sigkill = False
                 # 1. 尝试优雅 SIGTERM
                 try:
@@ -571,11 +608,11 @@ def stop_season_runtime(
 
                 # 2. 等待进程退出
                 start_wait = time.time()
-                while record_has_live_owned_process(r) and (time.time() - start_wait < timeout_seconds):
+                while evaluate_process_ownership(r) == ProcessOwnershipStatus.OWNED_LIVE and (time.time() - start_wait < timeout_seconds):
                     time.sleep(0.05)
 
                 # 3. 超时强制 SIGKILL
-                if record_has_live_owned_process(r):
+                if evaluate_process_ownership(r) == ProcessOwnershipStatus.OWNED_LIVE:
                     used_sigkill = True
                     try:
                         if os.name != "nt":
@@ -590,11 +627,11 @@ def stop_season_runtime(
                         pass
                     # 再等待 0.5s 确认
                     start_kill_wait = time.time()
-                    while record_has_live_owned_process(r) and (time.time() - start_kill_wait < 0.5):
+                    while evaluate_process_ownership(r) == ProcessOwnershipStatus.OWNED_LIVE and (time.time() - start_kill_wait < 0.5):
                         time.sleep(0.05)
 
                 # 4. 最终状态判定与真实退出码审计
-                if record_has_live_owned_process(r):
+                if evaluate_process_ownership(r) == ProcessOwnershipStatus.OWNED_LIVE:
                     r.state = "failed"
                     r.failure_reason = "停止进程失败: SIGKILL 后进程仍存活"
                 else:
@@ -603,7 +640,7 @@ def stop_season_runtime(
                     r.exit_code = -9 if used_sigkill else 0
 
         save_process_records_locked(season_id, records)
-        is_active = any(record_has_live_owned_process(r) for r in records)
+        is_active = any(evaluate_process_ownership(r) == ProcessOwnershipStatus.OWNED_LIVE for r in records)
 
         return SeasonRuntimeStatusResponse(
             season_id=season_id,
@@ -621,13 +658,13 @@ def stop_season_runtime(
 def assert_no_live_runtime_processes_locked(season_id: str) -> None:
     """在持有 `_registry_lock` 和 `runtime_lock` 的原子事务中调用。
 
-    基于 OS 事实严密判定：若有任何本地进程存活，抛出 SeasonRegistryError (HTTP 409)。
+    基于 OS 事实严密判定：若有任何 OWNED_LIVE 或 OWNERSHIP_UNKNOWN 进程，抛出 SeasonRegistryError (HTTP 409)。
     """
     records = sync_process_states_locked(season_id)
     live_records = [r for r in records if record_has_live_owned_process(r)]
     if live_records:
         accounts = ", ".join(r.account_id for r in live_records)
         raise SeasonRegistryError(
-            f"赛季 {season_id} 当前仍有正在运行的本地模型进程 ({accounts})，"
-            "请先调用 /runtime/stop 停止进程后再进行生命周期变更 (runtime_active)"
+            f"赛季 {season_id} 当前仍有正在运行或归属未知的本地模型进程 ({accounts})，"
+            "请先停止或处理进程后再进行生命周期变更 (runtime_active)"
         )

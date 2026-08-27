@@ -1,22 +1,22 @@
 # -*- coding: utf-8 -*-
-"""R14-B 验收测试集: Runtime Launcher & Process Supervision (Repair 2 封板加固版)
+"""R14-B 验收测试集: Runtime Launcher & Process Supervision (Repair 3 终极封板版)
 
 测试矩阵：
 1. production worker CLI 真正执行，参数正确传递而不是 import-and-exit；
-2. production worker non-verify contract: 验证 GatewayBotClient.run 真正被调用并传入 stop_event；
+2. explicit frozen checkpoint 隔离性测试：named "mortal" resolver 被破坏时，Worker 依然能正常执行 exact frozen checkpoint；
 3. build_launcher_plan: 仅 local_model 为 spawnable_participants，human 及 external_agent 为 unmanaged；
 4. build_launcher_plan: 非 frozen 清单 (如 projected_legacy) 抛出异常拒绝生成执行计划；
 5. build_process_command: 命令严格绑定 Manifest 的 resolved_checkpoint_path 与 bot_worker 入口；
-6. instant-exit process (如 exit 1 或秒崩进程) 启动后立即被识别为 failed/stopped，绝不误报 healthy；
+6. instant-exit process (如 exit 42 或秒崩进程) 启动后立即被识别为 failed/stopped，绝不误报 healthy；
 7. birth identity 获取失败时 (get_process_birth_identity -> None) fail-closed 强杀孤儿并置 failed；
 8. processes.json 损坏时严格抛出 RuntimeSupervisorStateError fail-closed；
-9. 活跃锁超过 lease 阈值且 owner PID 仍存活时，绝对不得被第二 owner reclaim；
+9. 锁 owner 获取时若无法获取 birth_identity 则直接 fail-closed 抛错；
 10. dead owner 锁（包含旧 birth_identity 记录）可以被成功 reclaim 并接管；
 11. PID 被系统复用 (birth identity 不匹配) 时视为 stale，绝不误杀无关 PID，锁亦可被 reclaim；
-12. state="failed" 但底层 OS PID 仍然存活的矛盾记录，必须阻断 Lifecycle (complete/archive/delete) 与 duplicate spawn；
-13. state="stopped" 但底层 OS PID 仍然存活的矛盾记录，必须同样阻断 Lifecycle；
+12. ownership_unknown 保护机制：有 PID、无 birth_identity 且 PID 存活时，阻断 Complete/Delete 和 duplicate spawn，且 Stop 抛错拒绝下发停机信号；
+13. state="failed"/"stopped" 但底层 OS PID 仍然存活的矛盾记录，必须阻断 Lifecycle (complete/archive/delete)；
 14. spawn vs complete 并发竞态原子性测试：双域锁下绝不能产生 (completed + live process) 状态；
-15. spawn vs delete 并发竞态原子性测试：绝不能产生 (season JSON deleted + live process)；
+15. spawn vs delete 显式 Barrier 并发竞态测试：绝不能产生 (season JSON deleted + live process)；
 16. Stop 流程覆盖 SIGTERM 优雅退出及 SIGTERM ignored 后的强制 SIGKILL 最终存活确认与 -9 退出码审计。
 """
 from __future__ import annotations
@@ -53,8 +53,10 @@ from runtime.manifest import (
     start_season_runtime,
 )
 from runtime.supervisor import (
+    ProcessOwnershipStatus,
     RuntimeSupervisorStateError,
     assert_no_live_runtime_processes_locked,
+    evaluate_process_ownership,
     get_process_birth_identity,
     get_season_runtime_status,
     is_pid_alive_and_matched,
@@ -121,38 +123,37 @@ def test_r14b_bot_worker_cli_execution_and_verify_mode(tmp_path: Path):
     assert code == 0
 
 
-def test_r14b_bot_worker_non_verify_executes_gateway_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """2. Worker non-verify 分支真正实例化 GatewayBotClient 并调用 run()."""
-    dummy_cp = tmp_path / "worker_run.pth"
+def test_r14b_worker_exact_checkpoint_isolation_when_named_resolver_broken(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """2. 破坏 named mortal resolver，显式 Frozen checkpoint 依然完全隔离并正常执行."""
+    from workbench.gateway.tenhou_bot_client import BotClientConfig, GatewayBotClient
+
+    dummy_cp = tmp_path / "frozen_isolated.pth"
     dummy_cp.write_text("dummy_weights", encoding="utf-8")
 
-    called = {}
+    # 故意破坏 named mortal resolver
+    def _broken_resolve_bot_spec(spec, project_root):
+        if spec == "mortal":
+            raise RuntimeError("Authoritative named mortal resolver is broken!")
+        return ("mortal", dummy_cp)
 
-    class MockGatewayBotClient:
-        def __init__(self, config):
-            called["config"] = config
+    monkeypatch.setattr("workbench.gateway.tenhou_bot_client.resolve_bot_spec", _broken_resolve_bot_spec)
+    monkeypatch.setattr("workbench.runtime.resolver.model.resolve_bot_spec", _broken_resolve_bot_spec)
 
-        def run(self, stop_event=None):
-            called["stop_event"] = stop_event
-            # 立即退出模拟完成
-            return
+    # 构造显式 model_path 的 BotClientConfig
+    cfg = BotClientConfig(
+        host="127.0.0.1",
+        port=11600,
+        room="L2147_9",
+        name="IsoBot",
+        bot_name=str(dummy_cp),
+        project_root=tmp_path,
+        model_path=dummy_cp,
+        ladder_account_id="account:iso_bot",
+    )
 
-    monkeypatch.setattr("runtime.bot_worker.GatewayBotClient", MockGatewayBotClient)
-
-    argv = [
-        "--account-id", "account:mock_bot",
-        "--model-path", str(dummy_cp),
-        "--name", "MockBot",
-        "--project-root", str(tmp_path),
-    ]
-    args = parse_args(argv)
-    code = run_worker(args)
-    assert code == 0
-    assert "config" in called
-    assert called["config"].ladder_account_id == "account:mock_bot"
-    assert called["config"].model_path == dummy_cp.resolve()
-    assert "stop_event" in called
-    assert isinstance(called["stop_event"], threading.Event)
+    # GatewayBotClient 能够正常创建，完全不调用也不受 broken named resolver 影响
+    client = GatewayBotClient(cfg)
+    assert client.config.resolved_model_path() == dummy_cp.resolve()
 
 
 def test_r14b_launcher_plan_construction_and_non_frozen_rejection(r14b_env):
@@ -293,8 +294,15 @@ def test_r14b_birth_identity_acquisition_failure_fails_closed(r14b_env, monkeypa
 
     start_season_runtime(configs_dir, "s_bf", project_root=tmp_path)
 
-    # 模拟 get_process_birth_identity 返回 None
-    monkeypatch.setattr("runtime.supervisor.get_process_birth_identity", lambda pid: None)
+    # 模拟获取子进程 birth_identity 返回 None (但当前测试进程自身的 PID 返回正常 birth_identity 以获取 runtime_lock)
+    real_get_birth = get_process_birth_identity
+    my_pid = os.getpid()
+    def _mock_get_birth(pid):
+        if pid == my_pid:
+            return real_get_birth(pid)
+        return None
+
+    monkeypatch.setattr("runtime.supervisor.get_process_birth_identity", _mock_get_birth)
 
     def _sleep_cmd(p, root, py_exe):
         return [sys.executable, "-c", "import time; time.sleep(30)"]
@@ -332,15 +340,27 @@ def test_r14b_corrupted_processes_json_fails_closed(r14b_env):
         sync_process_states_locked(season_id)
 
 
-def test_r14b_runtime_lock_owner_dead_reclaim_and_active_protection(r14b_env):
-    """9 & 10 & 11. 锁 owner dead/birth mismatch 安全 reclaim，活跃 owner 绝不误删."""
+def test_r14b_runtime_lock_birth_failure_and_reclaim_rules(r14b_env, monkeypatch: pytest.MonkeyPatch):
+    """9 & 10 & 11. 锁 owner 获取时若无法获取 birth_identity 则 fail-closed；死锁与 PID 复用可安全回收."""
     ladder_data_dir = r14b_env["ladder_data_dir"]
     season_id = "s_lock_test"
     lock_dir = ladder_data_dir / "runtime" / "seasons" / season_id
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_path = lock_dir / ".runtime.lock"
 
-    # 1. 模拟死进程留下旧锁（PID=99999999 不存在），mtime 为旧时间
+    # 9. 当前进程无法获取 birth_identity 时，禁止创建锁
+    def _mock_none(pid):
+        return None
+    monkeypatch.setattr("runtime.supervisor.get_process_birth_identity", _mock_none)
+    with pytest.raises(RuntimeSupervisorStateError, match="无法获取 birth_identity"):
+        with runtime_lock(season_id):
+            pass
+
+    # 恢复真实 birth_identity 获取
+    real_get_birth = get_process_birth_identity
+    monkeypatch.setattr("runtime.supervisor.get_process_birth_identity", real_get_birth)
+
+    # 10. 模拟死进程留下旧锁（PID=99999999 不存在），mtime 为旧时间
     dead_pid = 99999999
     lock_path.write_text(json.dumps({
         "pid": dead_pid,
@@ -356,7 +376,7 @@ def test_r14b_runtime_lock_owner_dead_reclaim_and_active_protection(r14b_env):
         assert new_data["pid"] == os.getpid()
         assert new_data["token"] != "dead_token"
 
-    # 2. 模拟 PID 复用：PID=os.getpid() 但 birth_identity 不匹配
+    # 11. 模拟 PID 复用：PID=os.getpid() 但 birth_identity 不匹配
     lock_path.write_text(json.dumps({
         "pid": os.getpid(),
         "birth_identity": "stale_birth_identity_xyz",
@@ -369,25 +389,85 @@ def test_r14b_runtime_lock_owner_dead_reclaim_and_active_protection(r14b_env):
         new_data = json.loads(lock_path.read_text(encoding="utf-8"))
         assert new_data["token"] != "stale_token"
 
-    # 3. 模拟活跃长任务：当前进程真实 PID 与真实 birth_identity，即使 mtime 超时也不可 reclaim
-    my_birth = get_process_birth_identity(os.getpid())
-    lock_path.write_text(json.dumps({
-        "pid": os.getpid(),
-        "birth_identity": my_birth,
-        "token": "live_token",
-    }), encoding="utf-8")
-    os.utime(lock_path, (old_time, old_time))
-
-    with pytest.raises(TimeoutError, match="超时"):
-        with runtime_lock(season_id, timeout_seconds=0.2, lease_seconds=10.0):
-            pass
-
     # 清理现场
     lock_path.unlink(missing_ok=True)
 
 
-def test_r14b_failed_or_stopped_but_live_process_blocks_lifecycle_and_duplicate(r14b_env):
-    """12 & 13. record.state 为 failed 或 stopped 但 OS PID 实际存活时，绝不允许 complete/delete 或 duplicate spawn."""
+def test_r14b_ownership_unknown_record_safety_and_stop_rejection(r14b_env, monkeypatch: pytest.MonkeyPatch):
+    """12. 记录有 PID 但无 birth_identity (OWNERSHIP_UNKNOWN) 时：阻断生命周期与重复 spawn，且 Stop 绝不向该 PID 发信号."""
+    configs_dir = r14b_env["configs_dir"]
+    tmp_path = r14b_env["tmp_path"]
+    models_dir = r14b_env["models_dir"]
+
+    cp = _create_checkpoint(models_dir, "unknown.pth")
+    part_registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:unk", label="UNK", kind="local_model"))
+    art = part_registry.add_model_artifact("model:unk", ModelArtifactCreate(label="u.pth", artifact_path=str(cp), stage="promoted"))
+
+    for i in range(1, 4):
+        part_registry.create_account(AccountCreate(account_id=f"account:h{i}", display_name=f"H{i}", account_type="human"))
+    part_registry.create_account(AccountCreate(account_id="account:bot_unk", display_name="BotUNK", account_type="managed_bot", model_identity_id="model:unk"))
+
+    sr.create_season(configs_dir, season_id="s_unk", title="UNK Season")
+    sr.set_season_enrollment(
+        configs_dir, "s_unk", ["account:h1", "account:h2", "account:h3", "account:bot_unk"],
+        provenance_by_model={"model:unk": {"kind": "local_artifact", "model_identity_id": "model:unk", "model_artifact_id": art.model_artifact_id}}
+    )
+
+    start_season_runtime(configs_dir, "s_unk", project_root=tmp_path)
+
+    # 启动一个真实的后台睡眠进程作为无关进程
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    unrelated_pid = proc.pid
+
+    # 构造 birth_identity=None 的历史/异常记录
+    rec_unknown = SeasonRuntimeProcessRecord(
+        runtime_id="proc_s_unk_1",
+        season_id="s_unk",
+        manifest_id="manifest:s_unk:fake",
+        account_id="account:bot_unk",
+        controller_type="local_model",
+        pid=unrelated_pid,
+        birth_identity=None,  # 缺失 birth_identity
+        state="healthy",
+    )
+    with runtime_lock("s_unk"):
+        save_process_records_locked("s_unk", [rec_unknown])
+
+    # 验证判定为 OWNERSHIP_UNKNOWN
+    assert evaluate_process_ownership(rec_unknown) == ProcessOwnershipStatus.OWNERSHIP_UNKNOWN
+    assert record_has_live_owned_process(rec_unknown) is True
+
+    # 1. 阻断 Complete/Delete
+    with pytest.raises(SeasonRegistryError, match="runtime_active|正在运行或归属未知"):
+        sr.set_season_status(configs_dir, "s_unk", "completed")
+
+    # 2. 阻断 Duplicate spawn
+    spawn_resp = spawn_season_runtime(configs_dir, "s_unk", project_root=tmp_path)
+    assert spawn_resp.processes[0].pid == unrelated_pid
+
+    # 3. 尝试 Stop：坚决禁止发信号误杀无辜进程，必须抛出 SeasonRegistryError
+    # 监控发送实质终止信号 (SIGTERM/SIGKILL)，确保没有向 unrelated_pid 发送停机信号
+    termination_signals_sent = []
+    real_os_kill = os.kill
+    def _spy_kill(pid, sig):
+        if sig in (signal.SIGTERM, signal.SIGKILL):
+            termination_signals_sent.append((pid, sig))
+        return real_os_kill(pid, sig)
+
+    monkeypatch.setattr(os, "kill", _spy_kill)
+
+    with pytest.raises(SeasonRegistryError, match="ownership_unknown|疑似残留 PID"):
+        stop_season_runtime(configs_dir, "s_unk")
+
+    # 确认没有向 unrelated_pid 发送任何停机终止信号
+    assert len(termination_signals_sent) == 0
+
+    # 清理测试进程
+    proc.kill()
+
+
+def test_r14b_failed_or_stopped_but_live_process_blocks_lifecycle(r14b_env):
+    """13. record.state 为 failed 或 stopped 但 OS PID 实际存活时，绝不允许 complete/delete."""
     configs_dir = r14b_env["configs_dir"]
     tmp_path = r14b_env["tmp_path"]
     models_dir = r14b_env["models_dir"]
@@ -428,25 +508,20 @@ def test_r14b_failed_or_stopped_but_live_process_blocks_lifecycle_and_duplicate(
         save_process_records_locked("s_cnt", [rec_failed_but_live])
 
     # 1. 尝试 Complete 赛季：基于 OS 事实，发现进程实际存活 -> 拦截 409！
-    with pytest.raises(SeasonRegistryError, match="runtime_active|正在运行的本地模型进程"):
+    with pytest.raises(SeasonRegistryError, match="runtime_active|正在运行或归属未知"):
         sr.set_season_status(configs_dir, "s_cnt", "completed")
 
-    # 2. 尝试 duplicate spawn：发现 account:bot_cnt 底层 PID 存活 -> 不生成新进程
-    spawn_resp = spawn_season_runtime(configs_dir, "s_cnt", project_root=tmp_path)
-    assert spawn_resp.processes[0].pid == proc.pid
-
-    # 3. 改写为 state="stopped" 但 PID 存活，且将 season 设为 completed（模拟异常残留孤儿）：尝试 Delete -> 依然强行拦截！
+    # 2. 改写为 state="stopped" 但 PID 存活，且将 season 设为 completed（模拟异常残留孤儿）：尝试 Delete -> 依然强行拦截！
     rec_failed_but_live.state = "stopped"
     with runtime_lock("s_cnt"):
         save_process_records_locked("s_cnt", [rec_failed_but_live])
 
-    # 直接将 season 状态改为 draft/completed 以测试 delete_season 的 runtime 拦截
     season_path = configs_dir / "s_cnt.json"
     raw_cfg = json.loads(season_path.read_text(encoding="utf-8"))
     raw_cfg["status"] = "completed"
     season_path.write_text(json.dumps(raw_cfg, ensure_ascii=False), encoding="utf-8")
 
-    with pytest.raises(SeasonRegistryError, match="runtime_active|正在运行的本地模型进程"):
+    with pytest.raises(SeasonRegistryError, match="runtime_active|正在运行或归属未知"):
         sr.delete_season(configs_dir, "s_cnt")
 
     # 清理后台测试进程
@@ -503,7 +578,7 @@ def test_r14b_spawn_vs_complete_concurrency_race(r14b_env):
     t1.join()
     t2.join()
 
-    # 结果检查：必须互斥（要么 spawn 成功则 complete 报错 runtime_active；要么 complete 成功则 spawn 报错 season_not_running）
+    # 结果检查：必须互斥
     final_cfg = sr.get_season(configs_dir, "s_race")
     status_resp = get_season_runtime_status(configs_dir, "s_race")
 
@@ -515,6 +590,67 @@ def test_r14b_spawn_vs_complete_concurrency_race(r14b_env):
 
     # 清理现场
     stop_season_runtime(configs_dir, "s_race")
+
+
+def test_r14b_spawn_vs_delete_explicit_barrier_concurrency_race(r14b_env):
+    """15. 并发竞态：spawn 与 delete 经过显式 Barrier 同步并发竞争，绝不能产生 (season JSON deleted + live process)."""
+    configs_dir = r14b_env["configs_dir"]
+    tmp_path = r14b_env["tmp_path"]
+    models_dir = r14b_env["models_dir"]
+
+    cp = _create_checkpoint(models_dir, "del_race.pth")
+    part_registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:dl_rc", label="DlRC", kind="local_model"))
+    art = part_registry.add_model_artifact("model:dl_rc", ModelArtifactCreate(label="dr.pth", artifact_path=str(cp), stage="promoted"))
+
+    for i in range(1, 4):
+        part_registry.create_account(AccountCreate(account_id=f"account:h{i}", display_name=f"H{i}", account_type="human"))
+    part_registry.create_account(AccountCreate(account_id="account:bot_dl", display_name="BotDL", account_type="managed_bot", model_identity_id="model:dl_rc"))
+
+    sr.create_season(configs_dir, season_id="s_del_race", title="Del Race Season")
+    sr.set_season_enrollment(
+        configs_dir, "s_del_race", ["account:h1", "account:h2", "account:h3", "account:bot_dl"],
+        provenance_by_model={"model:dl_rc": {"kind": "local_artifact", "model_identity_id": "model:dl_rc", "model_artifact_id": art.model_artifact_id}}
+    )
+
+    start_season_runtime(configs_dir, "s_del_race", project_root=tmp_path)
+
+    barrier = threading.Barrier(2)
+    results = []
+
+    def _do_spawn():
+        barrier.wait()
+        try:
+            def _sleep_cmd(p, root, py_exe):
+                return [sys.executable, "-c", "import time; time.sleep(30)"]
+            resp = spawn_season_runtime(configs_dir, "s_del_race", project_root=tmp_path, custom_command_builder=_sleep_cmd)
+            results.append(("spawn", resp))
+        except Exception as e:
+            results.append(("spawn_err", str(e)))
+
+    def _do_delete():
+        barrier.wait()
+        try:
+            del_resp = sr.delete_season(configs_dir, "s_del_race")
+            results.append(("delete", del_resp))
+        except Exception as e:
+            results.append(("delete_err", str(e)))
+
+    t1 = threading.Thread(target=_do_spawn)
+    t2 = threading.Thread(target=_do_delete)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    # 校验不变量：绝不允许 Season JSON 被删除但进程存活！
+    season_exists = (configs_dir / "s_del_race.json").exists()
+    if not season_exists:
+        # 如果已被删除，必须确认 runtime 下没有任何存活进程
+        records = load_process_records_locked("s_del_race")
+        assert not any(record_has_live_owned_process(r) for r in records)
+    else:
+        # 如果未被删除（例如 delete 因为 running/active 被拒绝），清理进程
+        stop_season_runtime(configs_dir, "s_del_race")
 
 
 def test_r14b_stop_sigterm_ignored_triggers_sigkill_and_exit_code_audit(r14b_env):

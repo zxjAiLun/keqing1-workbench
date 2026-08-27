@@ -73,25 +73,31 @@ class BotClientConfig:
     capture_sink: Any | None = None
 
     def resolved_model_path(self) -> Path | None:
+        if self.model_path is not None:
+            return Path(self.model_path).resolve()
         kind, resolved = resolve_bot_spec(self.bot_name, self.project_root)
         if kind == "rulebase":
             return None
-        if self.model_path is not None:
-            return Path(self.model_path)
         return resolved
 
 
 class GatewayBotClient:
     def __init__(self, config: BotClientConfig):
-        # Validate the bot spec up front (clear error instead of a deep torch.load failure).
-        kind, _ = resolve_bot_spec(config.bot_name, config.project_root)
-        if kind not in ("mortal", "rulebase"):
-            raise ValueError(f"unsupported bot spec: {config.bot_name}")
+        # 若显式提供了 model_path，直接以 explicit path 启动，彻底解耦 named bot spec 的存在性
+        if config.model_path is not None:
+            mp = Path(config.model_path).resolve()
+            if not mp.exists():
+                raise FileNotFoundError(f"missing model checkpoint: {mp}")
+        else:
+            # Validate the bot spec up front (clear error instead of a deep torch.load failure).
+            kind, _ = resolve_bot_spec(config.bot_name, config.project_root)
+            if kind not in ("mortal", "rulebase"):
+                raise ValueError(f"unsupported bot spec: {config.bot_name}")
+            model_path = config.resolved_model_path()
+            if model_path is not None and not model_path.exists():
+                raise FileNotFoundError(f"missing model checkpoint: {model_path}")
 
         config.room = normalize_tenhou_room(config.room)
-        model_path = config.resolved_model_path()
-        if model_path is not None and not model_path.exists():
-            raise FileNotFoundError(f"missing model checkpoint: {model_path}")
 
         self.config = config
         self._bot: Any | None = None

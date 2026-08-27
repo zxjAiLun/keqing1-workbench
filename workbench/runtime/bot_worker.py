@@ -64,7 +64,7 @@ def run_worker(args: argparse.Namespace) -> int:
         port=args.port,
         room=args.room,
         name=display_name,
-        bot_name=args.bot_name,
+        bot_name=str(model_path),  # 显式使用 exact checkpoint path，彻底杜绝 default "mortal" 依赖
         project_root=project_root,
         model_path=model_path,
         device=args.device,

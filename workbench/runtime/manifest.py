@@ -812,3 +812,146 @@ def get_season_runtime_manifest(
         raise SeasonRegistryError(f"无法生成历史运行时清单: {detail_msgs}")
 
     return manifest
+
+
+# ---------------------------------------------------------------------------
+# 7. Persisted Manifest Self-Integrity Validator
+# ---------------------------------------------------------------------------
+
+def validate_persisted_manifest_against_season(
+    season: dict[str, Any],
+    manifest_raw: Any,
+) -> SeasonRuntimeManifest:
+    """严格校验 canonical Season JSON 中持久化的 runtime_manifest 的自洽性与权威绑定。
+
+    防范任何静默篡改（包括仅篡改 runtime_spec、伪造 manifest_id、或改换 provenance）。
+    """
+    from replay.ladder import SeasonRegistryError
+
+    if not isinstance(manifest_raw, dict):
+        raise SeasonRegistryError("runtime_manifest 必须是对象")
+
+    try:
+        manifest = SeasonRuntimeManifest.model_validate(manifest_raw)
+    except Exception as exc:
+        raise SeasonRegistryError(f"runtime_manifest 结构校验失败: {exc}") from exc
+
+    season_id = str(season.get("season_id") or "")
+    status = str(season.get("status") or "")
+
+    # 1. 生命周期门禁：draft 不允许持久化 frozen manifest
+    if status == "draft":
+        raise SeasonRegistryError("draft 赛季不允许包含持久化的 runtime_manifest")
+
+    if manifest.materialization != "frozen":
+        raise SeasonRegistryError(
+            f"持久化的 runtime_manifest 其 materialization 必须为 'frozen' (当前为 '{manifest.materialization}')"
+        )
+
+    if not manifest.generated_at:
+        raise SeasonRegistryError("持久化 frozen runtime_manifest 必须包含 generated_at 时间戳")
+
+    if manifest.season_id != season_id:
+        raise SeasonRegistryError(
+            f"runtime_manifest.season_id '{manifest.season_id}' 与注册表 season_id '{season_id}' 不一致"
+        )
+
+    # 2. Season Authority Hash 强校验
+    expected_authority_hash = compute_season_authority_hash(season)
+    if manifest.season_authority_hash != expected_authority_hash:
+        raise SeasonRegistryError(
+            f"runtime_manifest 的 season_authority_hash '{manifest.season_authority_hash}' "
+            f"与当前配置权威哈希 '{expected_authority_hash}' 不一致 (authority_hash_drift)"
+        )
+
+    # 3. Manifest ID 重新计算并比对（保证 participants / runtime_spec 未被单边篡改）
+    expected_manifest_id = compute_manifest_id(
+        manifest.season_id,
+        manifest.season_authority_hash,
+        manifest.participants,
+    )
+    if manifest.manifest_id != expected_manifest_id:
+        raise SeasonRegistryError(
+            f"runtime_manifest 的 manifest_id '{manifest.manifest_id}' "
+            f"与 participants 内容推导值 '{expected_manifest_id}' 不一致 (manifest_id_drift)"
+        )
+
+    # 4. scoring_summary 与 Season scoring 比对
+    if manifest.scoring_summary != (season.get("scoring") or {}):
+        raise SeasonRegistryError("runtime_manifest 的 scoring_summary 与 season scoring 不一致 (scoring_drift)")
+
+    # 5. Manifest Participants 与 Season Enrollment 精确交叉校验
+    season_account_info: dict[str, dict[str, Any]] = {}
+    for m in season.get("models") or []:
+        if not isinstance(m, dict):
+            continue
+        model_id = str(m.get("model_id") or "")
+        group_ident = m.get("model_identity_id")
+        group_prov = m.get("execution_provenance")
+        for acc in m.get("accounts") or []:
+            if not isinstance(acc, dict) or not acc.get("account_id"):
+                continue
+            aid = acc["account_id"]
+            season_account_info[aid] = {
+                "model_id": model_id,
+                "group_ident": group_ident,
+                "group_prov": group_prov,
+                "display_name": acc.get("display_name"),
+            }
+
+    manifest_accounts = {p.account_id: p for p in manifest.participants}
+    if set(manifest_accounts.keys()) != set(season_account_info.keys()):
+        raise SeasonRegistryError("runtime_manifest 的参与者集合与 Season enrollment 不一致")
+
+    for p in manifest.participants:
+        info = season_account_info[p.account_id]
+        if info["display_name"] is not None and p.display_name != info["display_name"]:
+            raise SeasonRegistryError(
+                f"participant {p.account_id} display_name '{p.display_name}' 与 season enrollment '{info['display_name']}' 不一致"
+            )
+
+        # 检查 execution_provenance 与 group provenance 是否一致
+        if info["group_prov"]:
+            expected_prov = FrozenExecutionProvenance.model_validate(info["group_prov"])
+            if p.execution_provenance != expected_prov:
+                raise SeasonRegistryError(
+                    f"participant {p.account_id} 的 execution_provenance 与 season group provenance 不一致"
+                )
+        else:
+            if info["model_id"] == "human":
+                if p.execution_provenance.kind != "human":
+                    raise SeasonRegistryError(f"真人 participant {p.account_id} 的 execution_provenance.kind 必须为 human")
+            else:
+                raise SeasonRegistryError(f"AI participant {p.account_id} 所属 group 缺少 execution_provenance")
+
+        # 检查 model_identity_id
+        if p.execution_provenance.kind == "human":
+            if p.model_identity_id is not None:
+                raise SeasonRegistryError(f"真人 participant {p.account_id} model_identity_id 必须为 None")
+        else:
+            expected_ident = p.execution_provenance.model_identity_id or info["group_ident"]
+            if p.model_identity_id != expected_ident:
+                raise SeasonRegistryError(
+                    f"participant {p.account_id} model_identity_id '{p.model_identity_id}' 与期望 '{expected_ident}' 不一致"
+                )
+
+        # 检查 runtime_spec 与 provenance 交叉一致性
+        if p.execution_provenance.kind == "human":
+            if p.runtime_spec.kind != "human" or p.runtime_spec.controller_type != "human_ui":
+                raise SeasonRegistryError(f"真人 participant {p.account_id} runtime_spec 类型异常")
+        elif p.execution_provenance.kind == "local_artifact":
+            if p.runtime_spec.kind != "local_artifact" or p.runtime_spec.controller_type != "local_model":
+                raise SeasonRegistryError(f"本地模型 participant {p.account_id} runtime_spec 类型异常")
+            if p.runtime_spec.model_identity_id != p.execution_provenance.model_identity_id:
+                raise SeasonRegistryError(f"participant {p.account_id} runtime_spec model_identity_id 与凭据不一致")
+            if p.runtime_spec.model_artifact_id != p.execution_provenance.model_artifact_id:
+                raise SeasonRegistryError(f"participant {p.account_id} runtime_spec model_artifact_id 与凭据不一致")
+        elif p.execution_provenance.kind == "external_revision":
+            if p.runtime_spec.kind != "external_revision" or p.runtime_spec.controller_type != "external_agent":
+                raise SeasonRegistryError(f"外部模型 participant {p.account_id} runtime_spec 类型异常")
+            if p.runtime_spec.model_identity_id != p.execution_provenance.model_identity_id:
+                raise SeasonRegistryError(f"participant {p.account_id} runtime_spec model_identity_id 与凭据不一致")
+            if p.runtime_spec.external_revision_id != p.execution_provenance.external_revision_id:
+                raise SeasonRegistryError(f"participant {p.account_id} runtime_spec external_revision_id 与凭据不一致")
+
+    return manifest

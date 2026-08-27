@@ -168,6 +168,7 @@ export function SeasonManagerPage() {
   // 编辑权限：draft 可增删；legacy running（无 manifest）只增；frozen running 及 completed/archived 只读（backend 硬 gate）
   const canEdit = status === 'draft';
   const canAddOnly = status === 'running' && !config?.runtime_manifest;
+  const rosterFrozen = (status === 'running' && !!config?.runtime_manifest) || status === 'completed' || status === 'archived';
 
   return (
     <PageShell>
@@ -405,7 +406,7 @@ export function SeasonManagerPage() {
               {accounts.map((account) => {
                 const checked = draftSelection.has(account.account_id);
                 const wasEnrolled = enrolledIds.has(account.account_id);
-                const disabled = status === 'completed' || status === 'archived' || (canAddOnly && wasEnrolled);
+                const disabled = rosterFrozen || (canAddOnly && wasEnrolled);
                 return (
                   <label
                     key={account.account_id}

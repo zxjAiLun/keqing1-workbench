@@ -562,3 +562,87 @@ def test_r14_display_name_uses_frozen_enrollment_snapshot(r14_env):
     manifest = started["runtime_manifest"]
     p1 = next(p for p in manifest["participants"] if p["account_id"] == "account:fn1")
     assert p1["display_name"] == "Original_1"
+
+
+def test_r14_persisted_manifest_tamper_spec_only_fails_closed(r14_env):
+    """25. 对抗测试 A：Start 后只篡改 runtime_manifest 中的 runtime_spec（Season 完全不动），加载时必须 fail-closed."""
+    configs_dir = r14_env["configs_dir"]
+    tmp_path = r14_env["tmp_path"]
+    models_dir = r14_env["models_dir"]
+
+    cp = _create_checkpoint(models_dir, "spec_tamp.pth")
+    part_registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:sp_t", label="SpT", kind="local_model"))
+    art = part_registry.add_model_artifact("model:sp_t", ModelArtifactCreate(label="sp_t.pth", artifact_path=str(cp), stage="promoted"))
+    for i in range(1, 4):
+        part_registry.create_account(AccountCreate(account_id=f"account:h{i}", display_name=f"H{i}", account_type="human"))
+    part_registry.create_account(AccountCreate(account_id="account:bot_sp", display_name="BotSp", account_type="managed_bot", model_identity_id="model:sp_t"))
+
+    sr.create_season(configs_dir, season_id="s_sp_t", title="Spec Tamper Season")
+    sr.set_season_enrollment(
+        configs_dir, "s_sp_t", ["account:h1", "account:h2", "account:h3", "account:bot_sp"],
+        provenance_by_model={"model:sp_t": {"kind": "local_artifact", "model_identity_id": "model:sp_t", "model_artifact_id": art.model_artifact_id}}
+    )
+
+    start_season_runtime(configs_dir, "s_sp_t", project_root=tmp_path)
+
+    # 手工篡改磁盘上的 runtime_spec.model_artifact_id（Season models/scoring/authority_hash 保持不变）
+    season_path = configs_dir / "s_sp_t.json"
+    raw_season = json.loads(season_path.read_text(encoding="utf-8"))
+    for p in raw_season["runtime_manifest"]["participants"]:
+        if p["account_id"] == "account:bot_sp":
+            p["runtime_spec"]["model_artifact_id"] = "artifact:sp_t:fake_id"
+    season_path.write_text(json.dumps(raw_season, ensure_ascii=False), encoding="utf-8")
+
+    # 尝试加载注册表，必须 fail-closed 拦截（由于 manifest_id 或 runtime_spec 漂移）
+    with pytest.raises(SeasonRegistryError, match="manifest_id_drift|与凭据不一致"):
+        _load_registry_file(season_path)
+
+
+def test_r14_persisted_manifest_tamper_provenance_and_rehash_manifest_id_fails_closed(r14_env):
+    """26. 对抗测试 B：Start 后把 Manifest provenance 从 A 改成 B 并重算 manifest_id，但 Season 仍冻结 A，必须 fail-closed."""
+    configs_dir = r14_env["configs_dir"]
+    tmp_path = r14_env["tmp_path"]
+    models_dir = r14_env["models_dir"]
+
+    cp1 = _create_checkpoint(models_dir, "prov_a.pth")
+    cp2 = _create_checkpoint(models_dir, "prov_b.pth")
+    part_registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:pr_ab", label="PrAB", kind="local_model"))
+    art_a = part_registry.add_model_artifact("model:pr_ab", ModelArtifactCreate(label="A.pth", artifact_path=str(cp1), stage="promoted"))
+    art_b = part_registry.add_model_artifact("model:pr_ab", ModelArtifactCreate(label="B.pth", artifact_path=str(cp2), stage="promoted"))
+    for i in range(1, 4):
+        part_registry.create_account(AccountCreate(account_id=f"account:h{i}", display_name=f"H{i}", account_type="human"))
+    part_registry.create_account(AccountCreate(account_id="account:bot_pr", display_name="BotPr", account_type="managed_bot", model_identity_id="model:pr_ab"))
+
+    sr.create_season(configs_dir, season_id="s_pr_ab", title="Prov AB Season")
+    sr.set_season_enrollment(
+        configs_dir, "s_pr_ab", ["account:h1", "account:h2", "account:h3", "account:bot_pr"],
+        provenance_by_model={"model:pr_ab": {"kind": "local_artifact", "model_identity_id": "model:pr_ab", "model_artifact_id": art_a.model_artifact_id}}
+    )
+
+    start_season_runtime(configs_dir, "s_pr_ab", project_root=tmp_path)
+
+    # 手工篡改磁盘上的 Manifest：将 bot_pr 的 provenance 和 runtime_spec 都改成 B，并重新计算合法的 manifest_id！
+    # 但 Season 自身 models 仍然是 A
+    season_path = configs_dir / "s_pr_ab.json"
+    raw_season = json.loads(season_path.read_text(encoding="utf-8"))
+    manifest = raw_season["runtime_manifest"]
+    for p in manifest["participants"]:
+        if p["account_id"] == "account:bot_pr":
+            p["execution_provenance"]["model_artifact_id"] = art_b.model_artifact_id
+            p["runtime_spec"]["model_artifact_id"] = art_b.model_artifact_id
+            p["runtime_spec"]["artifact_path"] = str(cp2)
+            p["runtime_spec"]["resolved_checkpoint_path"] = str(cp2)
+    # 重算 manifest_id 使得 self-hash 校验通过
+    manifest_id_payload = {
+        "season_id": manifest["season_id"],
+        "season_authority_hash": manifest["season_authority_hash"],
+        "participants": manifest["participants"],
+    }
+    raw_p = json.dumps(manifest_id_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    manifest["manifest_id"] = f"manifest:{manifest['season_id']}:{hashlib.sha256(raw_p.encode('utf-8')).hexdigest()[:12]}"
+    season_path.write_text(json.dumps(raw_season, ensure_ascii=False), encoding="utf-8")
+
+    # 尝试加载注册表，必须发现 Manifest 与 Season Authority 不一致并 fail-closed 抛错！
+    with pytest.raises(SeasonRegistryError, match="与 season group provenance 不一致"):
+        _load_registry_file(season_path)
+

@@ -43,6 +43,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--device", default=os.environ.get("KEQING_DEVICE", "cpu"), help="Inference device (cpu/cuda)")
     parser.add_argument("--project-root", default=str(REPO_ROOT), help="Project root directory")
     parser.add_argument("--verify-only", action="store_true", help="Validate checkpoint and config then exit 0")
+    parser.add_argument(
+        "--runtime-session-id",
+        default="",
+        help="R14-B execution session id (records observed Tenhou log evidence)",
+    )
     return parser.parse_args(argv)
 
 
@@ -69,6 +74,7 @@ def run_worker(args: argparse.Namespace) -> int:
         model_path=model_path,
         device=args.device,
         ladder_account_id=args.account_id,
+        runtime_session_id=str(args.runtime_session_id or "") or None,
     )
 
     if args.verify_only:

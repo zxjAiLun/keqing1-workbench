@@ -234,6 +234,12 @@ def _validate_frozen_manifest_path(
             external_revision_id=manifest_frozen_prov.external_revision_id,
         )
 
+        # R14-C Repair 2 (P1-2): controller 由 Manifest participant canonicalize
+        # （seat 声明与 Manifest 冲突时以 Manifest 为准——执行类型是冻结事实）
+        manifest_controller = str(m_part.controller_type or "")
+        if manifest_controller and hasattr(seat, "controller_type"):
+            seat.controller_type = manifest_controller  # type: ignore[attr-defined]
+
         # 双模块路径防御：manifest 可能通过 workbench.participants.schemas 导入
         # FrozenExecutionProvenance（与本模块相对导入不同类），统一 revalidate
         local_frozen_prov = FrozenExecutionProvenance.model_validate(
@@ -244,80 +250,81 @@ def _validate_frozen_manifest_path(
         provenance_by_seat[int(seat_no)] = can_prov
         seat_frozen_prov_map[int(seat_no)] = local_frozen_prov
 
-    # R14-C Repair 1 (P1-4): RuntimeMatchBinding 只在有可信 session evidence 时构造
+    # R14-C Repair 2 (P1-4): RuntimeMatchBinding 只在有可信 R14-B execution
+    # session evidence 时构造。session 必须是 supervisor spawn epoch 持久化的
+    # keqing.runtime.execution_session.v1（旧 Play-with-you binding.json 是
+    # legacy，不再被当成 R14 runtime evidence）。
+    # 显式/自动发现 session 后证据缺失或错配 → fail-closed 抛错，绝不
+    # 静默降级成 runtime_binding=None 后继续正式入账。
     runtime_binding: RuntimeMatchBinding | None = None
     if session_id is not None:
-        # 验证 session 对应的 binding.json 确实存在并与当前 Manifest 一致
-        session_verified = _verify_session_manifest_consistency(
+        _verify_execution_session_evidence(
             session_id, manifest, season_id, seat_accounts_map
         )
-        if session_verified:
-            from workbench.participants.paths import now_iso
-            runtime_binding = RuntimeMatchBinding(
-                season_id=manifest.season_id,
-                manifest_id=manifest.manifest_id,
-                season_authority_hash=manifest.season_authority_hash,
-                session_id=session_id,
-                seat_provenance=seat_frozen_prov_map,
-                seat_accounts=seat_accounts_map,
-                admitted_at=now_iso(),
-            )
+        from workbench.participants.paths import now_iso
+
+        runtime_binding = RuntimeMatchBinding(
+            season_id=manifest.season_id,
+            manifest_id=manifest.manifest_id,
+            season_authority_hash=manifest.season_authority_hash,
+            session_id=session_id,
+            seat_provenance=seat_frozen_prov_map,
+            seat_accounts=seat_accounts_map,
+            admitted_at=now_iso(),
+        )
 
     return provenance_by_seat, runtime_binding
 
 
-def _verify_session_manifest_consistency(
+def _verify_execution_session_evidence(
     session_id: str,
     manifest,
     season_id: str,
     seat_accounts_map: dict[int, str] | None = None,
-) -> bool:
-    """验证 runtime/capture session 确实对应同一 Season + Manifest + roster。
+) -> None:
+    """验证 R14-B execution session 与当前 Season/Manifest/seats 完全一致。
 
-    Fail-closed 证据链（R14-C Repair 1 / P1-4）：
-    1. session 的 ``binding.json`` 必须存在（无 capture binding ≠ R14 runtime）；
-    2. binding 记录的 ``season_id`` 必须与当前 Season 精确一致；
-    3. binding 记录的 ``manifest_id``（若存在）必须与 persisted Manifest 一致；
-    4. binding roster（若包含已登记账号）必须与 Match seats 的账号集合一致。
-
-    任何校验失败返回 False——intake 仍可成功，但绝不授予 RuntimeMatchBinding。
+    Fail-closed（R14-C Repair 2 / P1-4）——任何不一致直接抛 ValueError：
+    1. session 必须是 ``keqing.runtime.execution_session.v1``（supervisor
+       spawn epoch 持久化）；旧 Play-with-you binding.json 不再被接受；
+    2. ``season_id`` / ``manifest_id`` / ``season_authority_hash`` 必须与
+       当前 persisted Manifest 精确一致；
+    3. session 的 participant 账号集合必须与 Match seats 账号集合一致。
     """
-    import json
+    from workbench.runtime.execution_session import load_execution_session
 
-    from workbench.runtime.resolver import ladder_capture_root
+    session = load_execution_session(session_id)
+    if session is None:
+        raise ValueError(
+            f"runtime session {session_id} 不是有效的 R14-B execution session "
+            "(缺少 keqing.runtime.execution_session.v1 记录)——"
+            "R14 赛季的 runtime-bound 对局必须有真实执行会话证据"
+        )
 
-    binding_path = ladder_capture_root() / session_id / "binding.json"
-    if not binding_path.exists():
-        # 没有 capture binding，不能证明来自 R14 runtime
-        return False
-    try:
-        binding = json.loads(binding_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    if not isinstance(binding, dict):
-        return False
+    if session.season_id != season_id:
+        raise ValueError(
+            f"runtime session {session_id} 属于赛季 {session.season_id}，"
+            f"与当前赛季 {season_id} 不一致"
+        )
+    if session.manifest_id != manifest.manifest_id:
+        raise ValueError(
+            f"runtime session {session_id} 的 manifest ({session.manifest_id}) "
+            f"与当前 Frozen Runtime Manifest ({manifest.manifest_id}) 不一致"
+        )
+    if session.season_authority_hash != manifest.season_authority_hash:
+        raise ValueError(
+            f"runtime session {session_id} 的 season_authority_hash 与当前 "
+            "Frozen Runtime Manifest 不一致"
+        )
 
-    # 1. season_id 精确一致（缺失视为不可信）
-    binding_season = binding.get("season_id")
-    if not binding_season or str(binding_season) != season_id:
-        return False
-
-    # 2. manifest_id（若 capture 冻结时记录）必须与当前 persisted Manifest 一致
-    binding_manifest = binding.get("manifest_id")
-    if binding_manifest and str(binding_manifest) != manifest.manifest_id:
-        return False
-
-    # 3. roster 账号证据：binding roster 中已登记的账号必须与 Match seats 一致
     if seat_accounts_map is not None:
-        roster_accounts = {
-            str(entry.get("account_id") or "").strip()
-            for entry in (binding.get("roster") or [])
-            if isinstance(entry, dict) and str(entry.get("account_id") or "").strip()
-        }
-        if roster_accounts and roster_accounts != set(seat_accounts_map.values()):
-            return False
-
-    return True
+        session_accounts = {p.account_id for p in session.participants}
+        seat_accounts = set(seat_accounts_map.values())
+        if session_accounts != seat_accounts:
+            raise ValueError(
+                f"runtime session {session_id} 的参与者集合 ({sorted(session_accounts)}) "
+                f"与对局座位账号 ({sorted(seat_accounts)}) 不一致"
+            )
 
 
 # ---------------------------------------------------------------------------

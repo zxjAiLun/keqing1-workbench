@@ -442,6 +442,25 @@ def spawn_season_runtime(
             records = sync_process_states_locked(season_id)
             records_by_account = {r.account_id: r for r in records}
 
+            # R14-C Repair 2 (P1-4): 本次 spawn epoch 的 execution session。
+            # 只有实际 spawn 了至少一个进程才创建新 session（幂等 re-spawn 不刷新）。
+            from runtime.execution_session import (
+                ExecutionSessionParticipant,
+                RuntimeExecutionSession,
+                make_execution_session_id,
+                persist_execution_session_locked,
+            )
+
+            spawned_any = any(
+                participant.account_id not in records_by_account
+                or not record_has_live_owned_process(records_by_account[participant.account_id])
+                for participant in plan.spawnable_participants
+            )
+            session_id: str | None = None
+            _pending_session_participants: dict[str, ExecutionSessionParticipant] = {}
+            if spawned_any:
+                session_id = make_execution_session_id(season_id, manifest.manifest_id)
+
             # 启动每个 spawnable 参与者
             for participant in plan.spawnable_participants:
                 aid = participant.account_id
@@ -457,6 +476,7 @@ def spawn_season_runtime(
                     project_root=project_root,
                     python_executable=py_exe,
                     custom_command_builder=custom_command_builder,
+                    session_id=session_id,
                 )
                 log_file = logs_dir / f"{aid.replace(':', '_')}.log"
                 owner_tok = uuid.uuid4().hex
@@ -541,6 +561,41 @@ def spawn_season_runtime(
                             pass
 
                 records_by_account[aid] = rec
+
+                # R14-C Repair 2 (P1-4): 记录 execution session participant
+                # （无论 spawn 成败——成败由进程事实反映，session 冻结的是
+                # "这一 epoch 试图启动谁、用什么 provenance"）。
+                if session_id is not None:
+                    _pending_session_participants[aid] = ExecutionSessionParticipant(
+                        account_id=aid,
+                        controller_type=str(participant.controller_type),
+                        execution_provenance=participant.execution_provenance.model_dump(),
+                        runtime_id=runtime_id,
+                        pid=rec.pid,
+                        birth_identity=rec.birth_identity,
+                    )
+
+            # R14-C Repair 2 (P1-4): 本次 spawn epoch 结束——原子持久化
+            # execution session（冻结 season/manifest/authority hash/participant set）
+            if session_id is not None and _pending_session_participants:
+                persist_execution_session_locked(
+                    RuntimeExecutionSession(
+                        session_id=session_id,
+                        season_id=season_id,
+                        manifest_id=manifest.manifest_id,
+                        season_authority_hash=manifest.season_authority_hash,
+                        participants=list(_pending_session_participants.values())
+                        + [
+                            ExecutionSessionParticipant(
+                                account_id=p.account_id,
+                                controller_type=str(p.controller_type),
+                                execution_provenance=p.execution_provenance.model_dump(),
+                            )
+                            for p in plan.unmanaged_participants
+                        ],
+                        created_at=now_iso(),
+                    )
+                )
 
             final_records = list(records_by_account.values())
             save_process_records_locked(season_id, final_records)

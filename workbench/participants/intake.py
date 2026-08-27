@@ -583,10 +583,16 @@ def _resolve_seat(
     name: str,
     session_id: str | None,
     external_match_id: str,
+    frozen_admission: bool = False,
 ) -> tuple[AccountCreate | None, ExternalAliasCreate | None, MatchSeat, dict]:
     """锁内解析单个座位。返回 (account_to_create, alias_to_register, seat, audit)。
 
     优先级：alias_id（服务端重新校验候选别名，alias 为权威）> 显式 account_id/model 字段。
+
+    R14-C Repair 2 (P1-2): ``frozen_admission=True``（R14 persisted-manifest
+    赛季的正式摄入）跳过 Current Participants policy 检查（enabled/rebind/
+    artifact 归属）——Frozen Manifest 是唯一执行权威，锁内 ladder gate 会做
+    精确的 Manifest account/provenance 一致性校验并 fail-closed。
     """
     seat_no = int(raw_res["seat"])
     action = raw_res.get("action", "assign")
@@ -635,9 +641,9 @@ def _resolve_seat(
         if account_id:
             # 别名绑定了账号：权威自动解析
             account = registry.get_account(account_id)
-            if account is None:
+            if account is None and not frozen_admission:
                 raise ValueError(f"别名绑定的账号已不存在: {account_id}")
-            if not account.enabled:
+            if account is not None and not account.enabled and not frozen_admission:
                 raise ValueError(f"别名绑定的账号已停用: {account_id}")
             alias_to_register = None  # 消费已有 alias 时不再创建新别名
         else:
@@ -645,11 +651,15 @@ def _resolve_seat(
             # 请求必须提供 account_id（不可缺省），且所选账号必须能使用该模型身份。
             account_id = raw_res.get("account_id")
             account = registry.get_account(account_id) if account_id else None
-            if account is None:
+            if account is None and not frozen_admission:
                 raise ValueError(f"座位 {seat_no}（{name}）需要人工指派账号（本次运行模型已冻结）")
-            if not account.enabled:
+            if account is not None and not account.enabled and not frozen_admission:
                 raise ValueError(f"账号已停用: {account_id}")
-            if model_identity_id and not registry.identity_belongs_to_account(model_identity_id, account_id):
+            if (
+                model_identity_id
+                and not frozen_admission
+                and not registry.identity_belongs_to_account(model_identity_id, account_id)
+            ):
                 raise ValueError(f"账号 {account_id} 不能使用本次运行模型身份 {model_identity_id}")
             # P1：NoName-N 是 session-generated name，禁止晋升成 global identity rule
             if alias_scope == "global":
@@ -695,14 +705,14 @@ def _resolve_seat(
     else:
         account_id = raw_res.get("account_id")
         account = registry.get_account(account_id) if account_id else None
-        if account is None:
+        if account is None and not frozen_admission:
             raise ValueError(f"座位 {seat_no} 指派了不存在的账号: {account_id}")
-        if not account.enabled:
+        if account is not None and not account.enabled and not frozen_admission:
             raise ValueError(f"账号已停用: {account_id}")
         model_identity_id = raw_res.get("model_identity_id")
         model_artifact_id = raw_res.get("model_artifact_id")
         external_revision_id = raw_res.get("external_revision_id")
-        controller_type = raw_res.get("default_controller") or account.default_controller
+        controller_type = raw_res.get("default_controller") or (account.default_controller if account else None)
         alias_to_register = _build_alias(
             name=name, account_id=account_id, seat_no=seat_no,
             model_identity_id=model_identity_id, model_artifact_id=model_artifact_id,
@@ -710,12 +720,13 @@ def _resolve_seat(
             session_id=session_id, external_match_id=external_match_id,
         )
 
-    if model_identity_id and not registry.identity_belongs_to_account(model_identity_id, account_id):
-        raise ValueError(f"模型身份 {model_identity_id} 不属于账号 {account_id}")
-    if not registry.artifact_belongs_to_identity(model_identity_id, model_artifact_id):
-        raise ValueError(f"模型产物 {model_artifact_id} 不属于身份 {model_identity_id}")
-    if not registry.external_revision_belongs_to_identity(model_identity_id, external_revision_id):
-        raise ValueError(f"外部版本 {external_revision_id} 不属于身份 {model_identity_id}")
+    if not frozen_admission:
+        if model_identity_id and not registry.identity_belongs_to_account(model_identity_id, account_id):
+            raise ValueError(f"模型身份 {model_identity_id} 不属于账号 {account_id}")
+        if not registry.artifact_belongs_to_identity(model_identity_id, model_artifact_id):
+            raise ValueError(f"模型产物 {model_artifact_id} 不属于身份 {model_identity_id}")
+        if not registry.external_revision_belongs_to_identity(model_identity_id, external_revision_id):
+            raise ValueError(f"外部版本 {external_revision_id} 不属于身份 {model_identity_id}")
 
     seat = MatchSeat(
         seat=seat_no,
@@ -799,7 +810,18 @@ def resolve_and_create_match(
     # 只带 ?url=（刷新/分享后无 SPA state），这里按 log_id 恢复 session_id，
     # 使 _resolve_seat 能重新校验 session alias（NoName-N → frozen model）。
     if not session_id:
-        session_id = _session_id_for_log_id(log_id)
+        # R14-C Repair 2 (P1-4): 优先从 R14-B execution session 的 worker
+        # 观测记录反查（真实 runtime evidence），再回退 legacy pwy capture。
+        try:
+            from workbench.runtime.execution_session import find_sessions_for_log
+
+            r14_sessions = find_sessions_for_log(log_id)
+        except Exception:  # noqa: BLE001
+            r14_sessions = []
+        if r14_sessions:
+            session_id = r14_sessions[0].session_id
+        else:
+            session_id = _session_id_for_log_id(log_id)
     preview = build_preview(f"https://tenhou.net/3/?log={log_id}", session_id=session_id)
     tenhou6 = download_tenhou6(log_id)
     events = tenhou6_events(tenhou6)
@@ -827,6 +849,15 @@ def resolve_and_create_match(
         if existing is not None:
             raise DuplicateMatchError(log_id, existing.match_id)
 
+        # R14-C Repair 2 (P1-2): R14 frozen-manifest 赛季的正式摄入跳过
+        # Current Participants policy（enabled/rebind）——Frozen Manifest 是
+        # 唯一执行权威，下方 ladder gate 做精确 Manifest 一致性校验。
+        from .ladder_eligibility import season_has_frozen_manifest
+
+        frozen_admission = bool(
+            rating_eligible and season_id and season_has_frozen_manifest(season_id)
+        )
+
         # 锁内解析：账号/别名/seat/audit 全部在内存中构造（校验失败时无任何副作用）
         accounts_to_create: list[AccountCreate] = []
         aliases_to_register: list[ExternalAliasCreate] = []
@@ -838,6 +869,7 @@ def resolve_and_create_match(
                 name=names[int(raw_res["seat"])],
                 session_id=session_id,
                 external_match_id=log_id,
+                frozen_admission=frozen_admission,
             )
             if acc is not None:
                 accounts_to_create.append(acc)
@@ -1180,11 +1212,20 @@ def assess_intake_admission(
             continue
 
         try:
+            # R14-C Repair 2 (P1-2): frozen-manifest 赛季的 preflight 同样绕开
+            # Current Participants policy（与 confirm 行为一致）。
+            from .ladder_eligibility import season_has_frozen_manifest
+
+            _pf_frozen = bool(
+                season_config is not None
+                and season_has_frozen_manifest(normalized_season_id, project_root=active_root)
+            )
             _, _, mem_seat, _ = _resolve_seat(
                 raw_res,
                 name=pname,
                 session_id=session_id,
                 external_match_id=log_id,
+                frozen_admission=_pf_frozen,
             )
         except Exception as exc:
             seat_issues.append(

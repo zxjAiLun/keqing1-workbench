@@ -108,22 +108,30 @@ def build_process_command(
     project_root: Path,
     python_executable: str = sys.executable,
     custom_command_builder: Any | None = None,
+    session_id: str | None = None,
 ) -> list[str]:
     """根据 Participant 的 runtime_spec 构建子进程启动命令。
 
     严格使用 Manifest 中的 resolved_checkpoint_path，严禁重新 resolve catalog current!
     生产环境下启动 workbench.runtime.bot_worker CLI 入口。
+
+    R14-C Repair 2 (P1-4): ``session_id``（execution session）传给 worker，
+    worker 观察到的 Tenhou log 归属记录到该 session 的 capture 目录。
     """
     if not isinstance(participant.runtime_spec, LocalArtifactRuntimeSpec):
         raise ValueError(f"参与者 {participant.account_id} 不是本地模型规范")
 
     if custom_command_builder is not None:
-        return custom_command_builder(participant, project_root, python_executable)
+        cmd = custom_command_builder(participant, project_root, python_executable)
+        # R14-C Repair 2: custom builder 也要携带 execution session 证据参数
+        if session_id and "--runtime-session-id" not in cmd:
+            cmd = list(cmd) + ["--runtime-session-id", session_id]
+        return cmd
 
     spec: LocalArtifactRuntimeSpec = participant.runtime_spec
     model_cp = spec.resolved_checkpoint_path
 
-    return [
+    cmd = [
         python_executable,
         "-m",
         "workbench.runtime.bot_worker",
@@ -136,3 +144,6 @@ def build_process_command(
         "--project-root",
         str(project_root),
     ]
+    if session_id:
+        cmd.extend(["--runtime-session-id", session_id])
+    return cmd

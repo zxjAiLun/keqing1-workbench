@@ -272,8 +272,17 @@ def validate_match(
     force: bool,
     reason: str | None,
     registry,
+    skip_current_policy: bool = False,
 ) -> tuple[list[int], list[ValidationIssue]]:
-    """返回 (ranks, issues)。排名恒计算；校验不通过时由调用方决定是否强制保存。"""
+    """返回 (ranks, issues)。排名恒计算；校验不通过时由调用方决定是否强制保存。
+
+    R14-C Repair 2 (P1-2): 校验拆为两层——
+    - **structural/result validation**（座位形状/分数/ranks/force）永远执行；
+    - **Current Participants policy validation**（账号存在/启用、identity/
+      artifact/revision 归属）默认执行；R14 persisted-manifest path 应传
+      ``skip_current_policy=True``——Frozen Manifest 是唯一执行权威，
+      Start 之后的 disable/rebind/retire 不得拦截已冻结对局的落账。
+    """
     issues: list[ValidationIssue] = []
 
     if len(seats) != 4:
@@ -285,40 +294,47 @@ def validate_match(
     if len(set(account_ids)) != len(account_ids):
         issues.append(ValidationIssue(code="account_duplicate", message="同一对局不能重复出现同一账号"))
 
-    for seat in seats:
-        account = registry.get_account(seat.account_id)
-        if account is None:
-            issues.append(ValidationIssue(code="account_unknown", message=f"账号不存在: {seat.account_id}"))
-            continue
-        if not account.enabled:
-            issues.append(
-                ValidationIssue(code="account_disabled", message=f"账号已停用: {seat.account_id}（可强制保存）")
-            )
-        if seat.controller_type is None:
-            seat.controller_type = account.default_controller
-        if seat.model_identity_id and not registry.identity_belongs_to_account(seat.model_identity_id, seat.account_id):
-            issues.append(
-                ValidationIssue(
-                    code="model_identity_mismatch",
-                    message=f"账号 {seat.account_id} 未绑定模型身份 {seat.model_identity_id}",
+    if not skip_current_policy:
+        for seat in seats:
+            account = registry.get_account(seat.account_id)
+            if account is None:
+                issues.append(ValidationIssue(code="account_unknown", message=f"账号不存在: {seat.account_id}"))
+                continue
+            if not account.enabled:
+                issues.append(
+                    ValidationIssue(code="account_disabled", message=f"账号已停用: {seat.account_id}（可强制保存）")
                 )
-            )
-        if not registry.artifact_belongs_to_identity(seat.model_identity_id, seat.model_artifact_id):
-            issues.append(
-                ValidationIssue(
-                    code="model_artifact_mismatch",
-                    message=f"模型产物 {seat.model_artifact_id} 不属于身份 {seat.model_identity_id}",
+            if seat.controller_type is None:
+                seat.controller_type = account.default_controller
+            if seat.model_identity_id and not registry.identity_belongs_to_account(seat.model_identity_id, seat.account_id):
+                issues.append(
+                    ValidationIssue(
+                        code="model_identity_mismatch",
+                        message=f"账号 {seat.account_id} 未绑定模型身份 {seat.model_identity_id}",
+                    )
                 )
-            )
-        if getattr(seat, "external_revision_id", None) and not registry.external_revision_belongs_to_identity(
-            seat.model_identity_id, seat.external_revision_id
-        ):
-            issues.append(
-                ValidationIssue(
-                    code="external_revision_mismatch",
-                    message=f"外部版本 {seat.external_revision_id} 不属于身份 {seat.model_identity_id}",
+            if not registry.artifact_belongs_to_identity(seat.model_identity_id, seat.model_artifact_id):
+                issues.append(
+                    ValidationIssue(
+                        code="model_artifact_mismatch",
+                        message=f"模型产物 {seat.model_artifact_id} 不属于身份 {seat.model_identity_id}",
+                    )
                 )
-            )
+            if getattr(seat, "external_revision_id", None) and not registry.external_revision_belongs_to_identity(
+                seat.model_identity_id, seat.external_revision_id
+            ):
+                issues.append(
+                    ValidationIssue(
+                        code="external_revision_mismatch",
+                        message=f"外部版本 {seat.external_revision_id} 不属于身份 {seat.model_identity_id}",
+                    )
+                )
+    else:
+        # R14 frozen path：controller 缺省由 Frozen Manifest participant canonicalize
+        # （ladder gate 内完成），此处只保证非空。
+        for seat in seats:
+            if seat.controller_type is None:
+                seat.controller_type = "human_ui"
 
     if len(final_scores) != 4:
         issues.append(ValidationIssue(code="score_count", message=f"必须恰好 4 个最终分数，得到 {len(final_scores)}"))
@@ -576,6 +592,16 @@ def _transactional_match_update(match: Match, revision_row: dict) -> None:
 def create_match(payload: MatchCreate, registry) -> Match:
     if not payload.occurred_at:
         raise ValueError("occurred_at 不能为空")
+    # R14-C Repair 2 (P1-2): frozen-manifest 赛季的 rating-eligible 摄入以
+    # Manifest 为唯一执行权威——跳过 Current Participants policy 校验
+    # （disable/rebind 不阻塞；锁内 ladder gate 做精确 Manifest 一致性校验）。
+    from .ladder_eligibility import season_has_frozen_manifest
+
+    _r14_frozen = bool(
+        payload.rating_eligible
+        and payload.season_id
+        and season_has_frozen_manifest(payload.season_id)
+    )
     # 锁外预校验：快速失败。deep-copy 隔离副作用——validate_match 会原地填充
     # controller_type，不能污染最终输入（P1：默认值必须以锁内结果为准）。
     pre_seats = [seat.model_copy(deep=True) for seat in payload.seats]
@@ -587,15 +613,8 @@ def create_match(payload: MatchCreate, registry) -> Match:
         force=payload.force,
         reason=payload.reason,
         registry=registry,
+        skip_current_policy=_r14_frozen,
     )
-    # R14-C Repair 1 (P1-1): frozen-manifest 赛季的 rating-eligible 摄入以
-    # Manifest 为唯一权威——Start 后的 Account disable 不阻塞（锁内 ladder
-    # gate 会做精确的 Manifest 一致性校验并 fail-closed）。
-    if payload.rating_eligible and payload.season_id:
-        from .ladder_eligibility import season_has_frozen_manifest
-
-        if season_has_frozen_manifest(payload.season_id):
-            pre_issues = [i for i in pre_issues if i.code != "account_disabled"]
     if blocking_issues(pre_issues, force=payload.force, reason=payload.reason):
         raise ValidationError(pre_issues, "score_total_mismatch" in {i.code for i in pre_issues})
 
@@ -603,7 +622,7 @@ def create_match(payload: MatchCreate, registry) -> Match:
         _recover_pending_transaction()
         now = now_iso()
         match_id = _generate_match_id()
-        match, issues, blocking = build_match(payload, registry, match_id, now)
+        match, issues, blocking = build_match(payload, registry, match_id, now, skip_current_policy=_r14_frozen)
         # P1-2：正式计分 → 正式赛季资格 gate（rating_eligible ⇒ 必填 season + 校验）
         # R14-C Repair 1 (P1-3): 在 data_lock + _registry_lock 双锁范围内校验 Season running
         if match.rating_eligible:
@@ -653,11 +672,14 @@ def build_match(
     registry,
     match_id: str,
     now: str,
+    *,
+    skip_current_policy: bool = False,
 ) -> tuple[Match, list[ValidationIssue], list[ValidationIssue]]:
     """锁内/锁外通用：完整校验 + 构造 Match（调用方持有 data_lock）。
 
     从原始请求 deep-copy 座位，controller 默认值/账号 enabled/identity/artifact
     归属全部以本次校验的 registry 状态为准。返回 (match, issues, blocking)。
+    R14 frozen-manifest path 传 ``skip_current_policy=True``（P1-2）。
     """
     resolved_seats = [seat.model_copy(deep=True) for seat in payload.seats]
     ranks, issues = validate_match(
@@ -668,13 +690,8 @@ def build_match(
         force=payload.force,
         reason=payload.reason,
         registry=registry,
+        skip_current_policy=skip_current_policy,
     )
-    # R14-C Repair 1 (P1-1): frozen-manifest 赛季不因 Start 后 Account disable 阻塞
-    if payload.rating_eligible and payload.season_id:
-        from .ladder_eligibility import season_has_frozen_manifest
-
-        if season_has_frozen_manifest(payload.season_id):
-            issues = [i for i in issues if i.code != "account_disabled"]
     blocking = blocking_issues(issues, force=payload.force, reason=payload.reason)
     if blocking:
         raise ValidationError(issues, "score_total_mismatch" in {i.code for i in issues})
@@ -770,36 +787,20 @@ def revise_match(match_id: str, payload: MatchRevise, registry) -> Match:
         next_match.updated_at = now_iso()
         _assert_seat_accounts_exist(next_match.seats, registry)
 
-        # R14-C Repair 1 (P1-2): RuntimeMatchBinding 是不可变 origin evidence
-        # 如果原始 Match 已有 runtime_binding，禁止修改会改变 runtime origin 的字段
+        # R14-C Repair 2 (P1-3): RuntimeMatchBinding 是不可变 origin evidence。
+        # 已绑定 Match 的修订只要显式携带 seats 或显式改变 season_id，一律拒绝——
+        # 不做 diff（同 roster 换座 / controller 改变等集合级比较漏洞全部封死）。
+        # 分数、note、data completeness 等结果/描述字段仍可正常修订。
         if current.runtime_binding is not None:
-            # 检查是否尝试修改 seats/season/provenance 等 runtime origin 字段
-            _changes_origin = False
-            if payload.seats is not None:
-                # 比较账号集合与 provenance 是否改变
-                old_accts = {s.account_id for s in current.seats}
-                new_accts = {s.account_id for s in next_match.seats}
-                if old_accts != new_accts:
-                    _changes_origin = True
-                else:
-                    for s_old, s_new in zip(
-                        sorted(current.seats, key=lambda s: s.seat),
-                        sorted(next_match.seats, key=lambda s: s.seat),
-                    ):
-                        if (
-                            s_old.execution_provenance != s_new.execution_provenance
-                            or s_old.model_artifact_id != s_new.model_artifact_id
-                            or s_old.model_identity_id != s_new.model_identity_id
-                            or s_old.external_revision_id != s_new.external_revision_id
-                        ):
-                            _changes_origin = True
-                            break
-            if "season_id" in payload.model_fields_set and next_match.season_id != current.season_id:
-                _changes_origin = True
-            if _changes_origin:
+            if "seats" in payload.model_fields_set:
                 raise ValueError(
-                    "运行时绑定对局 (runtime_binding) 的 seats/season/provenance 不可修订——"
-                    "这些字段是运行时执行来源的不可变历史事实"
+                    "运行时绑定对局 (runtime_binding) 的 seats 不可修订——"
+                    "座位是运行时执行来源的不可变历史事实（包括换座/controller 调整）"
+                )
+            if "season_id" in payload.model_fields_set and next_match.season_id != current.season_id:
+                raise ValueError(
+                    "运行时绑定对局 (runtime_binding) 的 season_id 不可修订——"
+                    "赛季归属是运行时执行来源的不可变历史事实"
                 )
             # 保留原始 runtime_binding 完全不变
             next_match.runtime_binding = current.runtime_binding

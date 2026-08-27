@@ -702,3 +702,102 @@ def test_r14b_stop_sigterm_ignored_triggers_sigkill_and_exit_code_audit(r14b_env
     assert rec.state == "stopped"
     assert rec.exit_code == -9  # 真实审计 SIGKILL 退出码
     assert not is_pid_alive_and_matched(pid, rec.birth_identity)
+
+
+# ---------------------------------------------------------------------------
+# R14-C Repair 2 (P1-4): Execution Session Bridge
+# ---------------------------------------------------------------------------
+
+def test_r14c_spawn_creates_execution_session_with_frozen_authority(r14b_env):
+    """R14-C Repair 2: spawn epoch 必须原子持久化 execution session（冻结 season/manifest/authority/participants）."""
+    configs_dir = r14b_env["configs_dir"]
+    tmp_path = r14b_env["tmp_path"]
+    models_dir = r14b_env["models_dir"]
+
+    from runtime.execution_session import (
+        execution_session_file,
+        find_sessions_for_log,
+        load_execution_session,
+        record_observed_log,
+    )
+
+    cp = _create_checkpoint(models_dir, "exec_sess.pth")
+    part_registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:es", label="ES", kind="local_model"))
+    art = part_registry.add_model_artifact("model:es", ModelArtifactCreate(label="e.pth", artifact_path=str(cp), stage="promoted"))
+
+    for i in range(1, 4):
+        part_registry.create_account(AccountCreate(account_id=f"account:h{i}", display_name=f"H{i}", account_type="human"))
+    part_registry.create_account(AccountCreate(account_id="account:bot_es", display_name="BotES", account_type="managed_bot", model_identity_id="model:es"))
+
+    sr.create_season(configs_dir, season_id="s_es", title="ExecSession Season")
+    sr.set_season_enrollment(
+        configs_dir, "s_es", ["account:h1", "account:h2", "account:h3", "account:bot_es"],
+        provenance_by_model={"model:es": {"kind": "local_artifact", "model_identity_id": "model:es", "model_artifact_id": art.model_artifact_id}}
+    )
+
+    start_season_runtime(configs_dir, "s_es", project_root=tmp_path)
+    manifest = get_season_runtime_manifest(configs_dir, "s_es", project_root=tmp_path)
+
+    def _sleep_cmd(p, root, py_exe):
+        return [sys.executable, "-c", "import time; time.sleep(30)"]
+
+    try:
+        spawn_resp = spawn_season_runtime(
+            configs_dir, "s_es",
+            project_root=tmp_path,
+            custom_command_builder=_sleep_cmd,
+        )
+        assert spawn_resp.is_active is True
+
+        # spawn 命令必须携带 --runtime-session-id
+        bot_rec = next(r for r in spawn_resp.processes if r.account_id == "account:bot_es")
+        assert "--runtime-session-id" in bot_rec.command
+        sess_arg_idx = bot_rec.command.index("--runtime-session-id")
+        session_id = bot_rec.command[sess_arg_idx + 1]
+
+        # execution session 文件已持久化，且冻结完整权威事实
+        assert execution_session_file(session_id).exists()
+        session = load_execution_session(session_id)
+        assert session is not None
+        assert session.schema_version == "keqing.runtime.execution_session.v1"
+        assert session.season_id == "s_es"
+        assert session.manifest_id == manifest.manifest_id
+        assert session.season_authority_hash == manifest.season_authority_hash
+        session_accounts = {p.account_id for p in session.participants}
+        assert session_accounts == {"account:h1", "account:h2", "account:h3", "account:bot_es"}
+        # bot participant 冻结了进程事实与 provenance
+        bot_p = next(p for p in session.participants if p.account_id == "account:bot_es")
+        assert bot_p.pid == bot_rec.pid
+        assert bot_p.birth_identity == bot_rec.birth_identity
+        assert bot_p.execution_provenance["kind"] == "local_artifact"
+        assert bot_p.execution_provenance["model_artifact_id"] == art.model_artifact_id
+
+        # worker 观测的 log 可反查 session
+        record_observed_log(session_id, "account:bot_es", tenhou_log_id="2026082712gm-00a9-0000-es_bridge")
+        found = find_sessions_for_log("2026082712gm-00a9-0000-es_bridge")
+        assert len(found) == 1
+        assert found[0].session_id == session_id
+        assert found[0].manifest_id == manifest.manifest_id
+    finally:
+        stop_season_runtime(configs_dir, "s_es")
+
+
+def test_r14c_bot_worker_cli_accepts_runtime_session_id(r14b_env):
+    """R14-C Repair 2: bot_worker CLI 接受 --runtime-session-id 并注入 BotClientConfig."""
+    args = parse_args([
+        "--account-id", "account:bot_x",
+        "--model-path", "/tmp/x.pth",
+        "--runtime-session-id", "rtx_s1_m1_20260827_ab12cd34",
+    ])
+    assert args.runtime_session_id == "rtx_s1_m1_20260827_ab12cd34"
+
+    from workbench.gateway.tenhou_bot_client import BotClientConfig
+
+    cfg = BotClientConfig(
+        name="BotX",
+        bot_name="/tmp/x.pth",
+        model_path=Path("/tmp/x.pth"),
+        ladder_account_id="account:bot_x",
+        runtime_session_id="rtx_s1_m1_20260827_ab12cd34",
+    )
+    assert cfg.runtime_session_id == "rtx_s1_m1_20260827_ab12cd34"

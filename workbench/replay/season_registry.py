@@ -174,10 +174,30 @@ def set_season_status(configs_dir: Path, season_id: str, status: str) -> dict[st
       - 写入 ``reopened_at`` 审计字段；
     - 当前 default 赛季离开 running 时自动摘除 default（需要新赛季时显式"设为当前"）；
     - mutation 全程持锁（防止并发基于旧状态校验通过后互相覆盖）。
+
+    R14-C Repair 2 (P1-1): running → completed/archived 是跨域事务，必须遵循
+    全局锁层级 ``participants data_lock → _registry_lock → runtime_lock``。
+    intake/create/revise 的 rating-eligible 写事务持有 data_lock 期间，
+    complete 无法插入——彻底封住 "Season 已 completed 但 Match 在其后才提交"
+    的竞态窗口。取得 data lock 后先 recovery pending（crash 残留的 intake
+    事务必须先落账，再判定 lifecycle）。
     """
     status = (status or "").strip()
     if status not in SEASON_STATUSES:
         raise SeasonRegistryError(f"非法赛季状态: {status!r}（可选: {SEASON_STATUSES}）")
+    needs_cross_domain = status in ("completed", "archived")
+    if needs_cross_domain:
+        from participants import ledger as participants_ledger
+        from participants.paths import data_lock as participants_data_lock
+
+        with participants_data_lock():
+            participants_ledger.recover_pending_transaction_locked()
+            return _set_season_status_locked(configs_dir, season_id, status)
+    return _set_season_status_locked(configs_dir, season_id, status)
+
+
+def _set_season_status_locked(configs_dir: Path, season_id: str, status: str) -> dict[str, Any]:
+    """set_season_status 的锁内实现：调用方保证跨域锁层级已满足。"""
     with _registry_lock(configs_dir):
         season = get_season_config(configs_dir, season_id)
         current = str(season.get("status") or "draft")
@@ -187,7 +207,10 @@ def set_season_status(configs_dir: Path, season_id: str, status: str) -> dict[st
 
         # R14-B Interlock: 当从 running 迁移到 completed 或 archived 时，在持有 _registry_lock 下取得 runtime_lock 原子断言
         if current == "running" and status in ("completed", "archived"):
-            from runtime.supervisor import assert_no_live_runtime_processes_locked, runtime_lock
+            from runtime.supervisor import (
+                assert_no_live_runtime_processes_locked,
+                runtime_lock,
+            )
             with runtime_lock(season_id):
                 assert_no_live_runtime_processes_locked(season_id)
 
@@ -299,13 +322,17 @@ def delete_season(
             )
 
         # R14-B Interlock: 删除赛季前严禁有残留运行进程（三域锁内原子判定并删除）
-        from runtime.supervisor import assert_no_live_runtime_processes_locked, runtime_lock
+        from runtime.supervisor import (
+            assert_no_live_runtime_processes_locked,
+            runtime_lock,
+        )
         with runtime_lock(season_id):
             assert_no_live_runtime_processes_locked(season_id)
             path = _season_path(configs_dir, season_id)
             path.unlink(missing_ok=True)
 
-        from workbench.runtime.resolver import data_path as _data_path, ladder_data_root
+        from workbench.runtime.resolver import data_path as _data_path
+        from workbench.runtime.resolver import ladder_data_root
 
         participants_root = participants_data_root or _data_path("participants")
         dirty = participants_root / f"ladder_dirty_{season_id}.json"

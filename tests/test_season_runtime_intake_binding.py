@@ -106,23 +106,61 @@ def _setup_frozen_season(env):
     }
 
 
-def _create_capture_session(env, session_id: str, season_id: str, *, roster=None, manifest_id=None):
-    """创建模拟 capture session binding.json（与 gateway writer 共用同一 canonical 根）."""
-    from workbench.runtime.resolver import ladder_capture_root
+def _create_execution_session(
+    env,
+    session_id: str,
+    manifest,
+    *,
+    accounts: list[str] | None = None,
+    season_id: str | None = None,
+    manifest_id: str | None = None,
+    authority_hash: str | None = None,
+):
+    """创建真实的 R14-B execution session 记录（keqing.runtime.execution_session.v1）.
 
-    session_dir = ladder_capture_root() / session_id
-    session_dir.mkdir(parents=True, exist_ok=True)
-    binding = {
-        "session_id": session_id,
-        "season_id": season_id,
-        "mode": "roster",
-        "roster": roster if roster is not None else [],
-    }
-    if manifest_id is not None:
-        binding["manifest_id"] = manifest_id
-    (session_dir / "binding.json").write_text(
-        json.dumps(binding, ensure_ascii=False), encoding="utf-8"
+    默认从 setup 的 manifest 冻结 season/manifest/authority hash 与全体
+    participants；可通过参数显式制造错配（wrong season/manifest/roster）。
+    """
+    from runtime.execution_session import (
+        ExecutionSessionParticipant,
+        RuntimeExecutionSession,
+        persist_execution_session_locked,
     )
+
+    if accounts is None:
+        accounts = ["account:h1", "account:h2", "account:h3", "account:bot_a"]
+    manifest_accounts = {p.account_id: p for p in manifest.participants}
+    participants = []
+    for aid in accounts:
+        m_part = manifest_accounts.get(aid)
+        participants.append(
+            ExecutionSessionParticipant(
+                account_id=aid,
+                controller_type=str(m_part.controller_type) if m_part else "human_ui",
+                execution_provenance=(
+                    m_part.execution_provenance.model_dump() if m_part else {"kind": "human"}
+                ),
+            )
+        )
+    session = RuntimeExecutionSession(
+        session_id=session_id,
+        season_id=season_id if season_id is not None else manifest.season_id,
+        manifest_id=manifest_id if manifest_id is not None else manifest.manifest_id,
+        season_authority_hash=(
+            authority_hash if authority_hash is not None else manifest.season_authority_hash
+        ),
+        participants=participants,
+        created_at="2026-08-27T12:00:00+08:00",
+    )
+    persist_execution_session_locked(session)
+    return session
+
+
+def _record_worker_log(session_id: str, log_id: str, account_id: str = "account:bot_a"):
+    """模拟 bot worker 在 execution session 内记录观察到的 Tenhou log."""
+    from runtime.execution_session import record_observed_log
+
+    record_observed_log(session_id, account_id, tenhou_log_id=log_id)
 
 
 def _make_seats(art_a):
@@ -185,9 +223,9 @@ def test_r14c_intake_with_session_produces_binding(r14c_env, monkeypatch):
     aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
     aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
 
-    # 创建 capture session
+    # 创建真实 R14-B execution session（supervisor spawn epoch 语义）
     session_id = "r14c_session_1"
-    _create_capture_session(r14c_env, session_id, setup["season_id"])
+    _create_execution_session(r14c_env, session_id, manifest)
 
     resolutions = [
         {"seat": 0, "action": "assign", "account_id": "account:h1"},
@@ -197,6 +235,7 @@ def test_r14c_intake_with_session_produces_binding(r14c_env, monkeypatch):
     ]
 
     log_id = "2026082712gm-00a9-0000-r14c_sess"
+    _record_worker_log(session_id, log_id)
     res = intake.resolve_and_create_match(
         log_id=log_id,
         resolutions=resolutions,
@@ -233,10 +272,11 @@ def test_r14c_intake_with_session_produces_binding(r14c_env, monkeypatch):
     assert artifact_summary2.get("runtime_binding") == m_binding
 
 
-def test_r14c_wrong_season_session_no_binding(r14c_env, monkeypatch):
-    """11b. session 属于其他 Season 时，不得获得 RuntimeMatchBinding (fail-closed)."""
+def test_r14c_wrong_season_session_blocked(r14c_env, monkeypatch):
+    """11b. session 属于其他 Season 时，fail-closed blocked（不得静默降级）."""
     setup = _setup_frozen_season(r14c_env)
     art_a = setup["art_a"]
+    manifest = setup["manifest"]
 
     fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
     monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
@@ -248,31 +288,32 @@ def test_r14c_wrong_season_session_no_binding(r14c_env, monkeypatch):
     aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
     aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
 
-    # session 记录的是另一个 Season
+    # session 冻结的是另一个 Season
     session_id = "r14c_wrong_season_session"
-    _create_capture_session(r14c_env, session_id, "s_other_season")
+    _create_execution_session(r14c_env, session_id, manifest, season_id="s_other_season")
 
-    res = intake.resolve_and_create_match(
-        log_id="2026082712gm-00a9-0000-r14c_wses",
-        resolutions=[
-            {"seat": 0, "action": "assign", "account_id": "account:h1"},
-            {"seat": 1, "action": "assign", "account_id": "account:h2"},
-            {"seat": 2, "action": "assign", "account_id": "account:h3"},
-            {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
-        ],
-        season_id=setup["season_id"],
-        rating_eligible=True,
-        session_id=session_id,
-    )
-    m = ledger.get_match(res["match_id"])
-    # wrong-season session 不能作为 runtime evidence → 无 binding
-    assert m.runtime_binding is None
+    with pytest.raises(ValueError, match="属于赛季|不一致"):
+        intake.resolve_and_create_match(
+            log_id="2026082712gm-00a9-0000-r14c_wses",
+            resolutions=[
+                {"seat": 0, "action": "assign", "account_id": "account:h1"},
+                {"seat": 1, "action": "assign", "account_id": "account:h2"},
+                {"seat": 2, "action": "assign", "account_id": "account:h3"},
+                {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+            ],
+            season_id=setup["season_id"],
+            rating_eligible=True,
+            session_id=session_id,
+        )
+    # fail-closed：没有任何 Match 落账
+    assert ledger.list_matches().total == 0
 
 
-def test_r14c_wrong_manifest_session_no_binding(r14c_env, monkeypatch):
-    """11c. session binding.json 记录的 manifest_id 与 persisted Manifest 不一致时，无 binding."""
+def test_r14c_wrong_manifest_session_blocked(r14c_env, monkeypatch):
+    """11c. session 记录的 manifest_id 与 persisted Manifest 不一致时，fail-closed blocked."""
     setup = _setup_frozen_season(r14c_env)
     art_a = setup["art_a"]
+    manifest = setup["manifest"]
 
     fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
     monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
@@ -286,29 +327,68 @@ def test_r14c_wrong_manifest_session_no_binding(r14c_env, monkeypatch):
 
     # session 记录了同一 Season，但 manifest_id 是伪造的
     session_id = "r14c_wrong_manifest_session"
-    _create_capture_session(
-        r14c_env, session_id, setup["season_id"],
+    _create_execution_session(
+        r14c_env, session_id, manifest,
         manifest_id="manifest:fake_manifest_id",
     )
 
-    res = intake.resolve_and_create_match(
-        log_id="2026082712gm-00a9-0000-r14c_wman",
-        resolutions=[
-            {"seat": 0, "action": "assign", "account_id": "account:h1"},
-            {"seat": 1, "action": "assign", "account_id": "account:h2"},
-            {"seat": 2, "action": "assign", "account_id": "account:h3"},
-            {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
-        ],
-        season_id=setup["season_id"],
-        rating_eligible=True,
-        session_id=session_id,
+    with pytest.raises(ValueError, match="manifest.*不一致|不一致"):
+        intake.resolve_and_create_match(
+            log_id="2026082712gm-00a9-0000-r14c_wman",
+            resolutions=[
+                {"seat": 0, "action": "assign", "account_id": "account:h1"},
+                {"seat": 1, "action": "assign", "account_id": "account:h2"},
+                {"seat": 2, "action": "assign", "account_id": "account:h3"},
+                {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+            ],
+            season_id=setup["season_id"],
+            rating_eligible=True,
+            session_id=session_id,
+        )
+    assert ledger.list_matches().total == 0
+
+
+def test_r14c_roster_mismatch_session_blocked(r14c_env, monkeypatch):
+    """11d. session 参与者集合与 Match seats 不一致时，fail-closed blocked."""
+    setup = _setup_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+    manifest = setup["manifest"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    # session 参与者缺少 account:h2、多了 stranger999
+    session_id = "r14c_roster_mismatch_session"
+    _create_execution_session(
+        r14c_env, session_id, manifest,
+        accounts=["account:h1", "account:h3", "account:bot_a", "account:stranger999"],
     )
-    m = ledger.get_match(res["match_id"])
-    assert m.runtime_binding is None
+
+    with pytest.raises(ValueError, match="参与者集合|不一致"):
+        intake.resolve_and_create_match(
+            log_id="2026082712gm-00a9-0000-r14c_rmm",
+            resolutions=[
+                {"seat": 0, "action": "assign", "account_id": "account:h1"},
+                {"seat": 1, "action": "assign", "account_id": "account:h2"},
+                {"seat": 2, "action": "assign", "account_id": "account:h3"},
+                {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+            ],
+            season_id=setup["season_id"],
+            rating_eligible=True,
+            session_id=session_id,
+        )
+    assert ledger.list_matches().total == 0
 
 
-def test_r14c_roster_mismatch_session_no_binding(r14c_env, monkeypatch):
-    """11d. session roster 与 Match seats 账号集合不一致时，无 binding."""
+def test_r14c_missing_session_record_blocked(r14c_env, monkeypatch):
+    """11e. 显式声称 runtime session 但没有 execution session 记录 → blocked（不得静默降级）."""
     setup = _setup_frozen_season(r14c_env)
     art_a = setup["art_a"]
 
@@ -322,32 +402,32 @@ def test_r14c_roster_mismatch_session_no_binding(r14c_env, monkeypatch):
     aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
     aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
 
-    # roster 是另一组账号（含未参加本局的 account:h2 缺失、多了 stranger）
-    session_id = "r14c_roster_mismatch_session"
-    _create_capture_session(
-        r14c_env, session_id, setup["season_id"],
-        roster=[
-            {"account_id": "account:h1"},
-            {"account_id": "account:h3"},
-            {"account_id": "account:bot_a"},
-            {"account_id": "account:stranger999"},
-        ],
+    # 只创建旧 Play-with-you binding.json（legacy），不创建 execution session
+    session_id = "r14c_legacy_pwy_session"
+    from workbench.runtime.resolver import ladder_capture_root
+
+    session_dir = ladder_capture_root() / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / "binding.json").write_text(
+        json.dumps({"session_id": session_id, "season_id": setup["season_id"], "roster": []}),
+        encoding="utf-8",
     )
 
-    res = intake.resolve_and_create_match(
-        log_id="2026082712gm-00a9-0000-r14c_rmm",
-        resolutions=[
-            {"seat": 0, "action": "assign", "account_id": "account:h1"},
-            {"seat": 1, "action": "assign", "account_id": "account:h2"},
-            {"seat": 2, "action": "assign", "account_id": "account:h3"},
-            {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
-        ],
-        season_id=setup["season_id"],
-        rating_eligible=True,
-        session_id=session_id,
-    )
-    m = ledger.get_match(res["match_id"])
-    assert m.runtime_binding is None
+    # 旧 Play-with-you binding.json 不再被当成 R14 runtime evidence → blocked
+    with pytest.raises(ValueError, match="不是有效的 R14-B execution session"):
+        intake.resolve_and_create_match(
+            log_id="2026082712gm-00a9-0000-r14c_legacy",
+            resolutions=[
+                {"seat": 0, "action": "assign", "account_id": "account:h1"},
+                {"seat": 1, "action": "assign", "account_id": "account:h2"},
+                {"seat": 2, "action": "assign", "account_id": "account:h3"},
+                {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+            ],
+            season_id=setup["season_id"],
+            rating_eligible=True,
+            session_id=session_id,
+        )
+    assert ledger.list_matches().total == 0
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +481,54 @@ def test_r14c_frozen_manifest_admits_after_account_disable(r14c_env):
     )
     created = ledger.create_match(payload, registry=part_registry)
     assert created.seats[3].execution_provenance.model_artifact_id == art_a.model_artifact_id
+
+
+def test_r14c_intake_after_disable_and_rebind(r14c_env, monkeypatch):
+    """4b. 真实 resolve_and_create_match 在 Start 后 disable + rebind 仍成功（P1-2 收口）."""
+    setup = _setup_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+    manifest = setup["manifest"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    session_id = "r14c_disable_rebind_session"
+    _create_execution_session(r14c_env, session_id, manifest)
+
+    # Start 之后：disable bot 账号 + 把 identity 从 bot 账号解绑（rebind 模拟）
+    from participants.schemas import AccountUpdate
+
+    part_registry.update_account("account:bot_a", AccountUpdate(enabled=False))
+
+    res = intake.resolve_and_create_match(
+        log_id="2026082712gm-00a9-0000-r14c_dr",
+        resolutions=[
+            {"seat": 0, "action": "assign", "account_id": "account:h1"},
+            {"seat": 1, "action": "assign", "account_id": "account:h2"},
+            {"seat": 2, "action": "assign", "account_id": "account:h3"},
+            {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+        ],
+        season_id=setup["season_id"],
+        rating_eligible=True,
+        session_id=session_id,
+    )
+    m = ledger.get_match(res["match_id"])
+    assert m is not None
+    assert m.rating_eligible is True
+    # Frozen Manifest 证据完整冻结（不被 disable/rebind 影响）
+    assert m.runtime_binding is not None
+    assert m.runtime_binding.session_id == session_id
+    assert m.seats[3].execution_provenance is not None
+    assert m.seats[3].execution_provenance.model_artifact_id == art_a.model_artifact_id
+    # controller 由 Manifest canonicalize
+    assert m.seats[3].controller_type == "local_model"
 
 
 # ---------------------------------------------------------------------------
@@ -457,6 +585,7 @@ def test_r14c_note_only_revise_preserves_binding_byte_for_byte(r14c_env, monkeyp
     """6. note-only revise 后 binding byte-for-byte 不变."""
     setup = _setup_frozen_season(r14c_env)
     art_a = setup["art_a"]
+    manifest = setup["manifest"]
 
     fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
     monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
@@ -469,7 +598,7 @@ def test_r14c_note_only_revise_preserves_binding_byte_for_byte(r14c_env, monkeyp
     aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
 
     session_id = "r14c_revise_session"
-    _create_capture_session(r14c_env, session_id, setup["season_id"])
+    _create_execution_session(r14c_env, session_id, manifest)
 
     log_id = "2026082712gm-00a9-0000-r14c_rev"
     res = intake.resolve_and_create_match(
@@ -512,7 +641,7 @@ def test_r14c_runtime_bound_match_rejects_seat_change(r14c_env, monkeypatch):
     aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
 
     session_id = "r14c_reject_session"
-    _create_capture_session(r14c_env, session_id, setup["season_id"])
+    _create_execution_session(r14c_env, session_id, setup["manifest"])
 
     log_id = "2026082712gm-00a9-0000-r14c_rej"
     res = intake.resolve_and_create_match(
@@ -547,6 +676,105 @@ def test_r14c_runtime_bound_match_rejects_seat_change(r14c_env, monkeypatch):
             MatchRevise(season_id="s_other_season_x", rating_eligible=True),
             registry=part_registry,
         )
+
+    # Match 保持原状
+    m = ledger.get_match(match_id)
+    assert m.seats[0].account_id == "account:h1"
+    assert m.season_id == setup["season_id"]
+
+
+def test_r14c_runtime_bound_match_rejects_same_roster_seat_swap(r14c_env, monkeypatch):
+    """7b. 同 roster 内换座（h1↔h2，账号集合不变）必须被拒绝——set 比较漏洞封死."""
+    setup = _setup_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    session_id = "r14c_swap_session"
+    _create_execution_session(r14c_env, session_id, setup["manifest"])
+
+    res = intake.resolve_and_create_match(
+        log_id="2026082712gm-00a9-0000-r14c_swap",
+        resolutions=[
+            {"seat": 0, "action": "assign", "account_id": "account:h1"},
+            {"seat": 1, "action": "assign", "account_id": "account:h2"},
+            {"seat": 2, "action": "assign", "account_id": "account:h3"},
+            {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+        ],
+        season_id=setup["season_id"],
+        rating_eligible=True,
+        session_id=session_id,
+    )
+    match_id = res["match_id"]
+
+    # 同 roster 换座：账号集合完全相同 {h1,h2,h3,bot_a}，seat 0/1 互换
+    swapped = [
+        MatchSeat(seat=0, account_id="account:h2", controller_type="human_ui"),
+        MatchSeat(seat=1, account_id="account:h1", controller_type="human_ui"),
+        MatchSeat(seat=2, account_id="account:h3", controller_type="human_ui"),
+        MatchSeat(seat=3, account_id="account:bot_a", controller_type="local_model", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id),
+    ]
+    with pytest.raises(ValueError, match="不可修订"):
+        ledger.revise_match(match_id, MatchRevise(seats=swapped), registry=part_registry)
+
+    # Match 座位未被改写（与 runtime_binding 一致）
+    m = ledger.get_match(match_id)
+    assert m.seats[0].account_id == "account:h1"
+    assert m.seats[1].account_id == "account:h2"
+
+
+def test_r14c_runtime_bound_match_rejects_controller_change(r14c_env, monkeypatch):
+    """7c. 相同账号/模型但 controller_type 改变必须被拒绝——bot 座位执行类型是冻结事实."""
+    setup = _setup_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    session_id = "r14c_ctrl_session"
+    _create_execution_session(r14c_env, session_id, setup["manifest"])
+
+    res = intake.resolve_and_create_match(
+        log_id="2026082712gm-00a9-0000-r14c_ctrl",
+        resolutions=[
+            {"seat": 0, "action": "assign", "account_id": "account:h1"},
+            {"seat": 1, "action": "assign", "account_id": "account:h2"},
+            {"seat": 2, "action": "assign", "account_id": "account:h3"},
+            {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+        ],
+        season_id=setup["season_id"],
+        rating_eligible=True,
+        session_id=session_id,
+    )
+    match_id = res["match_id"]
+
+    # 相同账号 + 相同模型，但 bot 座位 controller 从 local_model 改为 human_ui
+    changed = [
+        MatchSeat(seat=0, account_id="account:h1", controller_type="human_ui"),
+        MatchSeat(seat=1, account_id="account:h2", controller_type="human_ui"),
+        MatchSeat(seat=2, account_id="account:h3", controller_type="human_ui"),
+        MatchSeat(seat=3, account_id="account:bot_a", controller_type="human_ui", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id),
+    ]
+    with pytest.raises(ValueError, match="不可修订"):
+        ledger.revise_match(match_id, MatchRevise(seats=changed), registry=part_registry)
+
+    m = ledger.get_match(match_id)
+    assert m.seats[3].controller_type == "local_model"
 
 
 # ---------------------------------------------------------------------------
@@ -590,7 +818,7 @@ def test_r14c_intake_vs_complete_barrier_no_completed_plus_new_match(r14c_env, m
     aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
 
     session_id = "r14c_barrier_session"
-    _create_capture_session(r14c_env, session_id, setup["season_id"])
+    _create_execution_session(r14c_env, session_id, setup["manifest"])
 
     barrier = threading.Barrier(2)
     results = []
@@ -634,28 +862,180 @@ def test_r14c_intake_vs_complete_barrier_no_completed_plus_new_match(r14c_env, m
     final_status = final_season["status"]
 
     # 核心不变量：Season completed 之后绝不允许新的 rating-eligible Match 落账。
-    # 二者必须互斥：要么 intake 被拒绝（completed 生效），要么 intake 先完成
-    # （complete 在 intake 事务之后执行，此时 Season 仍可正常 complete）。
-    if final_status == "completed" and intake_ok:
-        # intake 成功提交且 Season completed：提交顺序必须早于 complete，
-        # 该 Match 属于 running 窗口内的合法落账——但这正是要禁止的组合吗？
-        # 不：允许的是「intake 先完成、随后 complete」的串行化结果；
-        # 禁止的是「complete 先生效、intake 仍成功」。由于 complete 只在
-        # running 时才能被调用且 data/registry 双锁串行化二者，合法情况是
-        # intake 与 complete 都成功（串行顺序 intake→complete）。
-        pass
+    # complete 与 intake 持同一 data_lock 串行化：
+    # - complete 先获得锁 → Season 已 completed → intake 的锁内 Season 复检必须拒绝；
+    # - intake 先获得锁 → Match 先落账 → complete 之后才生效（合法串行序 intake→complete）。
+    if intake_ok and final_status == "completed":
+        # intake 成功且 Season completed：intake 一定发生在 complete 之前
+        # （data_lock 保证），Match 属于 running 窗口内合法落账。
+        m = ledger.get_match(intake_ok[0][1])
+        assert m is not None
+        assert m.season_id == setup["season_id"]
     elif intake_ok:
-        # intake 成功但 complete 失败/未发生——赛季必须仍是 running
-        assert final_status == "running", (
-            f"intake succeeded but season is {final_status}"
-        )
+        assert final_status == "running", f"intake succeeded but season is {final_status}"
     else:
-        # intake 失败——一定是被 Season gate（或锁内复检）拒绝
+        # intake 失败——若 Season 已 completed，必须是 Season gate 拒绝
         err = [r for r in results if r[0] == "intake_err"]
         assert err, "intake must either succeed or fail with reason"
+        if final_status == "completed":
+            assert any("不是 running 状态" in e[1] for e in err), (
+                f"intake failed for non-season reason: {err}"
+            )
 
     # 无 pending transaction 残留
     assert not ledger.pending_transaction_path().exists()
+
+
+def test_r14c_intake_commit_barrier_complete_blocked(r14c_env, monkeypatch):
+    """14b. intake 在 admission 后、Match commit 前暂停（Event）——complete 必须等它提交后才生效.
+
+    确定性验证锁层级：intake 持 data_lock 期间（admission 已过、commit 未发生），
+    complete 无法插入写 completed——绝不会出现 "completed 已落盘、Match 其后才提交"。
+    """
+    setup = _setup_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    session_id = "r14c_pause_session"
+    _create_execution_session(r14c_env, session_id, setup["manifest"])
+
+    # 在 pending 落盘后、Match rewrite 前暂停 intake
+    _real_rewrite_match = ledger._rewrite_match
+    pause_event = threading.Event()
+    entered_rewrite = threading.Event()
+
+    def _paused_rewrite(match):
+        entered_rewrite.set()
+        pause_event.wait(timeout=10)
+        return _real_rewrite_match(match)
+
+    monkeypatch.setattr(ledger, "_rewrite_match", _paused_rewrite)
+
+    intake_result = []
+
+    def _do_intake():
+        try:
+            res = intake.resolve_and_create_match(
+                log_id="2026082712gm-00a9-0000-r14c_pause",
+                resolutions=[
+                    {"seat": 0, "action": "assign", "account_id": "account:h1"},
+                    {"seat": 1, "action": "assign", "account_id": "account:h2"},
+                    {"seat": 2, "action": "assign", "account_id": "account:h3"},
+                    {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+                ],
+                season_id=setup["season_id"],
+                rating_eligible=True,
+                session_id=session_id,
+            )
+            intake_result.append(("intake", res["match_id"]))
+        except Exception as e:  # noqa: BLE001
+            intake_result.append(("intake_err", str(e)))
+
+    t_intake = threading.Thread(target=_do_intake)
+    t_intake.start()
+    # 等 intake 进入 commit 阶段（已过 admission，pending 已写，rewrite 暂停中）
+    assert entered_rewrite.wait(timeout=10), "intake did not reach commit phase"
+
+    # 此时启动 complete：它必须阻塞在 data_lock 上（无法写 completed）
+    complete_result = []
+
+    def _do_complete():
+        try:
+            cfg = sr.set_season_status(r14c_env["configs_dir"], setup["season_id"], "completed")
+            complete_result.append(("complete", cfg["status"]))
+        except Exception as e:  # noqa: BLE001
+            complete_result.append(("complete_err", str(e)))
+
+    t_complete = threading.Thread(target=_do_complete)
+    t_complete.start()
+    # complete 正在等待 data_lock——给一点时间确认它没有提前完成
+    t_complete.join(timeout=0.5)
+    assert not complete_result, (
+        "complete 必须阻塞在 intake 的 data_lock 上（intake 持锁期间不得写 completed）"
+    )
+
+    # 释放 intake：Match 先提交，complete 随后生效
+    pause_event.set()
+    t_intake.join(timeout=10)
+    t_complete.join(timeout=10)
+
+    # intake 成功提交
+    assert intake_result and intake_result[0][0] == "intake", intake_result
+    match_id = intake_result[0][1]
+    m = ledger.get_match(match_id)
+    assert m is not None
+    assert m.runtime_binding is not None
+    # complete 也成功（串行序 intake→complete）
+    assert complete_result and complete_result[0][0] == "complete", complete_result
+    assert complete_result[0][1] == "completed"
+
+
+def test_r14c_complete_recovers_crash_pending_before_lifecycle(r14c_env, monkeypatch):
+    """14c. crash 留下 pending 后调用 complete——complete 必须先 recovery pending 再写 completed."""
+    setup = _setup_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    session_id = "r14c_pending_complete_session"
+    _create_execution_session(r14c_env, session_id, setup["manifest"])
+
+    # 崩溃：pending 写完后 rewrite 前抛异常
+    _real_rewrite_match = ledger._rewrite_match
+    _crashed = [False]
+
+    def _crash_on_first_rewrite(match):
+        if not _crashed[0]:
+            _crashed[0] = True
+            raise RuntimeError("模拟进程崩溃")
+        return _real_rewrite_match(match)
+
+    monkeypatch.setattr(ledger, "_rewrite_match", _crash_on_first_rewrite)
+    with pytest.raises(RuntimeError, match="模拟进程崩溃"):
+        intake.resolve_and_create_match(
+            log_id="2026082712gm-00a9-0000-r14c_pc",
+            resolutions=[
+                {"seat": 0, "action": "assign", "account_id": "account:h1"},
+                {"seat": 1, "action": "assign", "account_id": "account:h2"},
+                {"seat": 2, "action": "assign", "account_id": "account:h3"},
+                {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+            ],
+            season_id=setup["season_id"],
+            rating_eligible=True,
+            session_id=session_id,
+        )
+    monkeypatch.setattr(ledger, "_rewrite_match", _real_rewrite_match)
+    assert ledger.pending_transaction_path().exists(), "crash 应留下 pending"
+
+    # 直接调用 complete：锁内必须先 recovery pending（Match 落账），再写 completed
+    cfg = sr.set_season_status(r14c_env["configs_dir"], setup["season_id"], "completed")
+    assert cfg["status"] == "completed"
+    assert not ledger.pending_transaction_path().exists(), "complete 后 pending 必须已被 recovery"
+
+    # Match 已落账（running 窗口内的合法提交）
+    all_matches = ledger.list_matches().matches
+    assert len(all_matches) == 1
+    m = all_matches[0]
+    assert m.season_id == setup["season_id"]
+    assert m.rating_eligible is True
+    assert m.runtime_binding is not None
 
 
 # ---------------------------------------------------------------------------
@@ -728,7 +1108,7 @@ def test_r14c_crash_recovery_preserves_binding(r14c_env, monkeypatch):
     aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
 
     session_id = "r14c_crash_session"
-    _create_capture_session(r14c_env, session_id, setup["season_id"])
+    _create_execution_session(r14c_env, session_id, manifest)
 
     # 模拟崩溃：在 pending 写完后、commit 前注入异常
     _real_rewrite_match = ledger._rewrite_match
@@ -835,3 +1215,48 @@ def test_r14c_non_eligible_match_backward_compatible(r14c_env):
     )
     created = ledger.create_match(payload, registry=part_registry)
     assert created.runtime_binding is None
+
+
+# ---------------------------------------------------------------------------
+# P1-4: End-to-end R14-B → R14-C bridge (auto-discovered session)
+# ---------------------------------------------------------------------------
+
+def test_r14c_intake_auto_discovers_execution_session(r14c_env, monkeypatch):
+    """15. intake 不带显式 session_id 时，从 R14-B execution session 的 worker
+    观测记录自动反查 session 并产生 RuntimeMatchBinding."""
+    setup = _setup_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+    manifest = setup["manifest"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    # R14-B spawn epoch 创建 execution session；worker 观测到 Tenhou log
+    session_id = "rtx_s_r14c_autodiscover"
+    _create_execution_session(r14c_env, session_id, manifest)
+    log_id = "2026082712gm-00a9-0000-r14c_auto"
+    _record_worker_log(session_id, log_id)
+
+    # intake 不传 session_id——自动从 execution session 反查
+    res = intake.resolve_and_create_match(
+        log_id=log_id,
+        resolutions=[
+            {"seat": 0, "action": "assign", "account_id": "account:h1"},
+            {"seat": 1, "action": "assign", "account_id": "account:h2"},
+            {"seat": 2, "action": "assign", "account_id": "account:h3"},
+            {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+        ],
+        season_id=setup["season_id"],
+        rating_eligible=True,
+    )
+    m = ledger.get_match(res["match_id"])
+    assert m.runtime_binding is not None
+    assert m.runtime_binding.session_id == session_id
+    assert m.runtime_binding.manifest_id == manifest.manifest_id

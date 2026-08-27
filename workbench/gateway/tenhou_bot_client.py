@@ -71,6 +71,9 @@ class BotClientConfig:
     # R9-3 ladder capture: this bot's official account + shared collector sink.
     ladder_account_id: str | None = None
     capture_sink: Any | None = None
+    # R14-C Repair 2 (P1-4): R14-B execution session id——worker 观察到的
+    # Tenhou log 归属记录到该 session 的 capture 目录（轻量单文件写）。
+    runtime_session_id: str | None = None
 
     def resolved_model_path(self) -> Path | None:
         if self.model_path is not None:
@@ -238,6 +241,25 @@ class GatewayBotClient:
         if mtype == "start_game":
             seat = int(message["id"])
             self._ensure_runtime_bot(seat)
+            # R14-C Repair 2 (P1-4): 记录本 worker 观察到的 Tenhou log 归属
+            # （execution session evidence；失败只记日志，绝不影响对局）。
+            log_url = message.get("log")
+            if self.config.runtime_session_id and log_url:
+                try:
+                    from workbench.runtime.execution_session import record_observed_log
+
+                    log_id = str(log_url).split("log=")[-1].split("&")[0]
+                    record_observed_log(
+                        self.config.runtime_session_id,
+                        self.config.ladder_account_id or self.config.name,
+                        tenhou_log_id=log_id,
+                        tenhou_log_url=str(log_url),
+                    )
+                except Exception:
+                    logger.exception(
+                        "[%s] execution-session log record failed; continuing",
+                        self.config.name,
+                    )
 
         if self._bot is None or self._seat is None:
             return {"type": "none"}

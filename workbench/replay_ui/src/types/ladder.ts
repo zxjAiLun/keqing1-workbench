@@ -107,6 +107,84 @@ export interface SeasonPreflightReport {
   manifest?: SeasonRuntimeManifest | null;
 }
 
+// ---- R14-D Archive Summary（与 runtime/archive_summary.py 对齐） ----
+
+export interface ArchiveAccountStats {
+  account_id: string;
+  games: number;
+  rank_sum: number;
+  first_places: number;
+  second_places: number;
+  third_places: number;
+  fourth_places: number;
+}
+
+export interface ArchiveMatchSummary {
+  total_matches: number;
+  active_matches: number;
+  void_matches: number;
+  rating_eligible_matches: number;
+  runtime_bound_matches: number;
+  total_revisions: number;
+  first_match_occurred_at?: string | null;
+  last_match_occurred_at?: string | null;
+  account_stats: ArchiveAccountStats[];
+}
+
+export interface ArchiveSessionEpoch {
+  session_id: string;
+  created_at: string;
+  manifest_id: string;
+  season_authority_hash: string;
+  participant_count: number;
+  local_model_participants: number;
+}
+
+export interface ArchiveProcessRecord {
+  runtime_id: string;
+  account_id: string;
+  controller_type: string;
+  state: string;
+  started_at?: string | null;
+  stopped_at?: string | null;
+  exit_code?: number | null;
+}
+
+export interface ArchiveOperationSummary {
+  session_count: number;
+  sessions: ArchiveSessionEpoch[];
+  processes: ArchiveProcessRecord[];
+}
+
+export interface SeasonArchiveSummary {
+  schema_version: 'keqing.season.archive_summary.v1';
+  season_id: string;
+  manifest_id: string;
+  season_authority_hash: string;
+  match_summary: ArchiveMatchSummary;
+  operation_summary: ArchiveOperationSummary;
+  completed_at: string;
+  archive_summary_hash: string;
+  archive_summary_id: string;
+}
+
+/** GET /archive-summary 响应：sealed（历史权威）或 preview（running 实时预览） */
+export type ArchiveSummaryResponse =
+  | {
+      season_id: string;
+      kind: 'sealed';
+      season_status: 'completed' | 'archived';
+      completed_at?: string | null;
+      archive_summary: SeasonArchiveSummary;
+    }
+  | {
+      season_id: string;
+      kind: 'preview';
+      season_status: 'running';
+      note?: string;
+      archive_summary_projection: Omit<SeasonArchiveSummary, 'completed_at' | 'archive_summary_hash' | 'archive_summary_id'>;
+    };
+
 export interface LadderSeasonConfig {
   schema: string;
   season_id: string;
@@ -123,6 +201,10 @@ export interface LadderSeasonConfig {
     accounts: Array<{ account_id: string; display_name?: string | null }>;
   }>;
   runtime_manifest?: SeasonRuntimeManifest | null;
+  /** R14-D: finalize 时封存的完成时间（sealed 赛季为不可变历史事实） */
+  completed_at?: string;
+  /** R14-D: finalize 时封存的终局摘要（sealed 赛季；read-time 只读展示） */
+  archive_summary?: SeasonArchiveSummary | null;
   created_at?: string;
   updated_at?: string;
 }

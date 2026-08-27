@@ -1,6 +1,7 @@
 // src/replay_ui/src/api/ladderApi.ts
 import { ApiError } from './replayApi';
 import type {
+  ArchiveSummaryResponse,
   LadderAccountDetail,
   LadderModelDetail,
   LadderResponse,
@@ -84,4 +85,12 @@ export const ladderApi = {
     api(`/ladder/seasons/${encodeURIComponent(seasonId)}/runtime/stop`, { method: 'POST' }),
   getSeasonRuntimeStatus: (seasonId: string): Promise<SeasonRuntimeStatusResponse> =>
     api(`/ladder/seasons/${encodeURIComponent(seasonId)}/runtime/status`),
+
+  // ---- R14-D Season Finalize & Archive Summary（只读消费冻结 API） ----
+  /** R14-D canonical 结束路径：running → completed + sealed archive summary（与 /complete frozen 路径一致） */
+  finalizeSeason: (seasonId: string): Promise<LadderSeasonConfig> =>
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/finalize`, { method: 'POST' }),
+  /** 只读终局摘要：completed/archived 返回 sealed（persisted 权威）；running 返回 preview（实时预览） */
+  getArchiveSummary: (seasonId: string, signal?: AbortSignal): Promise<ArchiveSummaryResponse> =>
+    api(`/ladder/seasons/${encodeURIComponent(seasonId)}/archive-summary`, { signal }),
 };

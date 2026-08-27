@@ -15,6 +15,7 @@
     "check:review-daiminkan": "node --experimental-transform-types scripts/checkReviewDaiminkan.ts",
     "check:review-e2e": "node --experimental-transform-types scripts/checkReviewE2E.ts",
     "check:participant-semantics": "node --experimental-transform-types scripts/checkParticipantSemantics.ts",
+    "check:season-manager-semantics": "node --experimental-transform-types scripts/checkSeasonManagerSemantics.ts",
     "lint": "eslint .",
     "preview": "vite preview"
   },

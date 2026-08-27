@@ -1,12 +1,23 @@
 // src/replay_ui/src/pages/SeasonManagerPage.tsx
 // R11-E2：Season Manager —— 赛季列表 + lifecycle + 参赛阵容（enrollment）。
 // 赛季成员只从 Participants Account Registry 勾选；backend 是硬 gate。
+// R15：终局摘要（archive summary）只读展示——running 显示 preview，
+// completed/archived 显示 persisted sealed summary；UI 不重算任何权威事实。
 import { useCallback, useEffect, useState } from 'react';
 import { PageHeader, PageShell } from '../components/Layout/PageScaffold';
 import { ladderApi } from '../api/ladderApi';
 import { participantsApi } from '../api/participantsApi';
 import type { Account, ModelIdentity } from '../types/participants';
-import type { LadderSeason, LadderSeasonConfig, LadderSeasonsResponse, SeasonPreflightReport, SeasonRuntimeStatusResponse } from '../types/ladder';
+import type {
+  ArchiveMatchSummary,
+  ArchiveOperationSummary,
+  ArchiveSummaryResponse,
+  LadderSeason,
+  LadderSeasonConfig,
+  LadderSeasonsResponse,
+  SeasonPreflightReport,
+  SeasonRuntimeStatusResponse,
+} from '../types/ladder';
 
 const STATUS_LABELS: Record<string, string> = {
   draft: '草稿',
@@ -28,6 +39,9 @@ export function SeasonManagerPage() {
   const [config, setConfig] = useState<LadderSeasonConfig | null>(null);
   const [preflight, setPreflight] = useState<SeasonPreflightReport | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<SeasonRuntimeStatusResponse | null>(null);
+  // R15：终局摘要（只读消费 /archive-summary；不重算权威事实）
+  const [archiveSummary, setArchiveSummary] = useState<ArchiveSummaryResponse | null>(null);
+  const [archiveSummaryNotice, setArchiveSummaryNotice] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string>('');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [identities, setIdentities] = useState<ModelIdentity[]>([]);
@@ -60,15 +74,34 @@ export function SeasonManagerPage() {
   const selectSeason = async (seasonId: string) => {
     setSelectedId(seasonId);
     setError(null);
+    setArchiveSummary(null);
+    setArchiveSummaryNotice(null);
     try {
-      const [cfg, pre, rt] = await Promise.all([
+      const [cfg, pre, rt, arch] = await Promise.all([
         ladderApi.getSeasonConfig(seasonId),
         ladderApi.getSeasonPreflight(seasonId).catch(() => null),
         ladderApi.getSeasonRuntimeStatus(seasonId).catch(() => null),
+        // draft → 409；legacy completed 未封存 → 409（提示性 notice）
+        ladderApi
+          .getArchiveSummary(seasonId)
+          .then((resp) => ({ ok: true as const, resp }))
+          .catch((e: unknown) => ({ ok: false as const, e })),
       ]);
       setConfig(cfg);
       setPreflight(pre);
       setRuntimeStatus(rt);
+      if (arch.ok) {
+        setArchiveSummary(arch.resp);
+      } else {
+        setArchiveSummary(null);
+        const message = arch.e instanceof Error ? arch.e.message : '';
+        // 409 是预期内的（draft / legacy 未封存）；其他错误也降级为提示
+        setArchiveSummaryNotice(
+          message.includes('未封存')
+            ? '该赛季为 legacy 未封存赛季（无终局摘要）'
+            : null,
+        );
+      }
       setDraftSelection(new Set(cfg.models.flatMap((m) => m.accounts.map((a) => a.account_id))));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -110,6 +143,14 @@ export function SeasonManagerPage() {
       const updated = await action();
       setConfig(updated);
       await refresh();
+      // R15：lifecycle 变化后刷新终局摘要（finalize → sealed；draft → 清空）
+      try {
+        const arch = await ladderApi.getArchiveSummary(updated.season_id);
+        setArchiveSummary(arch);
+        setArchiveSummaryNotice(null);
+      } catch {
+        setArchiveSummary(null);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -416,6 +457,80 @@ export function SeasonManagerPage() {
               </div>
             )}
 
+            {/* R15：终局摘要——running 显示 preview；completed/archived 显示 persisted sealed summary。
+                UI 只读消费 /archive-summary，绝不重算权威事实。 */}
+            {archiveSummary && archiveSummary.kind === 'preview' && (
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: 6,
+                  marginBottom: 14,
+                  border: '1px dashed var(--border)',
+                  background: 'var(--surface-subtle)',
+                  fontSize: 12,
+                }}
+              >
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 700 }}>📊 终局预览 (Archive Preview):</span>
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    实时预览，非权威历史版本——finalize 时才封存并加盖 seal
+                  </span>
+                </div>
+                <ArchiveSummaryBody
+                  matchSummary={archiveSummary.archive_summary_projection.match_summary}
+                  operationSummary={archiveSummary.archive_summary_projection.operation_summary}
+                />
+              </div>
+            )}
+
+            {archiveSummary && archiveSummary.kind === 'sealed' && (
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: 6,
+                  marginBottom: 14,
+                  border: '1px solid var(--accent)',
+                  background: 'var(--surface-subtle)',
+                  fontSize: 12,
+                }}
+              >
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 700 }}>🔒 已封存终局摘要 (Sealed Archive Summary):</span>
+                  <span style={{ color: 'var(--text-muted)' }}>完成于 {archiveSummary.archive_summary.completed_at}</span>
+                </div>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8, color: 'var(--text-muted)' }}>
+                  <span style={{ fontFamily: 'monospace' }}>Summary ID: {archiveSummary.archive_summary.archive_summary_id}</span>
+                  <span style={{ fontFamily: 'monospace' }}>
+                    Seal Hash: {archiveSummary.archive_summary.archive_summary_hash.slice(0, 16)}…
+                  </span>
+                  <span style={{ fontFamily: 'monospace' }}>Manifest: {archiveSummary.archive_summary.manifest_id}</span>
+                  <span style={{ fontFamily: 'monospace' }}>
+                    Authority: {archiveSummary.archive_summary.season_authority_hash.slice(0, 12)}…
+                  </span>
+                </div>
+                <ArchiveSummaryBody
+                  matchSummary={archiveSummary.archive_summary.match_summary}
+                  operationSummary={archiveSummary.archive_summary.operation_summary}
+                />
+              </div>
+            )}
+
+            {!archiveSummary && archiveSummaryNotice && (status === 'completed' || status === 'archived') && (
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: 6,
+                  marginBottom: 14,
+                  border: '1px dashed var(--border)',
+                  background: 'var(--surface-subtle)',
+                  fontSize: 12,
+                  color: 'var(--text-muted)',
+                }}
+              >
+                {archiveSummaryNotice}
+              </div>
+            )}
+
             {/* lifecycle 按钮（backend 是硬 gate；非法按钮直接 disabled） */}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
               {status === 'draft' && (
@@ -444,13 +559,16 @@ export function SeasonManagerPage() {
                     style={ghostBtn}
                     disabled={busy}
                     onClick={() => {
-                      // R11-E Post-release Repair：结束是破坏性操作，需要确认
-                      if (window.confirm('结束后将停止作为当前正式赛季（PT/Rating/对局数据保留）。确定结束？')) {
+                      // R15：frozen 赛季结束 = finalize（封存终局摘要，sealed 后不可 reopen）
+                      const confirmText = config.runtime_manifest
+                        ? '结束将封存终局摘要（sealed，不可重新开启；PT/Rating/对局数据保留）。确定结束？'
+                        : '结束后将停止作为当前正式赛季（PT/Rating/对局数据保留）。确定结束？';
+                      if (window.confirm(confirmText)) {
                         void run(() => ladderApi.completeSeason(config.season_id));
                       }
                     }}
                   >
-                    结束赛季
+                    {config.runtime_manifest ? '结束并封存摘要' : '结束赛季'}
                   </button>
                 </>
               )}
@@ -575,6 +693,114 @@ export function SeasonManagerPage() {
         </div>
       )}
     </PageShell>
+  );
+}
+
+/** R15：终局摘要正文（Match/Revision/Session/Process 统计）——纯展示，不重算。 */
+function ArchiveSummaryBody({
+  matchSummary,
+  operationSummary,
+}: {
+  matchSummary: ArchiveMatchSummary;
+  operationSummary: ArchiveOperationSummary;
+}) {
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', color: 'var(--text-secondary)' }}>
+        <span>对局：<b>{matchSummary.total_matches}</b></span>
+        <span>有效：<b>{matchSummary.active_matches}</b></span>
+        <span>作废：<b>{matchSummary.void_matches}</b></span>
+        <span>正式计分：<b>{matchSummary.rating_eligible_matches}</b></span>
+        <span>Runtime 绑定：<b>{matchSummary.runtime_bound_matches}</b></span>
+        <span>Revision 总数：<b>{matchSummary.total_revisions}</b></span>
+      </div>
+      {(matchSummary.first_match_occurred_at || matchSummary.last_match_occurred_at) && (
+        <div style={{ color: 'var(--text-muted)' }}>
+          首局 {matchSummary.first_match_occurred_at ?? '—'} · 末局 {matchSummary.last_match_occurred_at ?? '—'}
+        </div>
+      )}
+      {matchSummary.account_stats.length > 0 && (
+        <div style={{ display: 'grid', gap: 3 }}>
+          {matchSummary.account_stats.map((s) => (
+            <div
+              key={s.account_id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '3px 8px',
+                borderRadius: 4,
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                fontFamily: 'monospace',
+                fontSize: 11,
+              }}
+            >
+              <span style={{ fontWeight: 600, minWidth: 140 }}>{s.account_id}</span>
+              <span>局数 {s.games}</span>
+              <span>顺位和 {s.rank_sum}</span>
+              <span style={{ color: 'var(--gold, var(--accent))' }}>
+                🥇{s.first_places} 🥈{s.second_places} 🥉{s.third_places} 4位:{s.fourth_places}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', color: 'var(--text-secondary)' }}>
+        <span>执行会话 (Execution Sessions)：<b>{operationSummary.session_count}</b></span>
+        {operationSummary.sessions.map((s) => (
+          <span
+            key={s.session_id}
+            style={{
+              fontFamily: 'monospace',
+              fontSize: 11,
+              padding: '2px 6px',
+              borderRadius: 3,
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
+            }}
+            title={`创建于 ${s.created_at} · 参与者 ${s.participant_count}（local_model ${s.local_model_participants}）`}
+          >
+            {s.session_id}
+          </span>
+        ))}
+      </div>
+      {operationSummary.processes.length > 0 && (
+        <div style={{ display: 'grid', gap: 3 }}>
+          {operationSummary.processes.map((p) => (
+            <div
+              key={p.runtime_id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '3px 8px',
+                borderRadius: 4,
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                fontFamily: 'monospace',
+                fontSize: 11,
+              }}
+            >
+              <span style={{ fontWeight: 600 }}>{p.account_id}</span>
+              <span
+                style={{
+                  padding: '1px 5px',
+                  borderRadius: 3,
+                  color: p.state === 'healthy' ? 'var(--success)' : p.state === 'failed' ? 'var(--negative)' : 'var(--text-muted)',
+                  background: 'var(--surface-subtle)',
+                  fontWeight: 700,
+                }}
+              >
+                {p.state}
+              </span>
+              {typeof p.exit_code === 'number' && <span style={{ color: 'var(--text-muted)' }}>exit {p.exit_code}</span>}
+              {p.stopped_at && <span style={{ color: 'var(--text-muted)', marginLeft: 'auto' }}>停止于 {p.stopped_at}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

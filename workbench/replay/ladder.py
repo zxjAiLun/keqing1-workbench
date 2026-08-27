@@ -204,6 +204,24 @@ def _validate_registry(raw: Any, filename: str) -> dict[str, Any]:
         except Exception as exc:
             raise _fail(f"season {season_id}: {exc}") from exc
 
+    # R14-D: archive_summary 生命周期规则（read-time 只验证 persisted sealed
+    # summary 自身与 Season/Manifest 的 binding，绝不重扫外部 evidence——
+    # runtime evidence 日后清理不影响历史 Season 读取）。
+    #   draft/running → archive_summary 必须不存在；
+    #   completed/archived → 有 archive_summary 强校验；无 → legacy unsealed
+    #   （兼容历史数据，允许读取）。
+    summary_raw = raw.get("archive_summary")
+    status = str(raw.get("status") or "draft")
+    if status in ("draft", "running"):
+        if summary_raw is not None:
+            raise _fail(f"season {season_id}: {status} 赛季不允许包含 archive_summary")
+    elif status in ("completed", "archived") and summary_raw is not None:
+        from workbench.runtime.archive_summary import validate_persisted_archive_summary
+        try:
+            validate_persisted_archive_summary(raw, summary_raw)
+        except Exception as exc:
+            raise _fail(f"season {season_id}: {exc}") from exc
+
     return raw
 
 

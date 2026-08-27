@@ -810,14 +810,21 @@ def resolve_and_create_match(
     # 只带 ?url=（刷新/分享后无 SPA state），这里按 log_id 恢复 session_id，
     # 使 _resolve_seat 能重新校验 session alias（NoName-N → frozen model）。
     if not session_id:
-        # R14-C Repair 2 (P1-4): 优先从 R14-B execution session 的 worker
-        # 观测记录反查（真实 runtime evidence），再回退 legacy pwy capture。
+        # R14-C Repair 3 (P1-1/P1-3): 从 R14-B execution session 的 worker
+        # 观测记录反查（真实 runtime evidence）。多个不同 session 对同一
+        # log 都有证据 = ambiguous → fail-closed，绝不能 first-match。
         try:
             from workbench.runtime.execution_session import find_sessions_for_log
 
             r14_sessions = find_sessions_for_log(log_id)
         except Exception:  # noqa: BLE001
             r14_sessions = []
+        if len(r14_sessions) > 1:
+            ids = ", ".join(s.session_id for s in r14_sessions)
+            raise ValueError(
+                f"对局 {log_id} 被多个 R14 execution session 声称观测 ({ids})——"
+                "无法唯一确定运行时来源，请显式指定 session_id"
+            )
         if r14_sessions:
             session_id = r14_sessions[0].session_id
         else:
@@ -897,6 +904,7 @@ def resolve_and_create_match(
                     seats,
                     registry=registry,
                     session_id=session_id,
+                    tenhou_log_id=log_id,
                 )
                 season_id = admission.season_id
                 runtime_binding = admission.runtime_binding

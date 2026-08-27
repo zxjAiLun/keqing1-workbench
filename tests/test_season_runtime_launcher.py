@@ -769,8 +769,8 @@ def test_r14c_spawn_creates_execution_session_with_frozen_authority(r14b_env):
         bot_p = next(p for p in session.participants if p.account_id == "account:bot_es")
         assert bot_p.pid == bot_rec.pid
         assert bot_p.birth_identity == bot_rec.birth_identity
-        assert bot_p.execution_provenance["kind"] == "local_artifact"
-        assert bot_p.execution_provenance["model_artifact_id"] == art.model_artifact_id
+        assert bot_p.execution_provenance.kind == "local_artifact"
+        assert bot_p.execution_provenance.model_artifact_id == art.model_artifact_id
 
         # worker 观测的 log 可反查 session
         record_observed_log(session_id, "account:bot_es", tenhou_log_id="2026082712gm-00a9-0000-es_bridge")
@@ -801,3 +801,105 @@ def test_r14c_bot_worker_cli_accepts_runtime_session_id(r14b_env):
         runtime_session_id="rtx_s1_m1_20260827_ab12cd34",
     )
     assert cfg.runtime_session_id == "rtx_s1_m1_20260827_ab12cd34"
+
+
+def test_r14c_partial_respawn_forbidden_409(r14b_env):
+    """R14-C Repair 3 (P1-3): 一个 local worker 存活、另一个死亡时直接 spawn → 409 partial_runtime_active.
+
+    禁止 partial respawn——一个 execution session 必须对应一批全部拿到同一
+    session ID 的 local workers。混合状态要求显式 Stop → Spawn。
+    """
+    configs_dir = r14b_env["configs_dir"]
+    tmp_path = r14b_env["tmp_path"]
+    models_dir = r14b_env["models_dir"]
+
+    # 双 bot 赛季
+    cp = _create_checkpoint(models_dir, "partial_a.pth")
+    part_registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:pr", label="PR", kind="local_model"))
+    art = part_registry.add_model_artifact("model:pr", ModelArtifactCreate(label="pa.pth", artifact_path=str(cp), stage="promoted"))
+
+    for i in range(1, 3):
+        part_registry.create_account(AccountCreate(account_id=f"account:h{i}", display_name=f"H{i}", account_type="human"))
+    part_registry.create_account(AccountCreate(account_id="account:bot_pa", display_name="BotPA", account_type="managed_bot", model_identity_id="model:pr"))
+    part_registry.create_account(AccountCreate(account_id="account:bot_pb", display_name="BotPB", account_type="managed_bot", model_identity_id="model:pr"))
+
+    sr.create_season(configs_dir, season_id="s_pr", title="Partial Respawn Season")
+    sr.set_season_enrollment(
+        configs_dir, "s_pr", ["account:h1", "account:h2", "account:bot_pa", "account:bot_pb"],
+        provenance_by_model={"model:pr": {"kind": "local_artifact", "model_identity_id": "model:pr", "model_artifact_id": art.model_artifact_id}}
+    )
+    start_season_runtime(configs_dir, "s_pr", project_root=tmp_path)
+
+    def _sleep_cmd(p, root, py_exe):
+        return [sys.executable, "-c", "import time; time.sleep(60)"]
+
+    # 第一次 spawn：两个 bot 都启动
+    resp1 = spawn_season_runtime(configs_dir, "s_pr", project_root=tmp_path, custom_command_builder=_sleep_cmd)
+    assert resp1.is_active is True
+    assert len(resp1.processes) == 2
+
+    try:
+        # 杀掉其中一个 bot（模拟 crash）——制造混合状态
+        bot_pa_rec = next(r for r in resp1.processes if r.account_id == "account:bot_pa")
+        bot_pb_rec = next(r for r in resp1.processes if r.account_id == "account:bot_pb")
+        victim = bot_pb_rec.pid
+        try:
+            os.kill(victim, signal.SIGKILL)
+        except OSError:
+            pass
+        # 等进程死亡
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if not is_pid_alive_and_matched(victim, bot_pb_rec.birth_identity):
+                break
+            time.sleep(0.05)
+        assert not is_pid_alive_and_matched(victim, bot_pb_rec.birth_identity)
+        del bot_pa_rec
+
+        # 混合状态（bot_pa alive + bot_pb dead）→ spawn 必须 409
+        with pytest.raises(SeasonRegistryError, match="partial_runtime_active|partial respawn"):
+            spawn_season_runtime(configs_dir, "s_pr", project_root=tmp_path, custom_command_builder=_sleep_cmd)
+    finally:
+        stop_season_runtime(configs_dir, "s_pr")
+
+
+def test_r14c_all_active_idempotent_no_new_session(r14b_env):
+    """R14-C Repair 3 (P1-3): 全部已 active → 幂等 no-op，不创建新 execution session."""
+    configs_dir = r14b_env["configs_dir"]
+    tmp_path = r14b_env["tmp_path"]
+    models_dir = r14b_env["models_dir"]
+
+    cp = _create_checkpoint(models_dir, "idem.pth")
+    part_registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:idem", label="Idem", kind="local_model"))
+    art = part_registry.add_model_artifact("model:idem", ModelArtifactCreate(label="i.pth", artifact_path=str(cp), stage="promoted"))
+
+    for i in range(1, 4):
+        part_registry.create_account(AccountCreate(account_id=f"account:h{i}", display_name=f"H{i}", account_type="human"))
+    part_registry.create_account(AccountCreate(account_id="account:bot_idem", display_name="BotIdem", account_type="managed_bot", model_identity_id="model:idem"))
+
+    sr.create_season(configs_dir, season_id="s_idem", title="Idempotent Spawn Season")
+    sr.set_season_enrollment(
+        configs_dir, "s_idem", ["account:h1", "account:h2", "account:h3", "account:bot_idem"],
+        provenance_by_model={"model:idem": {"kind": "local_artifact", "model_identity_id": "model:idem", "model_artifact_id": art.model_artifact_id}}
+    )
+    start_season_runtime(configs_dir, "s_idem", project_root=tmp_path)
+
+    from runtime.execution_session import execution_sessions_root
+
+    def _sleep_cmd(p, root, py_exe):
+        return [sys.executable, "-c", "import time; time.sleep(60)"]
+
+    try:
+        resp1 = spawn_season_runtime(configs_dir, "s_idem", project_root=tmp_path, custom_command_builder=_sleep_cmd)
+        assert resp1.is_active is True
+        sessions_after_first = list(execution_sessions_root().iterdir())
+
+        # 全部已 active → 第二次 spawn 是幂等 no-op
+        resp2 = spawn_season_runtime(configs_dir, "s_idem", project_root=tmp_path, custom_command_builder=_sleep_cmd)
+        assert resp2.is_active is True
+        sessions_after_second = list(execution_sessions_root().iterdir())
+        assert len(sessions_after_second) == len(sessions_after_first), (
+            "全部 active 的幂等 spawn 不得创建新 execution session"
+        )
+    finally:
+        stop_season_runtime(configs_dir, "s_idem")

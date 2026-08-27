@@ -442,8 +442,28 @@ def spawn_season_runtime(
             records = sync_process_states_locked(season_id)
             records_by_account = {r.account_id: r for r in records}
 
+            # R14-C Repair 3 (P1-3): 禁止 partial respawn——一个 execution
+            # session 必须对应一批全部拿到同一 session ID 的 local workers。
+            # 混合状态（部分 OWNED_LIVE + 部分需 spawn）会把实际 runtime 撕成
+            # 两个 session，直接 409 要求显式 Stop → Spawn。
+            live_participants = [
+                p for p in plan.spawnable_participants
+                if p.account_id in records_by_account
+                and record_has_live_owned_process(records_by_account[p.account_id])
+            ]
+            dead_participants = [p for p in plan.spawnable_participants if p not in live_participants]
+            if live_participants and dead_participants:
+                live_accounts = ", ".join(p.account_id for p in live_participants)
+                dead_accounts = ", ".join(p.account_id for p in dead_participants)
+                raise SeasonRegistryError(
+                    f"赛季 {season_id} 处于部分存活状态 (存活: {live_accounts}；"
+                    f"待启动: {dead_accounts})——禁止 partial respawn。"
+                    "请先显式 Stop 全部 Runtime，再 Spawn 新 epoch (partial_runtime_active)"
+                )
+
             # R14-C Repair 2 (P1-4): 本次 spawn epoch 的 execution session。
-            # 只有实际 spawn 了至少一个进程才创建新 session（幂等 re-spawn 不刷新）。
+            # 全部已 active → 幂等 no-op（不创建新 session）；
+            # 全部 inactive → 创建全新 shared execution session 并启动。
             from runtime.execution_session import (
                 ExecutionSessionParticipant,
                 RuntimeExecutionSession,
@@ -451,14 +471,9 @@ def spawn_season_runtime(
                 persist_execution_session_locked,
             )
 
-            spawned_any = any(
-                participant.account_id not in records_by_account
-                or not record_has_live_owned_process(records_by_account[participant.account_id])
-                for participant in plan.spawnable_participants
-            )
             session_id: str | None = None
             _pending_session_participants: dict[str, ExecutionSessionParticipant] = {}
-            if spawned_any:
+            if dead_participants:
                 session_id = make_execution_session_id(season_id, manifest.manifest_id)
 
             # 启动每个 spawnable 参与者
@@ -565,11 +580,12 @@ def spawn_season_runtime(
                 # R14-C Repair 2 (P1-4): 记录 execution session participant
                 # （无论 spawn 成败——成败由进程事实反映，session 冻结的是
                 # "这一 epoch 试图启动谁、用什么 provenance"）。
+                # R14-C Repair 3 (P2): provenance 为 typed FrozenExecutionProvenance。
                 if session_id is not None:
                     _pending_session_participants[aid] = ExecutionSessionParticipant(
                         account_id=aid,
-                        controller_type=str(participant.controller_type),
-                        execution_provenance=participant.execution_provenance.model_dump(),
+                        controller_type=participant.controller_type,
+                        execution_provenance=participant.execution_provenance,
                         runtime_id=runtime_id,
                         pid=rec.pid,
                         birth_identity=rec.birth_identity,
@@ -588,8 +604,8 @@ def spawn_season_runtime(
                         + [
                             ExecutionSessionParticipant(
                                 account_id=p.account_id,
-                                controller_type=str(p.controller_type),
-                                execution_provenance=p.execution_provenance.model_dump(),
+                                controller_type=p.controller_type,
+                                execution_provenance=p.execution_provenance,
                             )
                             for p in plan.unmanaged_participants
                         ],

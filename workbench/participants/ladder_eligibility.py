@@ -94,6 +94,7 @@ def ensure_ladder_eligibility(
     *,
     registry,
     session_id: str | None = None,
+    tenhou_log_id: str | None = None,
     project_root: Path = PROJECT_ROOT,
 ) -> LadderAdmissionResult:
     """统一硬不变量（UX Repair 2/3 / P1-2 / R13-B / R14-C Repair 1）：
@@ -108,7 +109,8 @@ def ensure_ladder_eligibility(
     if not normalized:
         raise ValueError("rating_eligible=true 必须指定正式赛季（season_id 不能为空）")
     provenance_map, runtime_binding = validate_ladder_eligibility(
-        normalized, seats, registry=registry, session_id=session_id, project_root=project_root
+        normalized, seats, registry=registry, session_id=session_id,
+        tenhou_log_id=tenhou_log_id, project_root=project_root
     )
     return LadderAdmissionResult(
         season_id=normalized,
@@ -146,6 +148,7 @@ def _validate_frozen_manifest_path(
     manifest_raw: dict,
     *,
     session_id: str | None = None,
+    tenhou_log_id: str | None = None,
 ) -> tuple[dict[int, CanonicalExecutionProvenance], RuntimeMatchBinding | None]:
     """R14-C Repair 1: Frozen Runtime Manifest 为唯一执行权威。
 
@@ -259,7 +262,8 @@ def _validate_frozen_manifest_path(
     runtime_binding: RuntimeMatchBinding | None = None
     if session_id is not None:
         _verify_execution_session_evidence(
-            session_id, manifest, season_id, seat_accounts_map
+            session_id, manifest, season_id, seat_accounts_map,
+            tenhou_log_id=tenhou_log_id,
         )
         from workbench.participants.paths import now_iso
 
@@ -281,17 +285,26 @@ def _verify_execution_session_evidence(
     manifest,
     season_id: str,
     seat_accounts_map: dict[int, str] | None = None,
+    *,
+    tenhou_log_id: str | None = None,
 ) -> None:
-    """验证 R14-B execution session 与当前 Season/Manifest/seats 完全一致。
+    """验证 R14-B execution session 与当前 Season/Manifest/seats/exact log 完全一致。
 
-    Fail-closed（R14-C Repair 2 / P1-4）——任何不一致直接抛 ValueError：
+    Fail-closed（R14-C Repair 2/3 / P1-4 / P1-1 / P2）——任何不一致直接抛 ValueError：
     1. session 必须是 ``keqing.runtime.execution_session.v1``（supervisor
        spawn epoch 持久化）；旧 Play-with-you binding.json 不再被接受；
     2. ``season_id`` / ``manifest_id`` / ``season_authority_hash`` 必须与
        当前 persisted Manifest 精确一致；
-    3. session 的 participant 账号集合必须与 Match seats 账号集合一致。
+    3. session participant 与 Match seats 逐 account exact compare
+       ``controller_type + FrozenExecutionProvenance``（不只比账号集合）；
+    4. 传入 ``tenhou_log_id`` 时，该 exact log 必须被 session 的**全部**
+       ``local_model`` participants 观察过（每个都有独立 observation 证据），
+       证明整组本地 worker 真进入了这一桌。
     """
-    from workbench.runtime.execution_session import load_execution_session
+    from workbench.runtime.execution_session import (
+        load_execution_session,
+        session_observer_ids,
+    )
 
     session = load_execution_session(session_id)
     if session is None:
@@ -317,13 +330,51 @@ def _verify_execution_session_evidence(
             "Frozen Runtime Manifest 不一致"
         )
 
+    # 逐 account exact compare controller + frozen provenance
+    session_by_account = {p.account_id: p for p in session.participants}
     if seat_accounts_map is not None:
-        session_accounts = {p.account_id for p in session.participants}
         seat_accounts = set(seat_accounts_map.values())
-        if session_accounts != seat_accounts:
+        if set(session_by_account) != seat_accounts:
             raise ValueError(
-                f"runtime session {session_id} 的参与者集合 ({sorted(session_accounts)}) "
+                f"runtime session {session_id} 的参与者集合 ({sorted(session_by_account)}) "
                 f"与对局座位账号 ({sorted(seat_accounts)}) 不一致"
+            )
+        # 与 Manifest participant 逐 account 精确比对（session 是 Manifest 的
+        # 执行快照——controller/provenance 不得有任何漂移，P2）
+        manifest_by_account = {p.account_id: p for p in manifest.participants}
+        for aid, s_part in session_by_account.items():
+            m_part = manifest_by_account.get(aid)
+            if m_part is None:
+                raise ValueError(
+                    f"runtime session {session_id} 的参与者 {aid} 不在当前 "
+                    "Frozen Runtime Manifest 中"
+                )
+            if s_part.controller_type != m_part.controller_type:
+                raise ValueError(
+                    f"runtime session {session_id} 的参与者 {aid} controller "
+                    f"({s_part.controller_type}) 与 Manifest "
+                    f"({m_part.controller_type}) 不一致"
+                )
+            if s_part.execution_provenance != m_part.execution_provenance:
+                raise ValueError(
+                    f"runtime session {session_id} 的参与者 {aid} execution_provenance "
+                    "与 Frozen Runtime Manifest 不一致"
+                )
+
+    # R14-C Repair 3 (P1-1): exact log observation——该局必须被 session 的
+    # 全部 local_model participants 观察过（整组本地 worker 进入这一桌）。
+    if tenhou_log_id:
+        observers = set(session_observer_ids(session_id, tenhou_log_id))
+        required_observers = {
+            p.account_id for p in session.participants
+            if p.controller_type == "local_model"
+        }
+        missing = required_observers - observers
+        if missing:
+            raise ValueError(
+                f"runtime session {session_id} 没有观察到对局 {tenhou_log_id} 的"
+                f"完整执行证据（缺少 local worker 观测: {sorted(missing)}）——"
+                "该对局不能被证明来自这次 runtime execution"
             )
 
 
@@ -463,6 +514,7 @@ def validate_ladder_eligibility(
     *,
     registry,
     session_id: str | None = None,
+    tenhou_log_id: str | None = None,
     project_root: Path = PROJECT_ROOT,
 ) -> tuple[dict[int, CanonicalExecutionProvenance], RuntimeMatchBinding | None]:
     """正式天梯资格校验；不通过抛 ValueError（带中文原因）。返回 (逐座规范执行凭据, RuntimeMatchBinding).
@@ -470,6 +522,8 @@ def validate_ladder_eligibility(
     R14-C Repair 1: 有 persisted Frozen Runtime Manifest 时走 frozen-manifest path
     (Manifest 为唯一权威，不重检当前 Catalog/Account lifecycle);
     否则走 legacy path (通过 Catalog Current 校验)。
+    R14-C Repair 3 (P1-1): ``tenhou_log_id`` 参与 execution session 证据校验
+    ——该 exact log 必须被 session 的全部 local workers 观察过。
     """
     from workbench.replay import ladder as ladder_data
 
@@ -486,6 +540,7 @@ def validate_ladder_eligibility(
         return _validate_frozen_manifest_path(
             season, season_id, seats, manifest_raw,
             session_id=session_id,
+            tenhou_log_id=tenhou_log_id,
         )
     else:
         return _validate_legacy_path(

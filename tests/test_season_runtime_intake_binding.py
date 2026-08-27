@@ -77,6 +77,38 @@ def _create_checkpoint(models_dir: Path, name: str) -> Path:
     return cp
 
 
+def _setup_two_bot_frozen_season(env):
+    """双 local bot 赛季（h1/h2 human + bot_a/bot_b local_model）——用于多 worker 观测证据测试."""
+    configs_dir = env["configs_dir"]
+    tmp_path = env["tmp_path"]
+    models_dir = env["models_dir"]
+
+    cp_a = _create_checkpoint(models_dir, "model_a.pth")
+    cp_b = _create_checkpoint(models_dir, "model_ab.pth")
+    part_registry.create_model_identity(ModelIdentityCreate(model_identity_id="model:ma", label="MA", kind="local_model"))
+    art_a = part_registry.add_model_artifact("model:ma", ModelArtifactCreate(label="ma.pth", artifact_path=str(cp_a), stage="promoted"))
+    art_b = part_registry.add_model_artifact("model:ma", ModelArtifactCreate(label="mab.pth", artifact_path=str(cp_b), stage="promoted"))
+
+    for i in range(1, 3):
+        part_registry.create_account(AccountCreate(account_id=f"account:h{i}", display_name=f"Human{i}", account_type="human"))
+    part_registry.create_account(AccountCreate(account_id="account:bot_a", display_name="BotA", account_type="managed_bot", model_identity_id="model:ma"))
+    part_registry.create_account(AccountCreate(account_id="account:bot_b", display_name="BotB", account_type="managed_bot", model_identity_id="model:ma"))
+
+    sr.create_season(configs_dir, season_id="s_r14c2", title="R14-C Two-Bot Season")
+    sr.set_season_enrollment(
+        configs_dir, "s_r14c2", ["account:h1", "account:h2", "account:bot_a", "account:bot_b"],
+        provenance_by_model={"model:ma": {"kind": "local_artifact", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id}}
+    )
+
+    start_season_runtime(configs_dir, "s_r14c2", project_root=tmp_path)
+    manifest = get_season_runtime_manifest(configs_dir, "s_r14c2", project_root=tmp_path)
+    return {
+        "season_id": "s_r14c2",
+        "art_a": art_a,
+        "manifest": manifest,
+    }
+
+
 def _setup_frozen_season(env):
     configs_dir = env["configs_dir"]
     tmp_path = env["tmp_path"]
@@ -136,9 +168,9 @@ def _create_execution_session(
         participants.append(
             ExecutionSessionParticipant(
                 account_id=aid,
-                controller_type=str(m_part.controller_type) if m_part else "human_ui",
+                controller_type=m_part.controller_type if m_part else "human_ui",
                 execution_provenance=(
-                    m_part.execution_provenance.model_dump() if m_part else {"kind": "human"}
+                    m_part.execution_provenance if m_part else {"kind": "human"}
                 ),
             )
         )
@@ -161,6 +193,15 @@ def _record_worker_log(session_id: str, log_id: str, account_id: str = "account:
     from runtime.execution_session import record_observed_log
 
     record_observed_log(session_id, account_id, tenhou_log_id=log_id)
+
+
+def _record_all_local_worker_logs(session, log_id: str):
+    """为 session 的全部 local_model participants 记录 log 观测（完整证据）."""
+    from runtime.execution_session import record_observed_log
+
+    for p in session.participants:
+        if p.controller_type == "local_model":
+            record_observed_log(session.session_id, p.account_id, tenhou_log_id=log_id)
 
 
 def _make_seats(art_a):
@@ -501,6 +542,7 @@ def test_r14c_intake_after_disable_and_rebind(r14c_env, monkeypatch):
 
     session_id = "r14c_disable_rebind_session"
     _create_execution_session(r14c_env, session_id, manifest)
+    _record_worker_log(session_id, "2026082712gm-00a9-0000-r14c_dr")
 
     # Start 之后：disable bot 账号 + 把 identity 从 bot 账号解绑（rebind 模拟）
     from participants.schemas import AccountUpdate
@@ -599,6 +641,7 @@ def test_r14c_note_only_revise_preserves_binding_byte_for_byte(r14c_env, monkeyp
 
     session_id = "r14c_revise_session"
     _create_execution_session(r14c_env, session_id, manifest)
+    _record_worker_log(session_id, "2026082712gm-00a9-0000-r14c_rev")
 
     log_id = "2026082712gm-00a9-0000-r14c_rev"
     res = intake.resolve_and_create_match(
@@ -642,6 +685,7 @@ def test_r14c_runtime_bound_match_rejects_seat_change(r14c_env, monkeypatch):
 
     session_id = "r14c_reject_session"
     _create_execution_session(r14c_env, session_id, setup["manifest"])
+    _record_worker_log(session_id, "2026082712gm-00a9-0000-r14c_rej")
 
     log_id = "2026082712gm-00a9-0000-r14c_rej"
     res = intake.resolve_and_create_match(
@@ -700,6 +744,7 @@ def test_r14c_runtime_bound_match_rejects_same_roster_seat_swap(r14c_env, monkey
 
     session_id = "r14c_swap_session"
     _create_execution_session(r14c_env, session_id, setup["manifest"])
+    _record_worker_log(session_id, "2026082712gm-00a9-0000-r14c_swap")
 
     res = intake.resolve_and_create_match(
         log_id="2026082712gm-00a9-0000-r14c_swap",
@@ -748,6 +793,7 @@ def test_r14c_runtime_bound_match_rejects_controller_change(r14c_env, monkeypatc
 
     session_id = "r14c_ctrl_session"
     _create_execution_session(r14c_env, session_id, setup["manifest"])
+    _record_worker_log(session_id, "2026082712gm-00a9-0000-r14c_ctrl")
 
     res = intake.resolve_and_create_match(
         log_id="2026082712gm-00a9-0000-r14c_ctrl",
@@ -819,6 +865,7 @@ def test_r14c_intake_vs_complete_barrier_no_completed_plus_new_match(r14c_env, m
 
     session_id = "r14c_barrier_session"
     _create_execution_session(r14c_env, session_id, setup["manifest"])
+    _record_worker_log(session_id, "2026082712gm-00a9-0000-r14c_barrier")
 
     barrier = threading.Barrier(2)
     results = []
@@ -907,6 +954,7 @@ def test_r14c_intake_commit_barrier_complete_blocked(r14c_env, monkeypatch):
 
     session_id = "r14c_pause_session"
     _create_execution_session(r14c_env, session_id, setup["manifest"])
+    _record_worker_log(session_id, "2026082712gm-00a9-0000-r14c_pause")
 
     # 在 pending 落盘后、Match rewrite 前暂停 intake
     _real_rewrite_match = ledger._rewrite_match
@@ -996,6 +1044,7 @@ def test_r14c_complete_recovers_crash_pending_before_lifecycle(r14c_env, monkeyp
 
     session_id = "r14c_pending_complete_session"
     _create_execution_session(r14c_env, session_id, setup["manifest"])
+    _record_worker_log(session_id, "2026082712gm-00a9-0000-r14c_pc")
 
     # 崩溃：pending 写完后 rewrite 前抛异常
     _real_rewrite_match = ledger._rewrite_match
@@ -1109,6 +1158,7 @@ def test_r14c_crash_recovery_preserves_binding(r14c_env, monkeypatch):
 
     session_id = "r14c_crash_session"
     _create_execution_session(r14c_env, session_id, manifest)
+    _record_worker_log(session_id, "2026082712gm-00a9-0000-r14c_crash")
 
     # 模拟崩溃：在 pending 写完后、commit 前注入异常
     _real_rewrite_match = ledger._rewrite_match
@@ -1260,3 +1310,295 @@ def test_r14c_intake_auto_discovers_execution_session(r14c_env, monkeypatch):
     assert m.runtime_binding is not None
     assert m.runtime_binding.session_id == session_id
     assert m.runtime_binding.manifest_id == manifest.manifest_id
+
+
+# ---------------------------------------------------------------------------
+# R14-C Repair 3: Exact Match Observation & Session Coherence
+# ---------------------------------------------------------------------------
+
+def test_r14c_real_session_cannot_vouch_for_unobserved_log(r14c_env, monkeypatch):
+    """R3-1. 真实 S 观察过 Match A，但显式拿 S 导入完全无关的 Match B → blocked.
+
+    P1-1 收口：session 与 Manifest 相容不再足够——该 exact log 必须被该
+    session 的 local workers 观察过。
+    """
+    setup = _setup_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+    manifest = setup["manifest"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    session_id = "r14c_unobserved_session"
+    _create_execution_session(r14c_env, session_id, manifest)
+    # S 只观察过 Match A
+    _record_worker_log(session_id, "2026082712gm-00a9-0000-match_A")
+
+    # 显式拿 S 导入无关的 Match B → blocked（没有 B 的观测证据）
+    with pytest.raises(ValueError, match="没有观察到对局.*完整执行证据"):
+        intake.resolve_and_create_match(
+            log_id="2026082712gm-00a9-0000-match_B",
+            resolutions=[
+                {"seat": 0, "action": "assign", "account_id": "account:h1"},
+                {"seat": 1, "action": "assign", "account_id": "account:h2"},
+                {"seat": 2, "action": "assign", "account_id": "account:h3"},
+                {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+            ],
+            season_id=setup["season_id"],
+            rating_eligible=True,
+            session_id=session_id,
+        )
+    assert ledger.list_matches().total == 0
+
+
+def test_r14c_consecutive_logs_both_preserved(r14c_env, monkeypatch):
+    """R3-2. 同一 session 连续观察 A、B 两局——两局证据都保留，各自可 intake（P1-2）."""
+    setup = _setup_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+    manifest = setup["manifest"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    session_id = "r14c_multi_game_session"
+    _create_execution_session(r14c_env, session_id, manifest)
+    log_a = "2026082712gm-00a9-0000-multi_A"
+    log_b = "2026082712gm-00a9-0000-multi_B"
+    # 同一 worker 连续观察两局——latest-only 覆盖 bug 的直接反例
+    _record_worker_log(session_id, log_a)
+    _record_worker_log(session_id, log_b)
+
+    from runtime.execution_session import load_observed_log
+
+    assert load_observed_log(session_id, log_a, "account:bot_a") is not None, "A 局证据不得被 B 局覆盖"
+    assert load_observed_log(session_id, log_b, "account:bot_a") is not None
+
+    # 两局各自都能以该 session 正式摄入
+    for log_id in (log_a, log_b):
+        res = intake.resolve_and_create_match(
+            log_id=log_id,
+            resolutions=[
+                {"seat": 0, "action": "assign", "account_id": "account:h1"},
+                {"seat": 1, "action": "assign", "account_id": "account:h2"},
+                {"seat": 2, "action": "assign", "account_id": "account:h3"},
+                {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+            ],
+            season_id=setup["season_id"],
+            rating_eligible=True,
+            session_id=session_id,
+        )
+        m = ledger.get_match(res["match_id"])
+        assert m.runtime_binding is not None
+        assert m.runtime_binding.session_id == session_id
+
+
+def test_r14c_missing_required_local_observer_blocked(r14c_env, monkeypatch):
+    """R3-3. 双 local worker session 只记录一个 observation → blocked.
+
+    required observers = 全部 local_model participants；缺任意一个都不算
+    "整组本地 worker 真进入了这一桌"。
+    """
+    setup = _setup_two_bot_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+    manifest = setup["manifest"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "BotA", "BotB"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotB", account_id="account:bot_b", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    session_id = "r14c_missing_observer_session"
+    _create_execution_session(
+        r14c_env, session_id, manifest,
+        accounts=["account:h1", "account:h2", "account:bot_a", "account:bot_b"],
+    )
+    # 只记录 bot_a 的观测——bot_b (local_model) 缺失
+    _record_worker_log(session_id, "2026082712gm-00a9-0000-missing_obs", account_id="account:bot_a")
+
+    with pytest.raises(ValueError, match="没有观察到对局.*完整执行证据"):
+        intake.resolve_and_create_match(
+            log_id="2026082712gm-00a9-0000-missing_obs",
+            resolutions=[
+                {"seat": 0, "action": "assign", "account_id": "account:h1"},
+                {"seat": 1, "action": "assign", "account_id": "account:h2"},
+                {"seat": 2, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+                {"seat": 3, "action": "assign", "account_id": "account:bot_b", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+            ],
+            season_id=setup["season_id"],
+            rating_eligible=True,
+            session_id=session_id,
+        )
+    assert ledger.list_matches().total == 0
+
+
+def test_r14c_two_local_workers_both_observations_preserved(r14c_env, monkeypatch):
+    """R3-3b. 双 local worker 对同一 log 的两份 observation 都保留且都算数（P1-2）."""
+    setup = _setup_two_bot_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+    manifest = setup["manifest"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "BotA", "BotB"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotB", account_id="account:bot_b", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    session_id = "r14c_dual_observer_session"
+    _create_execution_session(
+        r14c_env, session_id, manifest,
+        accounts=["account:h1", "account:h2", "account:bot_a", "account:bot_b"],
+    )
+    log_id = "2026082712gm-00a9-0000-dual_obs"
+    # 两个 local worker 各自记录对同一 log 的观测
+    _record_worker_log(session_id, log_id, account_id="account:bot_a")
+    _record_worker_log(session_id, log_id, account_id="account:bot_b")
+
+    from runtime.execution_session import session_observer_ids
+
+    assert session_observer_ids(session_id, log_id) == ["account:bot_a", "account:bot_b"]
+
+    # 完整双 worker 证据 → intake 成功
+    res = intake.resolve_and_create_match(
+        log_id=log_id,
+        resolutions=[
+            {"seat": 0, "action": "assign", "account_id": "account:h1"},
+            {"seat": 1, "action": "assign", "account_id": "account:h2"},
+            {"seat": 2, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+            {"seat": 3, "action": "assign", "account_id": "account:bot_b", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+        ],
+        season_id=setup["season_id"],
+        rating_eligible=True,
+        session_id=session_id,
+    )
+    m = ledger.get_match(res["match_id"])
+    assert m.runtime_binding is not None
+    assert m.runtime_binding.session_id == session_id
+
+
+def test_r14c_two_sessions_claim_same_log_auto_intake_ambiguous_blocked(r14c_env, monkeypatch):
+    """R3-4. S1/S2 两个 session 同时声称观测同一 log → auto intake blocked ambiguous（P1-3）."""
+    setup = _setup_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+    manifest = setup["manifest"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    log_id = "2026082712gm-00a9-0000-ambiguous"
+    s1 = "r14c_ambiguous_session_1"
+    s2 = "r14c_ambiguous_session_2"
+    _create_execution_session(r14c_env, s1, manifest)
+    _create_execution_session(r14c_env, s2, manifest)
+    _record_worker_log(s1, log_id)
+    _record_worker_log(s2, log_id)
+
+    # auto intake（不带 session_id）→ ambiguous，fail-closed
+    with pytest.raises(ValueError, match="多个 R14 execution session 声称观测"):
+        intake.resolve_and_create_match(
+            log_id=log_id,
+            resolutions=[
+                {"seat": 0, "action": "assign", "account_id": "account:h1"},
+                {"seat": 1, "action": "assign", "account_id": "account:h2"},
+                {"seat": 2, "action": "assign", "account_id": "account:h3"},
+                {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+            ],
+            season_id=setup["season_id"],
+            rating_eligible=True,
+        )
+    assert ledger.list_matches().total == 0
+
+
+def test_r14c_tampered_session_provenance_blocked(r14c_env, monkeypatch):
+    """R3-5. session participant provenance 被篡改（账号正确但 Artifact A→B）→ blocked（P2）."""
+    setup = _setup_frozen_season(r14c_env)
+    art_a = setup["art_a"]
+    manifest = setup["manifest"]
+
+    fake_tenhou6 = {"title": ["", ""], "name": ["H1", "H2", "H3", "BotA"], "dan": [0, 0, 0, 0], "rate": [1500, 1500, 1500, 1500], "sx": ["C", "C", "C", "C"]}
+    monkeypatch.setattr(intake, "download_tenhou6", lambda log_id: fake_tenhou6)
+    monkeypatch.setattr(intake, "tenhou6_events", lambda t6: [])
+    monkeypatch.setattr(intake, "hand_summaries", lambda ev: [])
+
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H1", account_id="account:h1"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H2", account_id="account:h2"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="H3", account_id="account:h3"))
+    aliases.register_alias(ExternalAliasCreate(provider="tenhou", external_id="BotA", account_id="account:bot_a", model_identity_id="model:ma", model_artifact_id=art_a.model_artifact_id))
+
+    # 篡改 session：账号集合正确，但 bot_a 的 provenance 指向伪造 artifact
+    session_id = "r14c_tampered_prov_session"
+    session = _create_execution_session(r14c_env, session_id, manifest)
+    log_id = "2026082712gm-00a9-0000-tampered_prov"
+    _record_worker_log(session_id, log_id)
+
+    from runtime.execution_session import (
+        ExecutionSessionParticipant,
+        RuntimeExecutionSession,
+        persist_execution_session_locked,
+    )
+    tampered_participants = []
+    for p in session.participants:
+        if p.account_id == "account:bot_a":
+            tampered_participants.append(
+                ExecutionSessionParticipant(
+                    account_id="account:bot_a",
+                    controller_type=p.controller_type,
+                    execution_provenance={"kind": "local_artifact", "model_identity_id": "model:ma", "model_artifact_id": "artifact:forged"},
+                )
+            )
+        else:
+            tampered_participants.append(p)
+    persist_execution_session_locked(
+        RuntimeExecutionSession(
+            session_id=session_id,
+            season_id=session.season_id,
+            manifest_id=session.manifest_id,
+            season_authority_hash=session.season_authority_hash,
+            participants=tampered_participants,
+            created_at=session.created_at,
+        )
+    )
+
+    with pytest.raises(ValueError, match="execution_provenance.*不一致"):
+        intake.resolve_and_create_match(
+            log_id=log_id,
+            resolutions=[
+                {"seat": 0, "action": "assign", "account_id": "account:h1"},
+                {"seat": 1, "action": "assign", "account_id": "account:h2"},
+                {"seat": 2, "action": "assign", "account_id": "account:h3"},
+                {"seat": 3, "action": "assign", "account_id": "account:bot_a", "model_identity_id": "model:ma", "model_artifact_id": art_a.model_artifact_id},
+            ],
+            season_id=setup["season_id"],
+            rating_eligible=True,
+            session_id=session_id,
+        )
+    assert ledger.list_matches().total == 0

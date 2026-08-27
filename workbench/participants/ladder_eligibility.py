@@ -1,15 +1,22 @@
 # -*- coding: utf-8 -*-
-"""正式天梯资格 gate（R10 Production UX Repair 1 / P1-2 / R13-B Frozen Provenance Admission）。
+"""正式天梯资格 gate（R10 Production UX Repair 1 / P1-2 / R13-B / R14-C Repair 1）。
 
 任何把 ``rating_eligible`` 置 true 的入口（Tenhou intake confirm / manual Match
 create / Match revise）都必须先通过本校验，防止「成绩记错模型」：
 
+**Legacy Path** (无 persisted Frozen Runtime Manifest):
 - 赛季存在 + running + 启用 participants 正式投影（enabled + exclusive）；
 - 四个账号均为正式赛季成员（season.models[*].accounts）；
-- 人类账号必须属于 ``model_id=human``（C23 契约）；
-- 带冻结模型（seat.model_artifact_id / seat.external_revision_id）的座位：
-  artifact / revision 必须与该账号所属赛季模型的冻结配置精确一致（如 70k@02 + V3 artifact → REJECT，Mortal 4.1b + 4.2 revision → REJECT）；
-- 校验通过后返回每个座位的规范执行凭据（CanonicalExecutionProvenance），供写入层冻结为不可变历史事实。
+- 人类账号必须属于 ``model_id=human``；
+- 通过 ``resolve_execution_provenance`` 在 Catalog Current 中校验 stage/capability；
+- 校验通过后返回每个座位的规范执行凭据。
+
+**R14 Frozen Manifest Path** (有 persisted Frozen Runtime Manifest):
+- 赛季存在 + running + 启用 participants 正式投影；
+- Manifest 通过 ``validate_persisted_manifest_against_season`` 自洽性校验；
+- 四个座位的 account/provenance 精确等于 Manifest 中对应 participant 的 frozen provenance；
+- **不重新检查 Catalog/Account 当前 lifecycle** (Start 时已完成审查；Start 后 retire/disable 不能改写 Frozen Authority)；
+- 只有提供可信 runtime/capture session evidence 时才构建 RuntimeMatchBinding。
 """
 from __future__ import annotations
 
@@ -19,10 +26,9 @@ from typing import Any
 
 from .execution_provenance import (
     CanonicalExecutionProvenance,
-    freeze_execution_provenance,
     resolve_execution_provenance,
 )
-from .schemas import RuntimeMatchBinding
+from .schemas import FrozenExecutionProvenance, RuntimeMatchBinding
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -90,7 +96,7 @@ def ensure_ladder_eligibility(
     session_id: str | None = None,
     project_root: Path = PROJECT_ROOT,
 ) -> LadderAdmissionResult:
-    """统一硬不变量（UX Repair 2/3 / P1-2 / R13-B / R14-C）：
+    """统一硬不变量（UX Repair 2/3 / P1-2 / R13-B / R14-C Repair 1）：
 
     ``rating_eligible == true`` ⇒ ``season_id`` 必须是非空有效字符串
     ⇒ 必须通过 ``validate_ladder_eligibility``。
@@ -111,23 +117,12 @@ def ensure_ladder_eligibility(
     )
 
 
-def validate_ladder_eligibility(
-    season_id: str,
-    seats: list[Any],
-    *,
-    registry,
-    session_id: str | None = None,
-    project_root: Path = PROJECT_ROOT,
-) -> tuple[dict[int, CanonicalExecutionProvenance], RuntimeMatchBinding | None]:
-    """正式天梯资格校验；不通过抛 ValueError（带中文原因）。返回 (逐座规范执行凭据, RuntimeMatchBinding)."""
-    from workbench.replay import ladder as ladder_data
+# ---------------------------------------------------------------------------
+# Season-level checks common to both paths
+# ---------------------------------------------------------------------------
 
-    configs_dir = ladder_data.resolve_config_dir(project_root)
-    try:
-        season = ladder_data.get_season_config(configs_dir, season_id)
-    except ladder_data.SeasonNotFoundError as exc:
-        raise ValueError(f"正式赛季不存在: {season_id}") from exc
-
+def _validate_season_common(season: dict[str, Any], season_id: str) -> None:
+    """赛季公共前置校验：running + participants enabled + exclusive."""
     if str(season.get("status") or "") != "running":
         raise ValueError(f"赛季 {season_id} 不是 running 状态，不能计入正式天梯")
     ingest = season.get("ingest") if isinstance(season.get("ingest"), dict) else {}
@@ -139,18 +134,206 @@ def validate_ladder_eligibility(
     ):
         raise ValueError(f"赛季 {season_id} 未启用 participants 正式投影（需 ingest.participants.enabled+exclusive）")
 
-    # R14-C: 校验 Frozen Runtime Manifest (若存在) 并构建权威 RuntimeMatchBinding
-    manifest_raw = season.get("runtime_manifest")
-    runtime_binding: RuntimeMatchBinding | None = None
-    manifest_participants_by_account = {}
-    if manifest_raw is not None:
-        from workbench.runtime.manifest import validate_persisted_manifest_against_season
-        manifest = validate_persisted_manifest_against_season(season, manifest_raw)
-        manifest_participants_by_account = {p.account_id: p for p in manifest.participants}
+
+# ---------------------------------------------------------------------------
+# R14 Frozen Manifest Path — Manifest participant provenance is sole authority
+# ---------------------------------------------------------------------------
+
+def _validate_frozen_manifest_path(
+    season: dict[str, Any],
+    season_id: str,
+    seats: list[Any],
+    manifest_raw: dict,
+    *,
+    session_id: str | None = None,
+) -> tuple[dict[int, CanonicalExecutionProvenance], RuntimeMatchBinding | None]:
+    """R14-C Repair 1: Frozen Runtime Manifest 为唯一执行权威。
+
+    不重新检查 Catalog/Account 当前 lifecycle（Artifact stage, Account enabled, 模型绑定）。
+    Start 时已完成审查；Start 后 retire/disable 不能改写 Frozen Authority。
+
+    仅校验：
+    1. Manifest self-integrity (via validate_persisted_manifest_against_season)
+    2. 四座 account/provenance 精确等于 Manifest participant 的 frozen provenance
+    3. 有可信 session evidence 时才构造 RuntimeMatchBinding
+    """
+    from workbench.runtime.manifest import validate_persisted_manifest_against_season
+
+    manifest = validate_persisted_manifest_against_season(season, manifest_raw)
+    manifest_participants_by_account = {p.account_id: p for p in manifest.participants}
 
     provenance_by_seat: dict[int, CanonicalExecutionProvenance] = {}
     seat_accounts_map: dict[int, str] = {}
-    seat_frozen_prov_map = {}
+    seat_frozen_prov_map: dict[int, FrozenExecutionProvenance] = {}
+
+    for seat in seats:
+        seat_no = getattr(seat, "seat", None)
+        if seat_no is None:
+            raise ValueError("座位缺少 seat 编号")
+        account_id = str(getattr(seat, "account_id", None) or "")
+        if not account_id:
+            raise ValueError(f"座位 {seat_no} 未指派账号")
+
+        # 不要求当前 Account 仍 enabled/存在——Manifest 是权威
+        season_model = _season_account_model(season, account_id)
+        if season_model is None:
+            raise ValueError(f"账号 {account_id} 未在正式赛季 {season_id} 注册")
+
+        m_part = manifest_participants_by_account.get(account_id)
+        if not m_part:
+            raise ValueError(
+                f"账号 {account_id} 未包含在当前赛季的冻结运行时清单 "
+                f"(manifest_id={manifest.manifest_id}) 中"
+            )
+
+        # 从 Manifest participant 取出权威 frozen provenance
+        manifest_frozen_prov = m_part.execution_provenance
+
+        # 比较 seat 显式声明的 provenance 与 Manifest 的权威 provenance
+        seat_art = getattr(seat, "model_artifact_id", None)
+        seat_ident = getattr(seat, "model_identity_id", None)
+        seat_rev = getattr(seat, "external_revision_id", None)
+
+        # 如果 seat 带了显式 provenance 字段，必须与 Manifest 精确匹配
+        if manifest_frozen_prov.kind == "human":
+            if seat_art or seat_ident or seat_rev:
+                raise ValueError(
+                    f"座位 {seat_no} 账号 {account_id}: Manifest 标记为真人座位，"
+                    "不能携带模型证据"
+                )
+        elif manifest_frozen_prov.kind == "local_artifact":
+            if seat_art and seat_art != manifest_frozen_prov.model_artifact_id:
+                raise ValueError(
+                    f"座位 {seat_no} 模型产物 {seat_art} 与 Frozen Runtime Manifest "
+                    f"不一致 (manifest={manifest_frozen_prov.model_artifact_id})"
+                )
+            if seat_ident and seat_ident != manifest_frozen_prov.model_identity_id:
+                raise ValueError(
+                    f"座位 {seat_no} 模型身份 {seat_ident} 与 Frozen Runtime Manifest "
+                    f"不一致 (manifest={manifest_frozen_prov.model_identity_id})"
+                )
+        elif manifest_frozen_prov.kind == "external_revision":
+            if seat_rev and seat_rev != manifest_frozen_prov.external_revision_id:
+                raise ValueError(
+                    f"座位 {seat_no} 外部版本 {seat_rev} 与 Frozen Runtime Manifest "
+                    f"不一致 (manifest={manifest_frozen_prov.external_revision_id})"
+                )
+            if seat_ident and seat_ident != manifest_frozen_prov.model_identity_id:
+                raise ValueError(
+                    f"座位 {seat_no} 模型身份 {seat_ident} 与 Frozen Runtime Manifest "
+                    f"不一致 (manifest={manifest_frozen_prov.model_identity_id})"
+                )
+
+        # 使用 Manifest 的 frozen provenance 作为本座位的权威凭据
+        # 构造 CanonicalExecutionProvenance（用于 freeze_execution_provenance 输出）
+        can_prov = CanonicalExecutionProvenance(
+            kind=manifest_frozen_prov.kind,
+            account_id=account_id,
+            model_identity_id=manifest_frozen_prov.model_identity_id,
+            model_artifact_id=manifest_frozen_prov.model_artifact_id,
+            external_revision_id=manifest_frozen_prov.external_revision_id,
+        )
+
+        # 双模块路径防御：manifest 可能通过 workbench.participants.schemas 导入
+        # FrozenExecutionProvenance（与本模块相对导入不同类），统一 revalidate
+        local_frozen_prov = FrozenExecutionProvenance.model_validate(
+            manifest_frozen_prov.model_dump()
+        )
+
+        seat_accounts_map[int(seat_no)] = account_id
+        provenance_by_seat[int(seat_no)] = can_prov
+        seat_frozen_prov_map[int(seat_no)] = local_frozen_prov
+
+    # R14-C Repair 1 (P1-4): RuntimeMatchBinding 只在有可信 session evidence 时构造
+    runtime_binding: RuntimeMatchBinding | None = None
+    if session_id is not None:
+        # 验证 session 对应的 binding.json 确实存在并与当前 Manifest 一致
+        session_verified = _verify_session_manifest_consistency(
+            session_id, manifest, season_id, seat_accounts_map
+        )
+        if session_verified:
+            from workbench.participants.paths import now_iso
+            runtime_binding = RuntimeMatchBinding(
+                season_id=manifest.season_id,
+                manifest_id=manifest.manifest_id,
+                season_authority_hash=manifest.season_authority_hash,
+                session_id=session_id,
+                seat_provenance=seat_frozen_prov_map,
+                seat_accounts=seat_accounts_map,
+                admitted_at=now_iso(),
+            )
+
+    return provenance_by_seat, runtime_binding
+
+
+def _verify_session_manifest_consistency(
+    session_id: str,
+    manifest,
+    season_id: str,
+    seat_accounts_map: dict[int, str] | None = None,
+) -> bool:
+    """验证 runtime/capture session 确实对应同一 Season + Manifest + roster。
+
+    Fail-closed 证据链（R14-C Repair 1 / P1-4）：
+    1. session 的 ``binding.json`` 必须存在（无 capture binding ≠ R14 runtime）；
+    2. binding 记录的 ``season_id`` 必须与当前 Season 精确一致；
+    3. binding 记录的 ``manifest_id``（若存在）必须与 persisted Manifest 一致；
+    4. binding roster（若包含已登记账号）必须与 Match seats 的账号集合一致。
+
+    任何校验失败返回 False——intake 仍可成功，但绝不授予 RuntimeMatchBinding。
+    """
+    import json
+
+    from workbench.runtime.resolver import ladder_capture_root
+
+    binding_path = ladder_capture_root() / session_id / "binding.json"
+    if not binding_path.exists():
+        # 没有 capture binding，不能证明来自 R14 runtime
+        return False
+    try:
+        binding = json.loads(binding_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(binding, dict):
+        return False
+
+    # 1. season_id 精确一致（缺失视为不可信）
+    binding_season = binding.get("season_id")
+    if not binding_season or str(binding_season) != season_id:
+        return False
+
+    # 2. manifest_id（若 capture 冻结时记录）必须与当前 persisted Manifest 一致
+    binding_manifest = binding.get("manifest_id")
+    if binding_manifest and str(binding_manifest) != manifest.manifest_id:
+        return False
+
+    # 3. roster 账号证据：binding roster 中已登记的账号必须与 Match seats 一致
+    if seat_accounts_map is not None:
+        roster_accounts = {
+            str(entry.get("account_id") or "").strip()
+            for entry in (binding.get("roster") or [])
+            if isinstance(entry, dict) and str(entry.get("account_id") or "").strip()
+        }
+        if roster_accounts and roster_accounts != set(seat_accounts_map.values()):
+            return False
+
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Legacy Path — no persisted Frozen Runtime Manifest
+# ---------------------------------------------------------------------------
+
+def _validate_legacy_path(
+    season: dict[str, Any],
+    season_id: str,
+    seats: list[Any],
+    *,
+    registry,
+    project_root: Path = PROJECT_ROOT,
+) -> tuple[dict[int, CanonicalExecutionProvenance], None]:
+    """Legacy 校验路径：无 persisted Frozen Runtime Manifest，通过 Catalog Current 校验。"""
+    provenance_by_seat: dict[int, CanonicalExecutionProvenance] = {}
 
     for seat in seats:
         seat_no = getattr(seat, "seat", None)
@@ -165,8 +348,6 @@ def validate_ladder_eligibility(
         season_model = _season_account_model(season, account_id)
         if season_model is None:
             raise ValueError(f"账号 {account_id} 未在正式赛季 {season_id} 注册")
-
-        seat_accounts_map[int(seat_no)] = account_id
 
         # 提取赛季级别配置
         season_model_id = season_model.get("model_id")
@@ -260,32 +441,74 @@ def validate_ladder_eligibility(
                 f"座位 {seat_no} 模型产物 {resolved_prov.model_artifact_id} 与赛季指定产物 {season_art_id} 不一致"
             )
 
-        # R14-C: 校验与 Frozen Runtime Manifest 对应 participant 的精确一致性
-        if manifest_raw is not None:
-            m_part = manifest_participants_by_account.get(account_id)
-            if not m_part:
-                raise ValueError(f"账号 {account_id} 未包含在当前赛季的冻结运行时清单 (manifest_id={manifest.manifest_id}) 中")
-            frozen_p = freeze_execution_provenance(resolved_prov)
-            if m_part.execution_provenance.model_dump() != frozen_p.model_dump():
-                raise ValueError(f"座位 {seat_no} 账号 {account_id} 的凭据与 Frozen Runtime Manifest 不一致")
-
         provenance_by_seat[int(seat_no)] = resolved_prov
-        seat_frozen_prov_map[int(seat_no)] = freeze_execution_provenance(resolved_prov)
 
-    # R14-C: 构造不可变 RuntimeMatchBinding
+    return provenance_by_seat, None
+
+
+# ---------------------------------------------------------------------------
+# Main entry point — dispatches to frozen-manifest or legacy path
+# ---------------------------------------------------------------------------
+
+def validate_ladder_eligibility(
+    season_id: str,
+    seats: list[Any],
+    *,
+    registry,
+    session_id: str | None = None,
+    project_root: Path = PROJECT_ROOT,
+) -> tuple[dict[int, CanonicalExecutionProvenance], RuntimeMatchBinding | None]:
+    """正式天梯资格校验；不通过抛 ValueError（带中文原因）。返回 (逐座规范执行凭据, RuntimeMatchBinding).
+
+    R14-C Repair 1: 有 persisted Frozen Runtime Manifest 时走 frozen-manifest path
+    (Manifest 为唯一权威，不重检当前 Catalog/Account lifecycle);
+    否则走 legacy path (通过 Catalog Current 校验)。
+    """
+    from workbench.replay import ladder as ladder_data
+
+    configs_dir = ladder_data.resolve_config_dir(project_root)
+    try:
+        season = ladder_data.get_season_config(configs_dir, season_id)
+    except ladder_data.SeasonNotFoundError as exc:
+        raise ValueError(f"正式赛季不存在: {season_id}") from exc
+
+    _validate_season_common(season, season_id)
+
+    manifest_raw = season.get("runtime_manifest")
     if manifest_raw is not None:
-        from workbench.participants.paths import now_iso
-        runtime_binding = RuntimeMatchBinding(
-            season_id=manifest.season_id,
-            manifest_id=manifest.manifest_id,
-            season_authority_hash=manifest.season_authority_hash,
+        return _validate_frozen_manifest_path(
+            season, season_id, seats, manifest_raw,
             session_id=session_id,
-            seat_provenance=seat_frozen_prov_map,
-            seat_accounts=seat_accounts_map,
-            admitted_at=now_iso(),
+        )
+    else:
+        return _validate_legacy_path(
+            season, season_id, seats,
+            registry=registry, project_root=project_root,
         )
 
-    return provenance_by_seat, runtime_binding
+
+def season_has_frozen_manifest(season_id: str, project_root: Path = PROJECT_ROOT) -> bool:
+    """判断赛季是否带有 persisted Frozen Runtime Manifest（R14 frozen-manifest path 的标志）。
+
+    供 ledger 的通用校验层区分：R14 冻结权威赛季的 rating-eligible 写入不应被
+    Start 之后的 Account disable / Artifact retire 等当前 lifecycle 变化阻塞。
+    """
+    season_id = (season_id or "").strip()
+    if not season_id:
+        return False
+    from workbench.replay import ladder as ladder_data
+
+    configs_dir = ladder_data.resolve_config_dir(project_root)
+    try:
+        season = ladder_data.get_season_config(configs_dir, season_id)
+    except ladder_data.SeasonNotFoundError:
+        return False
+    return season.get("runtime_manifest") is not None
 
 
-__all__ = ["LadderAdmissionResult", "ensure_ladder_eligibility", "validate_ladder_eligibility"]
+__all__ = [
+    "LadderAdmissionResult",
+    "ensure_ladder_eligibility",
+    "season_has_frozen_manifest",
+    "validate_ladder_eligibility",
+]

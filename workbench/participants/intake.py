@@ -25,17 +25,14 @@ from datetime import datetime
 from pathlib import Path
 
 from . import aliases, ledger, registry
-from .paths import TZ_OFFSET, data_root, now_iso, atomic_write_text, data_lock
+from .paths import TZ_OFFSET, atomic_write_text, data_lock, data_root, now_iso
 from .schemas import (
     REPLAY_ARTIFACT_SCHEMA,
     AccountCreate,
     ExternalAliasCreate,
     Match,
-    MatchCreate,
     MatchSeat,
-    SeatResolution,
 )
-from .ledger import ValidationError
 
 _INTENT = "intake"
 
@@ -236,8 +233,8 @@ def _frozen_provenance_for_checkpoint(checkpoint_path: str) -> tuple[str, str] |
     - 0 个匹配 → ``None``（provenance unresolved）；
     - >1 个匹配 → ``ValueError``（ambiguous——绝不 first-match 猜测）。
     """
-    from workbench.runtime.resolver import resolve_model_checkpoint
     from participants.ladder_eligibility import PROJECT_ROOT
+    from workbench.runtime.resolver import resolve_model_checkpoint
 
     target = Path(checkpoint_path).resolve()
     matches: list[tuple[str, str]] = []
@@ -435,11 +432,9 @@ def _write_artifact_files(directory: Path, *, tenhou6: dict, events: list[dict],
     directory.mkdir(parents=True, exist_ok=True)
     atomic_write_text(directory / "tenhou6.json", json.dumps(tenhou6, ensure_ascii=False))
     with open(directory / "events.jsonl", "w", encoding="utf-8") as fh:
-        for event in events:
-            fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+        fh.writelines(json.dumps(event, ensure_ascii=False) + "\n" for event in events)
     with open(directory / "hands.jsonl", "w", encoding="utf-8") as fh:
-        for hand in hands:
-            fh.write(json.dumps(hand, ensure_ascii=False) + "\n")
+        fh.writelines(json.dumps(hand, ensure_ascii=False) + "\n" for hand in hands)
     atomic_write_text(
         directory / "summary.json",
         json.dumps(
@@ -853,27 +848,33 @@ def resolve_and_create_match(
         if len({s.account_id for s in seats}) != 4:
             raise ValueError("四个座位不能指向同一账号")
         runtime_binding = None
-        # P1-2：正式计分 → 正式赛季资格 gate（rating_eligible ⇒ 必填 season + 校验）
-        # 返回值是 trim 后的规范 season_id 与逐座 CanonicalExecutionProvenance，必须回写 Match
+        # R14-C Repair 1 (P1-3): rating-eligible 摄入必须在 data_lock + _registry_lock 双锁
+        # 范围内完成 Season running 检查与 Match 提交，防止 complete ↔ intake 竞态
         if rating_eligible:
-            from .ladder_eligibility import ensure_ladder_eligibility
-            from .execution_provenance import freeze_execution_provenance
+            from workbench.replay import ladder as ladder_data
+            from workbench.replay.season_registry import _registry_lock
 
-            admission = ensure_ladder_eligibility(
-                season_id,
-                seats,
-                registry=registry,
-                session_id=session_id,
-            )
-            season_id = admission.season_id
-            runtime_binding = admission.runtime_binding
-            for s in seats:
-                if s.seat in admission.provenance_by_seat:
-                    frozen_prov = freeze_execution_provenance(admission.provenance_by_seat[s.seat])
-                    s.execution_provenance = frozen_prov
-                    s.model_identity_id = frozen_prov.model_identity_id
-                    s.model_artifact_id = frozen_prov.model_artifact_id
-                    s.external_revision_id = frozen_prov.external_revision_id
+            from .execution_provenance import freeze_execution_provenance
+            from .ladder_eligibility import PROJECT_ROOT as _LE_ROOT
+            from .ladder_eligibility import ensure_ladder_eligibility
+
+            _configs_dir = ladder_data.resolve_config_dir(_LE_ROOT)
+            with _registry_lock(_configs_dir):
+                admission = ensure_ladder_eligibility(
+                    season_id,
+                    seats,
+                    registry=registry,
+                    session_id=session_id,
+                )
+                season_id = admission.season_id
+                runtime_binding = admission.runtime_binding
+                for s in seats:
+                    if s.seat in admission.provenance_by_seat:
+                        frozen_prov = freeze_execution_provenance(admission.provenance_by_seat[s.seat])
+                        s.execution_provenance = frozen_prov
+                        s.model_identity_id = frozen_prov.model_identity_id
+                        s.model_artifact_id = frozen_prov.model_artifact_id
+                        s.external_revision_id = frozen_prov.external_revision_id
 
         # 全部校验通过后才写 staging（P2-2：校验失败不残留 staging）
         staging = _staging_dir(log_id)
@@ -1034,18 +1035,20 @@ def assess_intake_admission(
     - 评估成功返回 state="ready" 并挂载每个座位的 FrozenExecutionProvenance（不含运行时 checkpoint 路径）；
     - 存在冲突/未注册/版本不符时返回 state="blocked" 及结构化 AdmissionIssue 列表。
     """
-    from workbench.replay import ladder as ladder_data
+    from workbench.participants.execution_provenance import freeze_execution_provenance
     from workbench.participants.ladder_eligibility import (
         PROJECT_ROOT as DEFAULT_PROJECT_ROOT,
+    )
+    from workbench.participants.ladder_eligibility import (
         _season_account_model,
         validate_ladder_eligibility,
     )
-    from workbench.participants.execution_provenance import freeze_execution_provenance
     from workbench.participants.schemas import (
         AdmissionIssue,
         AdmissionSeatAssessment,
         IntakeAdmissionAssessment,
     )
+    from workbench.replay import ladder as ladder_data
 
     active_root = project_root or DEFAULT_PROJECT_ROOT
     active_registry = registry_override or registry
@@ -1233,6 +1236,7 @@ def assess_intake_admission(
                 normalized_season_id,
                 mem_seats,
                 registry=active_registry,
+                session_id=session_id,
                 project_root=active_root,
             )
             for sa in seats_assessment:
@@ -1267,17 +1271,17 @@ def assess_intake_admission(
 
 
 __all__ = [
-    "parse_tenhou_url",
-    "download_tenhou6",
-    "tenhou6_events",
-    "player_names",
-    "hand_summaries",
-    "build_preview",
-    "assess_intake_admission",
-    "resolve_and_create_match",
-    "recover_intake_transaction_locked",
-    "read_replay_artifact",
-    "rich_hands_for_artifact",
-    "read_replay_events",
     "artifact_dir",
+    "assess_intake_admission",
+    "build_preview",
+    "download_tenhou6",
+    "hand_summaries",
+    "parse_tenhou_url",
+    "player_names",
+    "read_replay_artifact",
+    "read_replay_events",
+    "recover_intake_transaction_locked",
+    "resolve_and_create_match",
+    "rich_hands_for_artifact",
+    "tenhou6_events",
 ]

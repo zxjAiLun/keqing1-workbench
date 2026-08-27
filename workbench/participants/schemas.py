@@ -256,9 +256,10 @@ class RuntimeMatchBinding(BaseModel):
 
     - 冻结进入 Match / revision / replay artifact；
     - 绝不在 intake 时重新从 Catalog Current 推导；
-    - 历史 / 手工导入 / 非 R14 对局保持可选兼容 (None)。
+    - 历史 / 手工导入 / 非 R14 对局保持可选兼容 (None)；
+    - server-owned evidence：不暴露在客户端输入契约中。
     """
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid")
     schema_version: Literal["keqing.runtime.match_binding.v1"] = "keqing.runtime.match_binding.v1"
     season_id: str
     manifest_id: str
@@ -424,7 +425,7 @@ class MatchCreate(BaseModel):
     resolution: dict | None = None  # 逐座身份解析审计
     season_id: str | None = None  # 正式计分赛季（null = 仅账号统计）
     rating_eligible: bool = False  # 是否纳入正式天梯计分
-    runtime_binding: RuntimeMatchBinding | None = None  # R14-C 权威运行时清单绑定
+    # runtime_binding is server-owned evidence, not client input (R14-C Repair 1)
     seats: list[MatchSeat]
     final_scores: list[int]
     force: bool = False
@@ -448,7 +449,7 @@ class MatchRevise(BaseModel):
     final_scores: list[int] | None = None
     season_id: str | None = None
     rating_eligible: bool | None = None
-    runtime_binding: RuntimeMatchBinding | None = None
+    # runtime_binding is server-owned evidence, not revisable (R14-C Repair 1)
     force: bool = False
     reason: str | None = None
 

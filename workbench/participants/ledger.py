@@ -12,13 +12,13 @@ import json
 import os
 import threading
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Sequence
 
 from mahjong_env.final_rank import final_ranks
 
-from .paths import data_root, now_iso, atomic_write_text, data_lock
+from .paths import atomic_write_text, data_lock, data_root, now_iso
 from .schemas import (
     MATCH_REVISION_SCHEMA,
     Match,
@@ -588,6 +588,14 @@ def create_match(payload: MatchCreate, registry) -> Match:
         reason=payload.reason,
         registry=registry,
     )
+    # R14-C Repair 1 (P1-1): frozen-manifest 赛季的 rating-eligible 摄入以
+    # Manifest 为唯一权威——Start 后的 Account disable 不阻塞（锁内 ladder
+    # gate 会做精确的 Manifest 一致性校验并 fail-closed）。
+    if payload.rating_eligible and payload.season_id:
+        from .ladder_eligibility import season_has_frozen_manifest
+
+        if season_has_frozen_manifest(payload.season_id):
+            pre_issues = [i for i in pre_issues if i.code != "account_disabled"]
     if blocking_issues(pre_issues, force=payload.force, reason=payload.reason):
         raise ValidationError(pre_issues, "score_total_mismatch" in {i.code for i in pre_issues})
 
@@ -597,21 +605,27 @@ def create_match(payload: MatchCreate, registry) -> Match:
         match_id = _generate_match_id()
         match, issues, blocking = build_match(payload, registry, match_id, now)
         # P1-2：正式计分 → 正式赛季资格 gate（rating_eligible ⇒ 必填 season + 校验）
-        # 返回值是 trim 后的规范 season_id 与逐座 CanonicalExecutionProvenance，必须回写 Match
+        # R14-C Repair 1 (P1-3): 在 data_lock + _registry_lock 双锁范围内校验 Season running
         if match.rating_eligible:
-            from .ladder_eligibility import ensure_ladder_eligibility
-            from .execution_provenance import freeze_execution_provenance
+            from workbench.replay import ladder as ladder_data
+            from workbench.replay.season_registry import _registry_lock
 
-            admission = ensure_ladder_eligibility(match.season_id, match.seats, registry=registry)
-            match.season_id = admission.season_id
-            match.runtime_binding = admission.runtime_binding
-            for s in match.seats:
-                if s.seat in admission.provenance_by_seat:
-                    frozen_prov = freeze_execution_provenance(admission.provenance_by_seat[s.seat])
-                    s.execution_provenance = frozen_prov
-                    s.model_identity_id = frozen_prov.model_identity_id
-                    s.model_artifact_id = frozen_prov.model_artifact_id
-                    s.external_revision_id = frozen_prov.external_revision_id
+            from .execution_provenance import freeze_execution_provenance
+            from .ladder_eligibility import PROJECT_ROOT as _LE_ROOT
+            from .ladder_eligibility import ensure_ladder_eligibility
+
+            _configs_dir = ladder_data.resolve_config_dir(_LE_ROOT)
+            with _registry_lock(_configs_dir):
+                admission = ensure_ladder_eligibility(match.season_id, match.seats, registry=registry)
+                match.season_id = admission.season_id
+                match.runtime_binding = admission.runtime_binding
+                for s in match.seats:
+                    if s.seat in admission.provenance_by_seat:
+                        frozen_prov = freeze_execution_provenance(admission.provenance_by_seat[s.seat])
+                        s.execution_provenance = frozen_prov
+                        s.model_identity_id = frozen_prov.model_identity_id
+                        s.model_artifact_id = frozen_prov.model_artifact_id
+                        s.external_revision_id = frozen_prov.external_revision_id
         # P1-5：dirty 先于 Match 提交（即使后续崩溃也只会多重建一次，不会永久漏更新）
         mark_ladder_dirty(match.season_id)
         _transactional_match_update(
@@ -655,6 +669,12 @@ def build_match(
         reason=payload.reason,
         registry=registry,
     )
+    # R14-C Repair 1 (P1-1): frozen-manifest 赛季不因 Start 后 Account disable 阻塞
+    if payload.rating_eligible and payload.season_id:
+        from .ladder_eligibility import season_has_frozen_manifest
+
+        if season_has_frozen_manifest(payload.season_id):
+            issues = [i for i in issues if i.code != "account_disabled"]
     blocking = blocking_issues(issues, force=payload.force, reason=payload.reason)
     if blocking:
         raise ValidationError(issues, "score_total_mismatch" in {i.code for i in issues})
@@ -749,25 +769,68 @@ def revise_match(match_id: str, payload: MatchRevise, registry) -> Match:
         next_match.latest_revision_id = _generate_revision_id(match_id, next_match.revision)
         next_match.updated_at = now_iso()
         _assert_seat_accounts_exist(next_match.seats, registry)
-        # P1-2：修订后为正式计分 → 正式赛季资格 gate（rating_eligible ⇒ 必填 season + 校验）
-        # 返回值是 trim 后的规范 season_id 与逐座 CanonicalExecutionProvenance，必须回写 Match
-        if next_match.rating_eligible:
-            from .ladder_eligibility import ensure_ladder_eligibility
-            from .execution_provenance import freeze_execution_provenance
 
-            admission = ensure_ladder_eligibility(
-                next_match.season_id, next_match.seats, registry=registry
-            )
-            next_match.season_id = admission.season_id
-            next_match.runtime_binding = admission.runtime_binding
-            for s in next_match.seats:
-                if s.seat in admission.provenance_by_seat:
-                    frozen_prov = freeze_execution_provenance(admission.provenance_by_seat[s.seat])
-                    s.execution_provenance = frozen_prov
-                    s.model_identity_id = frozen_prov.model_identity_id
-                    s.model_artifact_id = frozen_prov.model_artifact_id
-                    s.external_revision_id = frozen_prov.external_revision_id
-            new_season = next_match.season_id
+        # R14-C Repair 1 (P1-2): RuntimeMatchBinding 是不可变 origin evidence
+        # 如果原始 Match 已有 runtime_binding，禁止修改会改变 runtime origin 的字段
+        if current.runtime_binding is not None:
+            # 检查是否尝试修改 seats/season/provenance 等 runtime origin 字段
+            _changes_origin = False
+            if payload.seats is not None:
+                # 比较账号集合与 provenance 是否改变
+                old_accts = {s.account_id for s in current.seats}
+                new_accts = {s.account_id for s in next_match.seats}
+                if old_accts != new_accts:
+                    _changes_origin = True
+                else:
+                    for s_old, s_new in zip(
+                        sorted(current.seats, key=lambda s: s.seat),
+                        sorted(next_match.seats, key=lambda s: s.seat),
+                    ):
+                        if (
+                            s_old.execution_provenance != s_new.execution_provenance
+                            or s_old.model_artifact_id != s_new.model_artifact_id
+                            or s_old.model_identity_id != s_new.model_identity_id
+                            or s_old.external_revision_id != s_new.external_revision_id
+                        ):
+                            _changes_origin = True
+                            break
+            if "season_id" in payload.model_fields_set and next_match.season_id != current.season_id:
+                _changes_origin = True
+            if _changes_origin:
+                raise ValueError(
+                    "运行时绑定对局 (runtime_binding) 的 seats/season/provenance 不可修订——"
+                    "这些字段是运行时执行来源的不可变历史事实"
+                )
+            # 保留原始 runtime_binding 完全不变
+            next_match.runtime_binding = current.runtime_binding
+
+        # P1-2：修订后为正式计分 → 正式赛季资格 gate
+        # R14-C Repair 1 (P1-3): 在 data_lock + _registry_lock 双锁范围内校验 Season running
+        if next_match.rating_eligible:
+            from workbench.replay import ladder as ladder_data
+            from workbench.replay.season_registry import _registry_lock
+
+            from .execution_provenance import freeze_execution_provenance
+            from .ladder_eligibility import PROJECT_ROOT as _LE_ROOT
+            from .ladder_eligibility import ensure_ladder_eligibility
+
+            _configs_dir = ladder_data.resolve_config_dir(_LE_ROOT)
+            with _registry_lock(_configs_dir):
+                admission = ensure_ladder_eligibility(
+                    next_match.season_id, next_match.seats, registry=registry
+                )
+                next_match.season_id = admission.season_id
+                # R14-C Repair 1: 不覆盖已有的不可变 runtime_binding
+                if current.runtime_binding is None:
+                    next_match.runtime_binding = admission.runtime_binding
+                for s in next_match.seats:
+                    if s.seat in admission.provenance_by_seat:
+                        frozen_prov = freeze_execution_provenance(admission.provenance_by_seat[s.seat])
+                        s.execution_provenance = frozen_prov
+                        s.model_identity_id = frozen_prov.model_identity_id
+                        s.model_artifact_id = frozen_prov.model_artifact_id
+                        s.external_revision_id = frozen_prov.external_revision_id
+                new_season = next_match.season_id
         # P1-3/P1-5：旧赛季与新赛季都标 dirty（去重），且先于 Match 提交
         for season in {old_season, new_season}:
             mark_ladder_dirty(season)

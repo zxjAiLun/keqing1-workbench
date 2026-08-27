@@ -248,6 +248,28 @@ class FrozenExecutionProvenance(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# R14-C: 运行时对局凭据绑定 (Runtime Match Provenance Binding)
+# ---------------------------------------------------------------------------
+
+class RuntimeMatchBinding(BaseModel):
+    """R14-C: 描述正式天梯对局在运行时所绑定的 Frozen Runtime Manifest 与执行事实。
+
+    - 冻结进入 Match / revision / replay artifact；
+    - 绝不在 intake 时重新从 Catalog Current 推导；
+    - 历史 / 手工导入 / 非 R14 对局保持可选兼容 (None)。
+    """
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal["keqing.runtime.match_binding.v1"] = "keqing.runtime.match_binding.v1"
+    season_id: str
+    manifest_id: str
+    season_authority_hash: str
+    session_id: str | None = None
+    seat_provenance: dict[int, FrozenExecutionProvenance] = Field(default_factory=dict)
+    seat_accounts: dict[int, str] = Field(default_factory=dict)
+    admitted_at: str
+
+
+# ---------------------------------------------------------------------------
 # 外部账号别名（身份解析）
 # ---------------------------------------------------------------------------
 
@@ -402,6 +424,7 @@ class MatchCreate(BaseModel):
     resolution: dict | None = None  # 逐座身份解析审计
     season_id: str | None = None  # 正式计分赛季（null = 仅账号统计）
     rating_eligible: bool = False  # 是否纳入正式天梯计分
+    runtime_binding: RuntimeMatchBinding | None = None  # R14-C 权威运行时清单绑定
     seats: list[MatchSeat]
     final_scores: list[int]
     force: bool = False
@@ -425,6 +448,7 @@ class MatchRevise(BaseModel):
     final_scores: list[int] | None = None
     season_id: str | None = None
     rating_eligible: bool | None = None
+    runtime_binding: RuntimeMatchBinding | None = None
     force: bool = False
     reason: str | None = None
 
@@ -461,6 +485,7 @@ class Match(BaseModel):  # matches.jsonl 行（当前态）
     resolution: dict | None = None
     season_id: str | None = None
     rating_eligible: bool = False
+    runtime_binding: RuntimeMatchBinding | None = None  # R14-C
     ladder_projection_state: LadderProjectionState = "not_applicable"
     seats: list[MatchSeat]
     final_scores: list[int]

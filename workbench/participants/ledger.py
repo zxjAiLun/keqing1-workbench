@@ -604,6 +604,7 @@ def create_match(payload: MatchCreate, registry) -> Match:
 
             admission = ensure_ladder_eligibility(match.season_id, match.seats, registry=registry)
             match.season_id = admission.season_id
+            match.runtime_binding = admission.runtime_binding
             for s in match.seats:
                 if s.seat in admission.provenance_by_seat:
                     frozen_prov = freeze_execution_provenance(admission.provenance_by_seat[s.seat])
@@ -758,6 +759,7 @@ def revise_match(match_id: str, payload: MatchRevise, registry) -> Match:
                 next_match.season_id, next_match.seats, registry=registry
             )
             next_match.season_id = admission.season_id
+            next_match.runtime_binding = admission.runtime_binding
             for s in next_match.seats:
                 if s.seat in admission.provenance_by_seat:
                     frozen_prov = freeze_execution_provenance(admission.provenance_by_seat[s.seat])

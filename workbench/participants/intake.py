@@ -852,14 +852,21 @@ def resolve_and_create_match(
             resolution_audit[str(seat.seat)] = audit
         if len({s.account_id for s in seats}) != 4:
             raise ValueError("四个座位不能指向同一账号")
+        runtime_binding = None
         # P1-2：正式计分 → 正式赛季资格 gate（rating_eligible ⇒ 必填 season + 校验）
         # 返回值是 trim 后的规范 season_id 与逐座 CanonicalExecutionProvenance，必须回写 Match
         if rating_eligible:
             from .ladder_eligibility import ensure_ladder_eligibility
             from .execution_provenance import freeze_execution_provenance
 
-            admission = ensure_ladder_eligibility(season_id, seats, registry=registry)
+            admission = ensure_ladder_eligibility(
+                season_id,
+                seats,
+                registry=registry,
+                session_id=session_id,
+            )
             season_id = admission.season_id
+            runtime_binding = admission.runtime_binding
             for s in seats:
                 if s.seat in admission.provenance_by_seat:
                     frozen_prov = freeze_execution_provenance(admission.provenance_by_seat[s.seat])
@@ -906,6 +913,7 @@ def resolve_and_create_match(
             ranks=list(ledger.final_ranks(preview["final_scores"], initial_oya=0)),
             season_id=season_id,
             rating_eligible=bool(rating_eligible),
+            runtime_binding=runtime_binding,
             ladder_projection_state=projection_state,
             revision=1,
             latest_revision_id=ledger.generate_revision_id(match_id, 1),
@@ -952,12 +960,20 @@ def resolve_and_create_match(
         ledger._append_revision(revision_row, fsync=True)
         ledger._rewrite_match(match)
         # 回填真实 match_id 到 artifact summary
+        summary_payload = {
+            **summary_base,
+            "match_id": match_id,
+            "resolution": resolution_audit,
+        }
+        if runtime_binding is not None:
+            summary_payload["runtime_binding"] = runtime_binding.model_dump()
+
         _write_artifact_files(
             staging,
             tenhou6=tenhou6,
             events=events,
             hands=hands,
-            summary={**summary_base, "match_id": match_id, "resolution": resolution_audit},
+            summary=summary_payload,
         )
         _promote_artifact(staging, log_id)
         try:
@@ -989,6 +1005,8 @@ def recover_intake_transaction_locked(tx: dict) -> None:
             summary = json.loads((staging_path / "summary.json").read_text(encoding="utf-8"))
             summary["match_id"] = match.match_id
             summary["resolution"] = match.resolution
+            if match.runtime_binding is not None:
+                summary["runtime_binding"] = match.runtime_binding.model_dump()
             atomic_write_text(staging_path / "summary.json", json.dumps(summary, ensure_ascii=False))
         _promote_artifact(staging_path, tx["log_id"])
     try:
@@ -1211,7 +1229,7 @@ def assess_intake_admission(
     # 4 座均基本解析成功且赛季配置有效时，执行全局 validate_ladder_eligibility
     if len(top_issues) == 0 and len(mem_seats) == 4 and all(len(sa.issues) == 0 for sa in seats_assessment):
         try:
-            prov_map = validate_ladder_eligibility(
+            prov_map, _runtime_binding = validate_ladder_eligibility(
                 normalized_season_id,
                 mem_seats,
                 registry=active_registry,

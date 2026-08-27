@@ -19,8 +19,10 @@ from typing import Any
 
 from .execution_provenance import (
     CanonicalExecutionProvenance,
+    freeze_execution_provenance,
     resolve_execution_provenance,
 )
+from .schemas import RuntimeMatchBinding
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -29,6 +31,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 class LadderAdmissionResult:
     season_id: str
     provenance_by_seat: dict[int, CanonicalExecutionProvenance]
+    runtime_binding: RuntimeMatchBinding | None = None
 
 
 def _season_account_model(season: dict[str, Any], account_id: str) -> dict | None:
@@ -84,23 +87,28 @@ def ensure_ladder_eligibility(
     seats: list[Any],
     *,
     registry,
+    session_id: str | None = None,
     project_root: Path = PROJECT_ROOT,
 ) -> LadderAdmissionResult:
-    """统一硬不变量（UX Repair 2/3 / P1-2 / R13-B）：
+    """统一硬不变量（UX Repair 2/3 / P1-2 / R13-B / R14-C）：
 
     ``rating_eligible == true`` ⇒ ``season_id`` 必须是非空有效字符串
     ⇒ 必须通过 ``validate_ladder_eligibility``。
 
-    返回 **LadderAdmissionResult**（含 normalized season_id 与逐座 CanonicalExecutionProvenance），
-    调用方必须用返回值回写 Match 的 season_id 与 execution_provenance。
+    返回 **LadderAdmissionResult**（含 normalized season_id、逐座 CanonicalExecutionProvenance 与 RuntimeMatchBinding），
+    调用方必须用返回值回写 Match 的 season_id、execution_provenance 及 runtime_binding。
     """
     normalized = str(season_id or "").strip()
     if not normalized:
         raise ValueError("rating_eligible=true 必须指定正式赛季（season_id 不能为空）")
-    provenance_map = validate_ladder_eligibility(
-        normalized, seats, registry=registry, project_root=project_root
+    provenance_map, runtime_binding = validate_ladder_eligibility(
+        normalized, seats, registry=registry, session_id=session_id, project_root=project_root
     )
-    return LadderAdmissionResult(season_id=normalized, provenance_by_seat=provenance_map)
+    return LadderAdmissionResult(
+        season_id=normalized,
+        provenance_by_seat=provenance_map,
+        runtime_binding=runtime_binding,
+    )
 
 
 def validate_ladder_eligibility(
@@ -108,9 +116,10 @@ def validate_ladder_eligibility(
     seats: list[Any],
     *,
     registry,
+    session_id: str | None = None,
     project_root: Path = PROJECT_ROOT,
-) -> dict[int, CanonicalExecutionProvenance]:
-    """正式天梯资格校验；不通过抛 ValueError（带中文原因）。返回逐座规范执行凭据。"""
+) -> tuple[dict[int, CanonicalExecutionProvenance], RuntimeMatchBinding | None]:
+    """正式天梯资格校验；不通过抛 ValueError（带中文原因）。返回 (逐座规范执行凭据, RuntimeMatchBinding)."""
     from workbench.replay import ladder as ladder_data
 
     configs_dir = ladder_data.resolve_config_dir(project_root)
@@ -130,7 +139,18 @@ def validate_ladder_eligibility(
     ):
         raise ValueError(f"赛季 {season_id} 未启用 participants 正式投影（需 ingest.participants.enabled+exclusive）")
 
+    # R14-C: 校验 Frozen Runtime Manifest (若存在) 并构建权威 RuntimeMatchBinding
+    manifest_raw = season.get("runtime_manifest")
+    runtime_binding: RuntimeMatchBinding | None = None
+    manifest_participants_by_account = {}
+    if manifest_raw is not None:
+        from workbench.runtime.manifest import validate_persisted_manifest_against_season
+        manifest = validate_persisted_manifest_against_season(season, manifest_raw)
+        manifest_participants_by_account = {p.account_id: p for p in manifest.participants}
+
     provenance_by_seat: dict[int, CanonicalExecutionProvenance] = {}
+    seat_accounts_map: dict[int, str] = {}
+    seat_frozen_prov_map = {}
 
     for seat in seats:
         seat_no = getattr(seat, "seat", None)
@@ -145,6 +165,8 @@ def validate_ladder_eligibility(
         season_model = _season_account_model(season, account_id)
         if season_model is None:
             raise ValueError(f"账号 {account_id} 未在正式赛季 {season_id} 注册")
+
+        seat_accounts_map[int(seat_no)] = account_id
 
         # 提取赛季级别配置
         season_model_id = season_model.get("model_id")
@@ -238,9 +260,32 @@ def validate_ladder_eligibility(
                 f"座位 {seat_no} 模型产物 {resolved_prov.model_artifact_id} 与赛季指定产物 {season_art_id} 不一致"
             )
 
-        provenance_by_seat[seat_no] = resolved_prov
+        # R14-C: 校验与 Frozen Runtime Manifest 对应 participant 的精确一致性
+        if manifest_raw is not None:
+            m_part = manifest_participants_by_account.get(account_id)
+            if not m_part:
+                raise ValueError(f"账号 {account_id} 未包含在当前赛季的冻结运行时清单 (manifest_id={manifest.manifest_id}) 中")
+            frozen_p = freeze_execution_provenance(resolved_prov)
+            if m_part.execution_provenance.model_dump() != frozen_p.model_dump():
+                raise ValueError(f"座位 {seat_no} 账号 {account_id} 的凭据与 Frozen Runtime Manifest 不一致")
 
-    return provenance_by_seat
+        provenance_by_seat[int(seat_no)] = resolved_prov
+        seat_frozen_prov_map[int(seat_no)] = freeze_execution_provenance(resolved_prov)
+
+    # R14-C: 构造不可变 RuntimeMatchBinding
+    if manifest_raw is not None:
+        from workbench.participants.paths import now_iso
+        runtime_binding = RuntimeMatchBinding(
+            season_id=manifest.season_id,
+            manifest_id=manifest.manifest_id,
+            season_authority_hash=manifest.season_authority_hash,
+            session_id=session_id,
+            seat_provenance=seat_frozen_prov_map,
+            seat_accounts=seat_accounts_map,
+            admitted_at=now_iso(),
+        )
+
+    return provenance_by_seat, runtime_binding
 
 
 __all__ = ["LadderAdmissionResult", "ensure_ladder_eligibility", "validate_ladder_eligibility"]

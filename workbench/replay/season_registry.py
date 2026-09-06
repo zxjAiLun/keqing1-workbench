@@ -117,8 +117,26 @@ def _registry_lock(configs_dir: Path):
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    tmp.write_text(text, encoding="utf-8")
+    for attempt in range(4):
+        try:
+            os.replace(tmp, path)
+            return
+        except (PermissionError, OSError):
+            if attempt == 3:
+                try:
+                    with open(path, "w", encoding="utf-8") as fh:
+                        fh.write(text)
+                    if tmp.exists():
+                        try:
+                            tmp.unlink()
+                        except Exception:
+                            pass
+                    return
+                except Exception:
+                    raise
+            time.sleep(0.05 * (2 ** attempt))
 
 
 def _report_dir_for(configs_dir: Path, season_id: str) -> str:

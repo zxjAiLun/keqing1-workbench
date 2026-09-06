@@ -330,15 +330,26 @@ def conditional_switch_registry(
         except Exception:
             tmp_path.unlink(missing_ok=True)
             raise
-        try:
-            os.replace(tmp_path, registry_path)
-        except OSError as exc:
-            # R11-G Repair：切换失败必须清理 tmp（否则每次失败都留下一个 tmp 文件，
-            # worker 高频重试时会在 registry 目录堆积数百个孤儿 tmp）。
-            tmp_path.unlink(missing_ok=True)
-            raise PublishError(
-                f"registry 原子切换失败（{exc}），线上 registry 保持不变"
-            ) from exc
+        for attempt in range(4):
+            try:
+                os.replace(tmp_path, registry_path)
+                break
+            except OSError as exc:
+                if attempt == 3:
+                    # Windows 平台降级：文件被外部编辑器/查看器锁住时，os.replace (WinError 5) 会失败，
+                    # 尝试直接覆盖写入，避免因编辑器保持文件句柄导致发布持续 502。
+                    try:
+                        registry_path.write_text(
+                            tmp_path.read_text(encoding="utf-8"), encoding="utf-8"
+                        )
+                        tmp_path.unlink(missing_ok=True)
+                        break
+                    except Exception:
+                        tmp_path.unlink(missing_ok=True)
+                        raise PublishError(
+                            f"registry 原子切换失败（{exc}），线上 registry 保持不变"
+                        ) from exc
+                time.sleep(0.05 * (2**attempt))
 
 
 def _dir_total_bytes(directory: Path) -> int:

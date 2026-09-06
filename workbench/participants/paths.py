@@ -40,13 +40,32 @@ def now_iso() -> str:
 
 
 def atomic_write_text(path: Path, text: str) -> None:
-    """临时文件 + ``os.replace`` 原子写入。"""
+    """临时文件 + ``os.replace`` 原子写入，含 Windows 锁冲突容错 fallback。"""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(f"{path.suffix}.tmp")
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(text)
-    os.replace(tmp, path)
+    for attempt in range(4):
+        try:
+            os.replace(tmp, path)
+            return
+        except (PermissionError, OSError):
+            if attempt == 3:
+                # Windows 平台降级：当文件被编辑器/杀软以读模式打开（缺少 FILE_SHARE_DELETE）时，
+                # os.replace (MoveFileEx) 会报 WinError 5，但直接写入 open(w) 可成功。
+                try:
+                    with open(path, "w", encoding="utf-8") as fh:
+                        fh.write(text)
+                    if tmp.exists():
+                        try:
+                            tmp.unlink()
+                        except Exception:
+                            pass
+                    return
+                except Exception:
+                    raise
+            time.sleep(0.05 * (2 ** attempt))
 
 
 def read_json(path: Path, default):

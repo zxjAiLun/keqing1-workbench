@@ -1357,15 +1357,19 @@ export function MahjongTable({
 
   useEffect(() => {
     const applyPreference = () => {
-      const stored =
-        window.localStorage.getItem(`keqing1.tablecloth.${theme}`)
-        ?? window.localStorage.getItem("keqing1.tablecloth")
-        ?? window.localStorage.getItem("keqing.tablecloth");
-      if (stored && ALL_TABLECLOTH_OPTIONS.some((opt) => opt.id === stored)) {
-        setTablecloth(stored as typeof tablecloth);
-      } else {
-        setTablecloth(getDefaultTableclothId(theme));
+      const themeStored = window.localStorage.getItem(`keqing1.tablecloth.${theme}`);
+      if (themeStored && activeTableclothOptions.some((opt) => opt.id === themeStored)) {
+        setTablecloth(themeStored as typeof tablecloth);
+        return;
       }
+      const genericStored =
+        window.localStorage.getItem("keqing1.tablecloth")
+        ?? window.localStorage.getItem("keqing.tablecloth");
+      if (genericStored && activeTableclothOptions.some((opt) => opt.id === genericStored)) {
+        setTablecloth(genericStored as typeof tablecloth);
+        return;
+      }
+      setTablecloth(getDefaultTableclothId(theme));
     };
     applyPreference();
     const onStorage = (event: StorageEvent) => {

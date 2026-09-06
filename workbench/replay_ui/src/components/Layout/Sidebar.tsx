@@ -94,11 +94,14 @@ export function Sidebar() {
     return getDefaultTableclothId(theme);
   });
 
-  // 主题切换时自动适配对应主题下的桌布
+  // 主题切换时自动恢复对应主题保存过的桌布偏好（若无则回退到该主题默认）
   useEffect(() => {
     const validForCurrent = currentTableclothOptions.some((opt) => opt.id === tablecloth);
     if (!validForCurrent) {
-      const next = getDefaultTableclothId(theme);
+      const themeStored = window.localStorage.getItem(`keqing1.tablecloth.${theme}`);
+      const next = (themeStored && currentTableclothOptions.some((opt) => opt.id === themeStored))
+        ? (themeStored as TableclothId)
+        : getDefaultTableclothId(theme);
       setTablecloth(next);
       window.localStorage.setItem('keqing1.tablecloth', next);
       window.localStorage.setItem(`keqing1.tablecloth.${theme}`, next);

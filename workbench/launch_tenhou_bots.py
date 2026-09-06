@@ -4,6 +4,8 @@ import argparse
 import json
 import logging
 import signal
+import socket
+import subprocess
 import sys
 import threading
 import time
@@ -16,15 +18,18 @@ for source_root in (WORKBENCH_ROOT, SRC_DIR, PROJECT_ROOT):
     if str(source_root) not in sys.path:
         sys.path.insert(0, str(source_root))
 
-from gateway.tenhou_bridge import normalize_tenhou_room
+from gateway import settings as gateway_settings
 from gateway.tenhou_bot_client import (
     BotClientConfig,
     launch_bot_threads,
     start_gateway_subprocess,
 )
+from gateway.tenhou_bridge import normalize_tenhou_room
+
 from workbench.runtime.resolver import MORTAL_CHECKPOINTS, resolve_bot_spec
 
 MAX_BOTS = 4
+GATEWAY_START_TIMEOUT_SECONDS = 8.0
 
 
 def _pick_device(requested: str) -> str:
@@ -39,6 +44,100 @@ def _pick_device(requested: str) -> str:
         pass
     logging.info("cuda requested but not available; falling back to cpu")
     return "cpu"
+
+
+def _can_bind_gateway_port(port: int) -> bool:
+    """Test the operation the gateway actually needs: bind 0.0.0.0:port.
+
+    A connect() probe only detects listeners.  On Windows an outbound socket
+    may already own a local source port without listening on it; connect() then
+    says "refused" while bind() correctly raises WSAEADDRINUSE (10048).
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind((gateway_settings.HOST, port))
+        return True
+    except OSError:
+        return False
+
+
+def _wait_for_gateway_ready(
+    proc: subprocess.Popen[str],
+    host: str,
+    port: int,
+    timeout: float = GATEWAY_START_TIMEOUT_SECONDS,
+) -> bool:
+    """Wait until the owned child accepts TCP connections or exits."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return False
+        try:
+            with socket.create_connection((host, port), timeout=0.2):
+                return True
+        except OSError:
+            time.sleep(0.05)
+    return False
+
+
+def _stop_gateway_process(proc: subprocess.Popen[str]) -> None:
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+def _start_owned_gateway(args: argparse.Namespace) -> tuple[subprocess.Popen[str], int]:
+    """Start a private gateway, retrying across the dedicated port range."""
+    extra_env = {}
+    if args.tenhou_uri:
+        extra_env["TENHOU_URI"] = args.tenhou_uri
+    if args.tenhou_origin:
+        extra_env["TENHOU_ORIGIN"] = args.tenhou_origin
+    if args.tenhou_cookie:
+        extra_env["TENHOU_COOKIE"] = args.tenhou_cookie
+    if args.tenhou_helo_json:
+        extra_env["TENHOU_HELO_JSON"] = args.tenhou_helo_json
+
+    attempted: list[int] = []
+    if not 1 <= args.gateway_port <= 65535:
+        raise ValueError(f"invalid gateway port: {args.gateway_port}")
+    range_size = max(1, int(args.gateway_port_range_size))
+    last_port = min(65535, args.gateway_port + range_size - 1)
+    for port in range(args.gateway_port, last_port + 1):
+        attempted.append(port)
+        if not _can_bind_gateway_port(port):
+            logging.warning("gateway port %d is not bindable; trying next candidate", port)
+            continue
+
+        proc = start_gateway_subprocess(
+            project_root=PROJECT_ROOT,
+            debug=args.gateway_debug,
+            log_dir=(PROJECT_ROOT / args.gateway_log_dir),
+            extra_env=extra_env or None,
+            port=port,
+            owner_token=args.gateway_owner_token,
+        )
+        if _wait_for_gateway_ready(proc, args.gateway_host, port):
+            logging.info("owned gateway ready on %s:%d", args.gateway_host, port)
+            return proc, port
+
+        returncode = proc.poll()
+        _stop_gateway_process(proc)
+        logging.warning(
+            "gateway failed to become ready on port %d (returncode=%s); trying next candidate",
+            port,
+            returncode,
+        )
+
+    attempted_text = f"{attempted[0]}-{attempted[-1]}" if attempted else "none"
+    raise RuntimeError(
+        f"no usable gateway port in dedicated range {attempted_text}; "
+        "check explicit listeners and Windows TCP reservations"
+    )
 
 
 def _build_configs(args: argparse.Namespace) -> list[BotClientConfig]:
@@ -190,7 +289,16 @@ def main() -> None:
     )
     parser.add_argument("--name-prefix", default="NoName", help="Display name prefix for bots")
     parser.add_argument("--gateway-host", default="127.0.0.1")
-    parser.add_argument("--gateway-port", type=int, default=11600)
+    parser.add_argument("--gateway-port", type=int, default=gateway_settings.PORT)
+    parser.add_argument(
+        "--gateway-port-range-size",
+        type=int,
+        default=gateway_settings.PORT_RANGE_SIZE,
+        help=(
+            "Number of consecutive ports to try when --start-gateway is set "
+            f"(default {gateway_settings.PORT_RANGE_SIZE})"
+        ),
+    )
     parser.add_argument("--device", default="cuda", help="Inference device (cuda/cpu)")
     parser.add_argument("--stagger-seconds", type=float, default=1.0)
     parser.add_argument(
@@ -245,26 +353,10 @@ def main() -> None:
     gateway_proc = None
 
     if args.start_gateway:
-        extra_env = {}
-        if args.tenhou_uri:
-            extra_env["TENHOU_URI"] = args.tenhou_uri
-        if args.tenhou_origin:
-            extra_env["TENHOU_ORIGIN"] = args.tenhou_origin
-        if args.tenhou_cookie:
-            extra_env["TENHOU_COOKIE"] = args.tenhou_cookie
-        if args.tenhou_helo_json:
-            extra_env["TENHOU_HELO_JSON"] = args.tenhou_helo_json
-        gateway_proc = start_gateway_subprocess(
-            project_root=PROJECT_ROOT,
-            debug=args.gateway_debug,
-            log_dir=(PROJECT_ROOT / args.gateway_log_dir),
-            extra_env=extra_env or None,
-            port=args.gateway_port,
-            owner_token=args.gateway_owner_token,
-        )
-        time.sleep(1.5)
-        if gateway_proc.poll() is not None:
-            raise RuntimeError("gateway subprocess exited early; check logs and port availability")
+        gateway_proc, selected_port = _start_owned_gateway(args)
+        args.gateway_port = selected_port
+        for config in configs:
+            config.port = selected_port
 
     threads = launch_bot_threads(
         configs, stagger_seconds=args.stagger_seconds, stop_event=stop_event
@@ -319,11 +411,7 @@ def main() -> None:
             except Exception:
                 logging.exception("ladder capture finalize failed")
         if gateway_proc is not None and gateway_proc.poll() is None:
-            gateway_proc.terminate()
-            try:
-                gateway_proc.wait(timeout=5)
-            except Exception:
-                gateway_proc.kill()
+            _stop_gateway_process(gateway_proc)
         for thread in threads:
             thread.join(timeout=5)
 

@@ -38,7 +38,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--name", default="", help="Display name for Tenhou client")
     parser.add_argument("--bot-name", default="mortal", help="Bot engine type (mortal/rulebase)")
     parser.add_argument("--host", default=os.environ.get("KEQING_GATEWAY_HOST", "127.0.0.1"), help="Gateway host")
-    parser.add_argument("--port", type=int, default=int(os.environ.get("KEQING_GATEWAY_PORT", "11600")), help="Gateway port")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("KEQING_GATEWAY_PORT", "21600")), help="Gateway port")
     parser.add_argument("--room", default=os.environ.get("KEQING_GATEWAY_ROOM", "L2147_9"), help="Tenhou room")
     parser.add_argument("--device", default=os.environ.get("KEQING_DEVICE", "cpu"), help="Inference device (cpu/cuda)")
     parser.add_argument("--project-root", default=str(REPO_ROOT), help="Project root directory")

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from gateway import settings as gateway_settings
 from gateway.tenhou_bridge import normalize_tenhou_room
 from workbench.runtime.resolver import resolve_bot_spec
 
@@ -55,7 +56,7 @@ def create_runtime_bot_for_gateway(**kwargs):
 @dataclass(slots=True)
 class BotClientConfig:
     host: str = "127.0.0.1"
-    port: int = 11600
+    port: int = gateway_settings.PORT
     room: str = "L2147_9"
     name: str = "NoName"
     bot_name: str = "mortal"
@@ -394,7 +395,7 @@ def start_gateway_subprocess(
     debug: bool = False,
     log_dir: Path | None = None,
     extra_env: dict[str, str] | None = None,
-    port: int = 11600,
+    port: int = gateway_settings.PORT,
     owner_token: str | None = None,
 ) -> subprocess.Popen[str]:
     log_dir = log_dir or project_root / "logs"

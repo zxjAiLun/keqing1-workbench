@@ -153,7 +153,12 @@ def main() -> None:
     sub.add_parser("gateway", help="tenhou 的兼容别名")
 
     parser.add_argument("--port", "-p", type=int, default=8000, help="本地 ReplayUI / Battle API 的 HTTP 端口 (默认 8000)")
-    parser.add_argument("--gateway-port", type=int, default=11600, help="天凤 Gateway TCP 端口 (默认 11600)")
+    parser.add_argument(
+        "--gateway-port",
+        type=int,
+        default=gateway_settings.PORT,
+        help=f"天凤 Gateway TCP 端口 (默认 {gateway_settings.PORT})",
+    )
     parser.add_argument("--debug", "-d", action="store_true", help="Gateway 调试模式")
     parser.add_argument("--replay-only", action="store_true", help="serve 命令下仅启动牌谱服务")
     parser.add_argument("--no-ui-build", action="store_true", help="跳过启动前 ReplayUI 自动构建")

@@ -1,7 +1,12 @@
 from typing import Any
 
 HOST: str = '0.0.0.0'
-PORT: int = 11600
+# Keep the owned gateway outside both this workstation's configured Windows
+# dynamic TCP range (1024-15000) and the Windows default range
+# (49152-65535).  Play-with-you may try the following PORT_RANGE_SIZE ports
+# when an application has explicitly claimed one of them.
+PORT: int = 21600
+PORT_RANGE_SIZE: int = 32
 SEX: str = 'M'
 DEBUG: bool = True
 LOGGING: dict[str, Any] = {

@@ -4,13 +4,12 @@ private room (e.g. L2147) as NoName guests, driven from the GUI.
 This mirrors mjai.ekyu.moe's "Play with you": the user types a Tenhou lobby
 ID, picks a Speed, chooses a Mortal network per AI seat, and clicks a button.
 The backend spawns ``workbench/launch_tenhou_bots.py`` as one owned subprocess
-(which boots one local mjai-gateway) and streams its logs back to the GUI.
+(which boots one owned local mjai-gateway) and streams its logs back to the GUI.
 
 Design notes:
-* Only ONE play-with-you session may be active at a time. The launcher always
-  starts its own gateway on TCP 11600, so a second concurrent session would
-  fail to bind that port. We reject new starts while one is running (the user
-  must stop the previous one first).
+* Only ONE play-with-you session may be active at a time. Each session owns a
+  private gateway selected from the configured dedicated port range. A second
+  concurrent session is still rejected until the first one is stopped.
  * UI sends human-friendly network ids (``mortal`` / ``70k`` / ``ext_mortal`` /
   ``none`` / ``custom``); we translate them into launcher specs
   (named checkpoints or absolute ``.pth`` paths) here, keeping the frontend
@@ -1017,6 +1016,13 @@ def start_playwithyou(req: StartPlayWithYouRequest) -> PlayWithYouStatus:
         tmp_binding.write_text(json.dumps(binding, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         os.replace(tmp_binding, capture_dir / "binding.json")
 
+    # Play-with-you always owns its gateway.  The child launcher chooses the
+    # first bindable port in the dedicated range beginning at this value, so
+    # a main-process gateway or another explicit listener is never mistaken
+    # for a reusable Play-with-you gateway.
+    from gateway import settings as gateway_settings
+    gateway_port = gateway_settings.PORT
+
     command = [
         sys.executable,
         "-u",
@@ -1027,7 +1033,6 @@ def start_playwithyou(req: StartPlayWithYouRequest) -> PlayWithYouStatus:
         *launcher_command_specs,
         "--device",
         device,
-        "--start-gateway",
         "--stagger-seconds",
         "1.5",
         "--think-delay",
@@ -1038,6 +1043,9 @@ def start_playwithyou(req: StartPlayWithYouRequest) -> PlayWithYouStatus:
         SESSION_TOKEN,
         "--gateway-owner-token",
         GATEWAY_OWNER_TOKEN,
+        "--gateway-port",
+        str(gateway_port),
+        "--start-gateway",
     ]
     if capture_dir is not None:
         command += ["--ladder-capture-dir", str(capture_dir)]

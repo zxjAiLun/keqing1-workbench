@@ -1,5 +1,5 @@
 param(
-    [string]$Venv = ".venv",
+    [string]$Venv = ".venv-win",
     [string]$KeqingCoreWheel = "",
     [switch]$SkipUiBuild
 )
@@ -13,10 +13,8 @@ $RuntimeWheelDir = Join-Path $DataRoot "runtime\keqing_core"
 $VenvPython = Join-Path $Repo "$Venv\Scripts\python.exe"
 $Site = Join-Path $Repo "$Venv\Lib\site-packages"
 
-# 1. Project environment.  uv project mode manages the env via pyproject.toml
-#    + uv.lock.  We use uv's native default (.venv) so ``uv sync`` and ``uv run``
-#    resolve the same environment in any fresh terminal without needing an
-#    exported UV_PROJECT_ENVIRONMENT.
+# 1. Windows project environment. uv owns it through pyproject.toml + uv.lock.
+#    Keep it separate from a possible WSL .venv checkout.
 if (-not (Test-Path $VenvPython)) {
     uv venv --python 3.12 $Venv
     if ($LASTEXITCODE -ne 0) { throw "uv venv failed" }
@@ -26,8 +24,18 @@ if (-not (Test-Path $VenvPython)) {
 #    pytest/ruff).  This is an exact sync, so it prunes keqing_core -- the
 #    native runtime wheel is intentionally not a registry dependency and is
 #    reinstalled in step 4 after the sync.
-uv sync --group dev
-if ($LASTEXITCODE -ne 0) { throw "uv sync failed" }
+$PreviousUvProjectEnvironment = $env:UV_PROJECT_ENVIRONMENT
+try {
+    $env:UV_PROJECT_ENVIRONMENT = $Venv
+    uv sync --group dev
+    if ($LASTEXITCODE -ne 0) { throw "uv sync failed" }
+} finally {
+    if ($null -eq $PreviousUvProjectEnvironment) {
+        Remove-Item Env:UV_PROJECT_ENVIRONMENT -ErrorAction SilentlyContinue
+    } else {
+        $env:UV_PROJECT_ENVIRONMENT = $PreviousUvProjectEnvironment
+    }
+}
 
 # 3. libriichi runtime, built from the vendored Mortal crate (same as the
 #    keqing1_experiment setup; requires cargo on PATH).

@@ -35,17 +35,16 @@ there (or from an explicit `-KeqingCoreWheel` path).
 
 ```powershell
 .\scripts\setup-dev.ps1
-cd workbench
-python main.py local --port 8000        # ReplayUI + Battle API
-python main.py tenhou                   # Gateway only
-python launch_tenhou_bots.py --room ... # Participants
-python scripts/participants/seed_participants.py ...
+$env:UV_PROJECT_ENVIRONMENT = ".venv-win"
+uv run python workbench/main.py local --port 8000
+uv run python workbench/main.py tenhou
+uv run python workbench/launch_tenhou_bots.py --room ...
+uv run python workbench/scripts/participants/seed_participants.py ...
 ```
 
 `scripts/setup-dev.ps1`:
 
-1. creates the venv, installs Python dependencies, and installs this repo
-   editable;
+1. creates the uv-managed `.venv-win`, syncs `uv.lock`, and installs this repo;
 2. builds the `libriichi` runtime from the vendored Mortal crate (cargo);
 3. installs the `keqing_core` wheel (explicit `-KeqingCoreWheel` first, then
    an already-installed copy, then `KEQING_DATA_ROOT/runtime/keqing_core`);

@@ -40,32 +40,39 @@ def now_iso() -> str:
 
 
 def atomic_write_text(path: Path, text: str) -> None:
-    """临时文件 + ``os.replace`` 原子写入，含 Windows 锁冲突容错 fallback。"""
+    """临时文件 + ``os.replace`` 原子写入。
+
+    Windows 下若遇临时文件占用 (WinError 5/32) 进行短暂重试；
+    重试耗尽后清理临时文件并抛出异常，绝不降级为非原子直接覆盖。
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(f"{path.suffix}.tmp")
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(text)
-    for attempt in range(4):
+
+    max_attempts = 4 if os.name == "nt" else 1
+    for attempt in range(max_attempts):
         try:
             os.replace(tmp, path)
             return
-        except (PermissionError, OSError):
-            if attempt == 3:
-                # Windows 平台降级：当文件被编辑器/杀软以读模式打开（缺少 FILE_SHARE_DELETE）时，
-                # os.replace (MoveFileEx) 会报 WinError 5，但直接写入 open(w) 可成功。
+        except PermissionError as exc:
+            if attempt == max_attempts - 1:
                 try:
-                    with open(path, "w", encoding="utf-8") as fh:
-                        fh.write(text)
-                    if tmp.exists():
-                        try:
-                            tmp.unlink()
-                        except Exception:
-                            pass
-                    return
-                except Exception:
-                    raise
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise exc
             time.sleep(0.05 * (2 ** attempt))
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 32 and attempt < max_attempts - 1:
+                time.sleep(0.05 * (2 ** attempt))
+                continue
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise exc
 
 
 def read_json(path: Path, default):

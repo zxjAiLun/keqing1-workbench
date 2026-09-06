@@ -330,26 +330,26 @@ def conditional_switch_registry(
         except Exception:
             tmp_path.unlink(missing_ok=True)
             raise
-        for attempt in range(4):
+        max_attempts = 4 if os.name == "nt" else 1
+        for attempt in range(max_attempts):
             try:
                 os.replace(tmp_path, registry_path)
                 break
-            except OSError as exc:
-                if attempt == 3:
-                    # Windows 平台降级：文件被外部编辑器/查看器锁住时，os.replace (WinError 5) 会失败，
-                    # 尝试直接覆盖写入，避免因编辑器保持文件句柄导致发布持续 502。
-                    try:
-                        registry_path.write_text(
-                            tmp_path.read_text(encoding="utf-8"), encoding="utf-8"
-                        )
-                        tmp_path.unlink(missing_ok=True)
-                        break
-                    except Exception:
-                        tmp_path.unlink(missing_ok=True)
-                        raise PublishError(
-                            f"registry 原子切换失败（{exc}），线上 registry 保持不变"
-                        ) from exc
+            except PermissionError as exc:
+                if attempt == max_attempts - 1:
+                    tmp_path.unlink(missing_ok=True)
+                    raise PublishError(
+                        f"registry 原子切换失败（{exc}），线上 registry 保持不变"
+                    ) from exc
                 time.sleep(0.05 * (2**attempt))
+            except OSError as exc:
+                if getattr(exc, "winerror", None) == 32 and attempt < max_attempts - 1:
+                    time.sleep(0.05 * (2**attempt))
+                    continue
+                tmp_path.unlink(missing_ok=True)
+                raise PublishError(
+                    f"registry 原子切换失败（{exc}），线上 registry 保持不变"
+                ) from exc
 
 
 def _dir_total_bytes(directory: Path) -> int:

@@ -119,24 +119,28 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     tmp.write_text(text, encoding="utf-8")
-    for attempt in range(4):
+    max_attempts = 4 if os.name == "nt" else 1
+    for attempt in range(max_attempts):
         try:
             os.replace(tmp, path)
             return
-        except (PermissionError, OSError):
-            if attempt == 3:
+        except PermissionError as exc:
+            if attempt == max_attempts - 1:
                 try:
-                    with open(path, "w", encoding="utf-8") as fh:
-                        fh.write(text)
-                    if tmp.exists():
-                        try:
-                            tmp.unlink()
-                        except Exception:
-                            pass
-                    return
-                except Exception:
-                    raise
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise exc
             time.sleep(0.05 * (2 ** attempt))
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 32 and attempt < max_attempts - 1:
+                time.sleep(0.05 * (2 ** attempt))
+                continue
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise exc
 
 
 def _report_dir_for(configs_dir: Path, season_id: str) -> str:

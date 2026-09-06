@@ -16,8 +16,8 @@ export const decisionColors = {
   score: "var(--accent)",
   /** teacher 模型柱 */
   teacher: "var(--seat-2)",
-  /** 非激活 teacher 模型柱 */
-  teacherInactive: "var(--table-text-faint)",
+  /** 非激活 teacher 模型柱（不透明灰，多 teacher 对比时清晰可见） */
+  teacherInactive: "var(--table-bar-inactive, #9ca3af)",
 } as const;
 
 /** 决策行的柔和底色（深色底上可读的色晕） */

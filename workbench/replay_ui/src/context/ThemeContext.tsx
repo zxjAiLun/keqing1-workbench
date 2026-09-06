@@ -105,10 +105,17 @@ export function ThemeProvider({ children }: { children: import('react').ReactNod
 
   // Apply table-cloth RGB to CSS variables
   useEffect(() => {
-    document.documentElement.style.setProperty('--table-bg-r', String(tableCloth.r));
-    document.documentElement.style.setProperty('--table-bg-g', String(tableCloth.g));
-    document.documentElement.style.setProperty('--table-bg-b', String(tableCloth.b));
-  }, [tableCloth]);
+    if (theme === 'light') {
+      // 浅色模式使用日间桌面 RGB（对应柔和浅绿 #dce8df）
+      document.documentElement.style.setProperty('--table-bg-r', '220');
+      document.documentElement.style.setProperty('--table-bg-g', '232');
+      document.documentElement.style.setProperty('--table-bg-b', '223');
+    } else {
+      document.documentElement.style.setProperty('--table-bg-r', String(tableCloth.r));
+      document.documentElement.style.setProperty('--table-bg-g', String(tableCloth.g));
+      document.documentElement.style.setProperty('--table-bg-b', String(tableCloth.b));
+    }
+  }, [theme, tableCloth]);
 
   return (
     <ThemeContext.Provider value={{ theme, toggle, setTheme, tileBack, setTileBack, tableCloth, setTableCloth }}>

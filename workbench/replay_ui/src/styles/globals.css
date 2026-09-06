@@ -87,6 +87,7 @@
   --table-text: rgba(240,234,217,0.92);
   --table-text-muted: rgba(240,234,217,0.50);
   --table-text-faint: rgba(240,234,217,0.25);
+  --table-bar-inactive: #9ca3af;
 
   /* 牌桌交互态过渡 — 克制动效 */
   --table-transition-fast: 0.12s ease;
@@ -259,6 +260,7 @@
   --table-text: #3a3530;
   --table-text-muted: #6b635a;
   --table-text-faint: rgba(58,53,48,0.35);
+  --table-bar-inactive: #64748b;
 
   /* 牌桌交互态过渡 — 天凤风格克制动效 */
   --table-transition-fast: 0.12s ease;

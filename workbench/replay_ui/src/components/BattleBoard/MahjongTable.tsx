@@ -26,7 +26,12 @@ import type { LogitTileData } from "../../utils/replayAdapter";
 import { BAKAZE_CN, JIKAZE_CN } from "../../utils/constants";
 import { sortHand } from "../../utils/tileUtils";
 import { buildMeldDisplayTiles, computeSelfHandContentOffset, computeSelfHandWidth, computeSouthMeldLaneWidth, getKakanStackOffset, getMeldTileOrientation, getSeatModel, orderMeldsForDisplay, SELF_HAND_LEFT_OFFSET, SELF_HAND_MELD_GAP, SELF_SEAT_SHELL_WIDTH_PX, SELF_SEAT_SIDE_MARGIN, type LayoutAxis, type SeatPosition } from "./seatLayout";
-import { TABLECLOTH_OPTIONS, DEFAULT_TABLECLOTH_ID } from "./tableclothOptions";
+import { useTheme } from "../../context/themeStore";
+import {
+  getTableclothOptions,
+  getDefaultTableclothId,
+  ALL_TABLECLOTH_OPTIONS,
+} from "./tableclothOptions";
 import type { TableclothId } from "./tableclothOptions";
 import {
   decisionColors,
@@ -1347,28 +1352,44 @@ export function MahjongTable({
     return () => observer.disconnect();
   }, []);
 
+  const { theme } = useTheme();
+  const activeTableclothOptions = getTableclothOptions(theme);
+
   useEffect(() => {
     const applyPreference = () => {
-      const stored = window.localStorage.getItem("keqing1.tablecloth") ?? window.localStorage.getItem("keqing.tablecloth");
-      if (stored && TABLECLOTH_OPTIONS.some((opt) => opt.id === stored)) {
+      const stored =
+        window.localStorage.getItem(`keqing1.tablecloth.${theme}`)
+        ?? window.localStorage.getItem("keqing1.tablecloth")
+        ?? window.localStorage.getItem("keqing.tablecloth");
+      if (stored && ALL_TABLECLOTH_OPTIONS.some((opt) => opt.id === stored)) {
         setTablecloth(stored as typeof tablecloth);
       } else {
-        setTablecloth(DEFAULT_TABLECLOTH_ID);
+        setTablecloth(getDefaultTableclothId(theme));
       }
     };
     applyPreference();
     const onStorage = (event: StorageEvent) => {
-      if (event.key === "keqing1.tablecloth" || event.key === "keqing.tablecloth") applyPreference();
+      if (
+        event.key === "keqing1.tablecloth"
+        || event.key === "keqing.tablecloth"
+        || event.key === `keqing1.tablecloth.${theme}`
+      ) {
+        applyPreference();
+      }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  }, [theme]);
 
   useEffect(() => {
     setHideSelfHandLogitHints(false);
   }, [selfHandLogitKey]);
 
-  const tableBg = TABLECLOTH_OPTIONS.find(t => t.id === tablecloth)?.color ?? TABLECLOTH_OPTIONS[0].color;
+  const isLight = theme === "light";
+  const tableBg =
+    activeTableclothOptions.find((t) => t.id === tablecloth)?.color
+    ?? activeTableclothOptions[0]?.color
+    ?? (isLight ? "#dce8df" : "#1e3527");
   const viewportBg = "var(--page-bg)";
 
   return (
@@ -1394,9 +1415,9 @@ export function MahjongTable({
           transition: "background 0.3s ease",
         }}>
 
-          {/* 桌面质感层（§3.1：呢绒纹理 + 四边暗角；zIndex 0 垫在所有牌/控件之下） */}
+          {/* 桌面质感层（呢绒纹理 + 深色四边暗角；zIndex 0 垫在所有牌/控件之下） */}
           <div style={{ ...tableTextureLayer, zIndex: 0 }} />
-          <div style={{ ...tableVignetteLayer, zIndex: 0 }} />
+          {!isLight && <div style={{ ...tableVignetteLayer, zIndex: 0 }} />}
 
           <BoardInfoCorner dora_markers={dora_markers} honba={honba} />
 

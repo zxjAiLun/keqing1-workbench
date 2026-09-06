@@ -16,7 +16,12 @@ import {
   X,
 } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
-import { TABLECLOTH_OPTIONS, DEFAULT_TABLECLOTH_ID } from '../BattleBoard/tableclothOptions';
+import { useTheme } from '../../context/themeStore';
+import {
+  getTableclothOptions,
+  getDefaultTableclothId,
+  ALL_TABLECLOTH_OPTIONS,
+} from '../BattleBoard/tableclothOptions';
 import type { TableclothId } from '../BattleBoard/tableclothOptions';
 import { routes } from '../../routes';
 
@@ -75,15 +80,31 @@ export function Sidebar() {
       ?? window.localStorage.getItem('keqing.sidebar.collapsed');
     return stored === 'true';
   });
+  const { theme } = useTheme();
+  const currentTableclothOptions = getTableclothOptions(theme);
+
   const [tablecloth, setTablecloth] = useState<TableclothId>(() => {
     const stored =
-      window.localStorage.getItem('keqing1.tablecloth')
+      window.localStorage.getItem(`keqing1.tablecloth.${theme}`)
+      ?? window.localStorage.getItem('keqing1.tablecloth')
       ?? window.localStorage.getItem('keqing.tablecloth');
-    if (stored && TABLECLOTH_OPTIONS.some((item) => item.id === stored)) {
+    if (stored && ALL_TABLECLOTH_OPTIONS.some((item) => item.id === stored)) {
       return stored as TableclothId;
     }
-    return DEFAULT_TABLECLOTH_ID;
+    return getDefaultTableclothId(theme);
   });
+
+  // 主题切换时自动适配对应主题下的桌布
+  useEffect(() => {
+    const validForCurrent = currentTableclothOptions.some((opt) => opt.id === tablecloth);
+    if (!validForCurrent) {
+      const next = getDefaultTableclothId(theme);
+      setTablecloth(next);
+      window.localStorage.setItem('keqing1.tablecloth', next);
+      window.localStorage.setItem(`keqing1.tablecloth.${theme}`, next);
+      window.dispatchEvent(new StorageEvent('storage', { key: 'keqing1.tablecloth', newValue: next }));
+    }
+  }, [theme, currentTableclothOptions, tablecloth]);
 
   useEffect(() => {
     window.localStorage.setItem('keqing1.sidebar.collapsed', String(collapsed));
@@ -105,6 +126,7 @@ export function Sidebar() {
   const updateTablecloth = (next: TableclothId) => {
     setTablecloth(next);
     window.localStorage.setItem('keqing1.tablecloth', next);
+    window.localStorage.setItem(`keqing1.tablecloth.${theme}`, next);
     window.localStorage.setItem('keqing.tablecloth', next);
     window.dispatchEvent(new StorageEvent('storage', { key: 'keqing1.tablecloth', newValue: next }));
     window.dispatchEvent(new StorageEvent('storage', { key: 'keqing.tablecloth', newValue: next }));
@@ -144,7 +166,7 @@ export function Sidebar() {
           <div style={{ display: 'grid', gap: 5 }}>
             <span style={{ color: 'var(--sidebar-text-muted)', fontSize: 11 }}>桌布</span>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {TABLECLOTH_OPTIONS.map((item) => (
+              {currentTableclothOptions.map((item) => (
                 <button
                   key={item.id}
                   onClick={() => updateTablecloth(item.id)}

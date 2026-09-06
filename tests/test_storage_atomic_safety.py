@@ -28,6 +28,7 @@ def test_atomic_write_failure_preserves_target_file(tmp_path):
     assert not tmp_file.exists()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows-only replace retry behavior")
 def test_atomic_write_retries_transient_failure(tmp_path):
     """When os.replace encounters a transient sharing violation, it succeeds after retry."""
     target = tmp_path / "transient_file.json"

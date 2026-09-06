@@ -30,7 +30,7 @@ import { useTheme } from "../../context/themeStore";
 import {
   getTableclothOptions,
   getDefaultTableclothId,
-  ALL_TABLECLOTH_OPTIONS,
+  DEFAULT_TABLECLOTH_ID,
 } from "./tableclothOptions";
 import type { TableclothId } from "./tableclothOptions";
 import {

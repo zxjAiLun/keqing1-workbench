@@ -155,6 +155,7 @@ def run_replay_from_source(
     input_type: str = "auto",
     bot_type: str = "mortal",
     render_html_report: bool = True,
+    device: str | None = None,
 ) -> tuple:
     """运行跑谱并返回 (Bot实例, HTML报告字符串)。
 
@@ -190,6 +191,9 @@ def run_replay_from_source(
         checkpoint = resolve_model_checkpoint(checkpoint, _PROJECT_ROOT)
 
     events = _load_events_from_source(source, input_type=input_type)
+    if device is None:
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
     bot_cls = _BOT_CLASSES[bot_type]
     if bot_type == "rulebase":
         bot = bot_cls(player_id=player_id)
@@ -198,9 +202,10 @@ def run_replay_from_source(
             player_id=player_id,
             model_path=checkpoint,
             mortal_root=_PROJECT_ROOT / "third_party" / "Mortal",
+            device=device,
         )
     elif bot_type in _BOT_CLASSES:
-        bot = bot_cls(player_id=player_id, model_path=checkpoint)
+        bot = bot_cls(player_id=player_id, model_path=checkpoint, device=device)
     else:
         raise ValueError(f"Unsupported bot_type: {bot_type}")
     setattr(bot, "player_names", [])

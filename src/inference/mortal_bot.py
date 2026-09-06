@@ -57,7 +57,7 @@ class MortalReviewBot:
         model_path: str | Path,
         *,
         mortal_root: str | Path = Path("third_party/Mortal"),
-        device: str | torch.device = "cpu",
+        device: str | torch.device | None = None,
         verbose: bool = False,
         enable_amp: bool = False,
         enable_rule_based_agari_guard: bool = True,
@@ -68,7 +68,13 @@ class MortalReviewBot:
     ) -> None:
         self.player_id = int(player_id)
         self.verbose = bool(verbose)
-        self.device = torch.device(device if torch.cuda.is_available() or str(device) == "cpu" else "cpu")
+        if device is None:
+            resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            resolved_device = device
+        self.device = torch.device(resolved_device if torch.cuda.is_available() or str(resolved_device) == "cpu" else "cpu")
+        if self.device.type == "cpu" and torch.get_num_threads() > 4:
+            torch.set_num_threads(4)
         self.model_path = Path(model_path)
         self.mortal_root = Path(mortal_root)
         self._model_version = model_version or "mortal"

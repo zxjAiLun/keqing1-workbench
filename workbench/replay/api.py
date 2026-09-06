@@ -15,6 +15,7 @@ def run_replay_single_raw(
     checkpoint: Union[str, Path] | None = None,
     input_type: str = "auto",
     bot_type: str = "mortal",
+    device: str | None = None,
 ):
     """对单个输入源运行跑谱，返回 bot 对象（内部有 decision_log）。"""
     bot, _ = run_replay_from_source(
@@ -24,6 +25,7 @@ def run_replay_single_raw(
         input_type=input_type,
         bot_type=bot_type,
         render_html_report=False,
+        device=device,
     )
     return bot
 
@@ -34,6 +36,7 @@ def run_replay_single(
     checkpoint: Union[str, Path] | None = None,
     input_type: str = "auto",
     bot_type: str = "mortal",
+    device: str | None = None,
 ) -> str:
     """对单个输入源运行跑谱，返回 HTML 报告字符串（兼容旧接口）。"""
     from replay.bot import render_html
@@ -43,6 +46,7 @@ def run_replay_single(
         checkpoint=checkpoint,
         input_type=input_type,
         bot_type=bot_type,
+        device=device,
     )
     return render_html(bot)
 
@@ -54,6 +58,7 @@ def run_replay_multi(
     file_names: Optional[list[str]] = None,
     input_type: str = "auto",
     bot_type: str = "mortal",
+    device: str | None = None,
 ) -> str:
     """对多个输入源依次运行跑谱，返回带 tab 导航的多 iframe HTML 报告。
 
@@ -81,7 +86,7 @@ def run_replay_multi(
     results: list[tuple[str, str]] = []
     for i, src in enumerate(sources):
         try:
-            html = run_replay_single(src, player_id=player_id, checkpoint=checkpoint, input_type=input_type, bot_type=bot_type)
+            html = run_replay_single(src, player_id=player_id, checkpoint=checkpoint, input_type=input_type, bot_type=bot_type, device=device)
             results.append((file_names[i], html))
         except Exception as e:
             results.append((file_names[i], _error_html(str(e))))

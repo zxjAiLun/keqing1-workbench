@@ -217,28 +217,51 @@ def _normalize_replay_events(events: list[dict] | None) -> list[dict]:
     return normalized
 
 
+_TERMINAL_RESULT_EVENT_TYPES = frozenset({"hora", "ryukyoku"})
+
+
 def _merge_terminal_event_details(decisions: dict, events: list[dict] | None) -> dict:
+    """只把**终局事件**的结算细节补进决策条目，普通动作事件完全不参与。
+
+    本意是补齐 ``hora`` / ``ryukyoku`` 事件里的结算展示数据（``hans`` / ``fu`` /
+    ``yaku`` / ``cost`` / ``deltas`` / ``scores`` 等）；``dahai`` / ``reach`` /
+    ``chi`` / ``pon`` / ... 这些普通动作的 ``chosen`` / ``gt_action`` 本身已经完整，
+    事件既不需要、也不允许再改写它们。
+
+    为什么强调"不参与"：``gt_action`` 是玩家实际动作，但 ``chosen`` 是当前
+    Review 模型的决策。早期实现让事件（真实打出的牌）在类型相同时覆盖 ``chosen``，
+    于是模型自己的决策被"玩家实际打出的牌"替换 —— 之后所有 Review 统计都退化成
+    "实际打法 vs 实际打法"：一致率虚高、多个模型数字完全相同、真实分歧再也找不到。
+
+    终局事件里两个键的语义仍然不同：``gt_action`` 就是这次实际动作，事件是唯一
+    真值（并附带结算字段）；``chosen`` 只允许补它缺的键，已给出的动作字段不改写。
+    """
     if not isinstance(decisions, dict) or not events:
         return decisions
-
-    event_lookup = {
-        idx: event
-        for idx, event in enumerate(events)
-        if isinstance(event, dict)
-    }
 
     for entry in decisions.get("log", []):
         source_event_index = entry.get("source_event_index")
         if source_event_index is None:
             continue
-        event = event_lookup.get(int(source_event_index))
-        if not event:
+        try:
+            event = events[int(source_event_index)]
+        except (IndexError, TypeError, ValueError):
+            continue
+        if not isinstance(event, dict) or event.get("type") not in _TERMINAL_RESULT_EVENT_TYPES:
             continue
         event_type = event.get("type")
         for action_key in ("chosen", "gt_action"):
             action = entry.get(action_key)
-            if isinstance(action, dict) and action.get("type") == event_type:
+            if not isinstance(action, dict) or action.get("type") != event_type:
+                continue
+            if action_key == "gt_action":
                 entry[action_key] = {**action, **event}
+                continue
+            merged = dict(action)
+            for key, value in event.items():
+                if merged.get(key) is None:
+                    merged[key] = value
+            entry[action_key] = merged
     return decisions
 
 
@@ -370,6 +393,8 @@ def _load_teacher_report_entries(report_path: Path, decisions: dict) -> tuple[st
                     "is_equal": entry.get("is_equal"),
                     "actual_q": actual_q,
                     "expected_q": expected_candidate.get("q_value") if expected_candidate else None,
+                    "actual_prob": actual_candidate.get("prob") if actual_candidate else None,
+                    "expected_prob": expected_candidate.get("prob") if expected_candidate else None,
                     "best_q": best_q,
                     "best_prob": best_candidate.get("prob") if best_candidate else None,
                     "q_loss": q_loss,
@@ -724,6 +749,25 @@ def _default_checkpoint_for_bot_type(bot_type: str) -> Path:
     return path
 
 
+def _review_checkpoint_for_bot_type(bot_type: str) -> Path:
+    """严格解析 GUI 多模型 Review 的 checkpoint（不允许静默 alias）。
+
+    ``resolve_bot_spec("mortal")`` 有"V2 缺失就用 70k"的运行时便利回退。在 Review
+    里这会让用户看到的两个"不同模型"实际是同一套权重，整个对比页面失去意义，
+    所以这里绕过回退：解析不到就直接报错，报错信息带模型标签。
+    """
+    from workbench.runtime.resolver import MORTAL_CHECKPOINTS, resolve_model_checkpoint
+
+    label = _GUI_MORTAL_MODEL_LABELS.get(bot_type, bot_type)
+    canonical = MORTAL_CHECKPOINTS.get(bot_type)
+    if canonical is None:
+        raise ValueError(f"unknown review model: {bot_type}")
+    try:
+        return resolve_model_checkpoint(canonical, BASE_DIR.parent.parent)
+    except FileNotFoundError as exc:
+        raise ValueError(f"{label} checkpoint is unavailable: {exc}") from exc
+
+
 def _external_review_links(naga_url: str = "", mortal_url: str = "") -> dict[str, str]:
     links: dict[str, str] = {}
     for key, raw_value in (("naga", naga_url), ("mortal", mortal_url)):
@@ -833,6 +877,29 @@ def _actual_action_for_review(entry: dict) -> dict | None:
     return None
 
 
+_RESPONSE_CALL_TYPES = {"chi", "pon", "daiminkan", "ankan", "kakan"}
+
+
+def _response_pass_actual(entry: dict, player_id: int) -> dict | None:
+    """真实"选择过"的响应窗口的实际动作，否则 ``None``。
+
+    玩家在鸣牌窗口里选择"过"是一次真实决策（模型可能想吃/碰/杠）。若把它当成
+    "无决策"丢弃，Review 对"鸣牌 vs 过"就只剩一个方向：玩家鸣牌而模型想过算差异，
+    玩家过而模型想鸣牌不算 —— 这是数量最大的漏报来源。
+    判据只看候选：同时存在 ``none`` 与至少一个鸣牌动作即为真实响应窗口。
+    """
+    actions = [
+        candidate.get("action")
+        for candidate in entry.get("candidates", [])
+        if isinstance(candidate, dict)
+    ]
+    if not any(isinstance(action, dict) and action.get("type") == "none" for action in actions):
+        return None
+    if not any(isinstance(action, dict) and action.get("type") in _RESPONSE_CALL_TYPES for action in actions):
+        return None
+    return {"type": "none", "actor": player_id}
+
+
 def _build_runtime_teacher_report(
     *,
     replay_id: str,
@@ -847,9 +914,11 @@ def _build_runtime_teacher_report(
             continue
         actual_action = _actual_action_for_review(entry)
         if _decision_kind(actual_action) not in ("draw_discard", "reach", "call"):
-            # pass/none 及 hora/ryukyoku 等终局动作无事件身份、无候选权重，
-            # 不作为 teacher 决策挂载
-            continue
+            # 真实响应窗口里的"过"是决策（模型可能想鸣牌），必须挂载；
+            # hora/ryukyoku 等终局动作无候选权重，仍不作为 teacher 决策。
+            actual_action = _response_pass_actual(entry, player_id)
+            if actual_action is None:
+                continue
         key = (
             entry.get("bakaze", ""),
             int(entry.get("kyoku", 0)),
@@ -1302,7 +1371,7 @@ async def replay_multi_teacher(
         checkpoints: dict[str, Path] = {}
 
         for model_type in selected_models:
-            checkpoint = _default_checkpoint_for_bot_type(model_type)
+            checkpoint = _review_checkpoint_for_bot_type(model_type)
             bot = run_replay_single_raw(
                 events,
                 player_id=player_id,

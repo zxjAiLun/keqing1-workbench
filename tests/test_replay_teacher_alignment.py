@@ -53,6 +53,17 @@ def _review_pai_set(review: dict) -> set:
     }
 
 
+def _pass_entry_count(report_path: Path) -> int:
+    """报告里"真实响应窗口的过"条目数（这些决策没有对应事件，只能按 step 回退）。"""
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    return sum(
+        1
+        for kyoku in report["review"]["kyokus"]
+        for entry in kyoku.get("entries", [])
+        if entry.get("decision_kind") == "pass"
+    )
+
+
 def test_runtime_report_entries_carry_event_identity(tmp_path):
     decisions = _load_decisions()
     report = json.loads(_write_report(tmp_path, decisions, "External Mortal").read_text(encoding="utf-8"))
@@ -82,10 +93,16 @@ def test_attach_by_event_identity_locks_steps_3_8_30(tmp_path):
     attached = _attach_teacher_report_overlays(decisions, report_paths, expected_replay_id=EXPECTED_REPLAY_ID)
     overlays = attached["teacher_review_overlays"]
     assert len(overlays) == 2
-    for overlay in overlays:
-        assert overlay["alignment"] == "exact_event_identity"
+    for overlay, report_path in zip(overlays, report_paths):
+        pass_entries = _pass_entry_count(report_path)
+        # 带事件身份的决策走精确身份匹配；"真实响应窗口的过"是玩家没产生动作的决策，
+        # 没有可对齐的事件，只能 step 回退。两者共存时 alignment 就是 mixed ——
+        # 关键约束是零歧义/零漏配，以及身份条目全部精确命中。
+        assert overlay["alignment"] == ("mixed" if pass_entries else "exact_event_identity")
         assert overlay["replay_verified"] is True
         assert overlay["alignment_stats"]["exact_event_identity"] > 0
+        assert overlay["alignment_stats"]["identity_carrying_entries"] == overlay["alignment_stats"]["exact_event_identity"]
+        assert overlay["alignment_stats"]["legacy_step"] == pass_entries
         assert overlay["alignment_stats"]["ambiguous"] == 0
         assert overlay["alignment_stats"]["unmatched"] == 0
         assert overlay["alignment_stats"]["duplicate_teacher_identity"] == 0
@@ -137,13 +154,18 @@ def test_ta2_player_id_mismatch_rejected(tmp_path):
 
 
 def test_ta3_same_replay_player_identity_exact(tmp_path):
-    """TA3：replay_id / player / 事件身份都一致 → exact。"""
+    """TA3：replay_id / player / 事件身份都一致 → exact（或含无事件的过 → mixed）。"""
     decisions = _load_decisions()
     report_path = _write_report(tmp_path, decisions, "70k")
     attached = _attach_teacher_report_overlays(decisions, [report_path], expected_replay_id=EXPECTED_REPLAY_ID)
     overlay = attached["teacher_review_overlays"][0]
-    assert overlay["alignment"] == "exact_event_identity"
+    pass_entries = _pass_entry_count(report_path)
+    assert overlay["alignment"] == ("mixed" if pass_entries else "exact_event_identity")
     assert overlay["alignment_stats"]["exact_event_identity"] > 0
+    assert overlay["alignment_stats"]["identity_carrying_entries"] == overlay["alignment_stats"]["exact_event_identity"]
+    assert overlay["alignment_stats"]["legacy_step"] == pass_entries
+    assert overlay["alignment_stats"]["ambiguous"] == 0
+    assert overlay["alignment_stats"]["unmatched"] == 0
 
 
 def test_ta4_filename_spoof_but_json_replay_id_mismatch(tmp_path):

@@ -878,16 +878,22 @@ def _actual_action_for_review(entry: dict) -> dict | None:
 
 
 _RESPONSE_CALL_TYPES = {"chi", "pon", "daiminkan", "ankan", "kakan"}
+# 响应窗口里"过"的另一侧选项：除了鸣牌，还有**荣和**（别人打出的牌可以选择不荣和）。
+_RESPONSE_OPTION_TYPES = _RESPONSE_CALL_TYPES | {"hora"}
 
 
-def _response_pass_actual(entry: dict, player_id: int) -> dict | None:
+def _response_pass_actual(entry: dict, player_id: int, actual_action: dict | None) -> dict | None:
     """真实"选择过"的响应窗口的实际动作，否则 ``None``。
 
-    玩家在鸣牌窗口里选择"过"是一次真实决策（模型可能想吃/碰/杠）。若把它当成
-    "无决策"丢弃，Review 对"鸣牌 vs 过"就只剩一个方向：玩家鸣牌而模型想过算差异，
-    玩家过而模型想鸣牌不算 —— 这是数量最大的漏报来源。
-    判据只看候选：同时存在 ``none`` 与至少一个鸣牌动作即为真实响应窗口。
+    玩家在响应窗口里选择"过"是一次真实决策（模型可能想吃/碰/杠/**荣和**）。若把它
+    当成"无决策"丢弃，Review 对"鸣牌/荣和 vs 过"就只剩一个方向：玩家鸣牌而模型想过
+    算差异，玩家过而模型想鸣牌/荣和不算 —— 这是数量最大的漏报来源。
+    判据：① 实际动作本身必须是"过"——hora/ryukyoku 是终局动作，语义另有归属（拿
+    到的就是结果，不是"过"），不能用本函数把它们改写成 pass；
+    ② 候选里同时存在 ``none`` 与至少一个响应选项（鸣牌或荣和）。
     """
+    if _decision_kind(actual_action) != "pass":
+        return None
     actions = [
         candidate.get("action")
         for candidate in entry.get("candidates", [])
@@ -895,7 +901,7 @@ def _response_pass_actual(entry: dict, player_id: int) -> dict | None:
     ]
     if not any(isinstance(action, dict) and action.get("type") == "none" for action in actions):
         return None
-    if not any(isinstance(action, dict) and action.get("type") in _RESPONSE_CALL_TYPES for action in actions):
+    if not any(isinstance(action, dict) and action.get("type") in _RESPONSE_OPTION_TYPES for action in actions):
         return None
     return {"type": "none", "actor": player_id}
 
@@ -914,9 +920,9 @@ def _build_runtime_teacher_report(
             continue
         actual_action = _actual_action_for_review(entry)
         if _decision_kind(actual_action) not in ("draw_discard", "reach", "call"):
-            # 真实响应窗口里的"过"是决策（模型可能想鸣牌），必须挂载；
+            # 真实响应窗口里的"过"是决策（模型可能想鸣牌/荣和），必须挂载；
             # hora/ryukyoku 等终局动作无候选权重，仍不作为 teacher 决策。
-            actual_action = _response_pass_actual(entry, player_id)
+            actual_action = _response_pass_actual(entry, player_id, actual_action)
             if actual_action is None:
                 continue
         key = (

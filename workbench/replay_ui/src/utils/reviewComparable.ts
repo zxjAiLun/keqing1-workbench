@@ -9,7 +9,8 @@ import { getActualReplayAction } from './replayAdapter.ts';
 import { isReplayPlayerDecision } from './tileUtils.ts';
 import type { DecisionLogEntry } from '../types/replay';
 
-const RESPONSE_CALL_TYPES = new Set(['chi', 'pon', 'daiminkan', 'ankan', 'kakan']);
+// 响应窗口里"过"的另一侧选项：除了鸣牌，还有**荣和**（别人打出的牌可以选择不荣和）。
+const RESPONSE_OPTION_TYPES = new Set(['chi', 'pon', 'daiminkan', 'ankan', 'kakan', 'hora']);
 
 /** 立直后的强制摸切：不是真实选择，不计入 Review 比较。 */
 export function isForcedRiichiTsumogiriEntry(
@@ -27,21 +28,21 @@ export function isForcedRiichiTsumogiriEntry(
 }
 
 /**
- * 真实响应窗口里的「过」：候选里同时存在 `none` 与至少一个鸣牌动作。
+ * 真实响应窗口里的「过」：候选里同时存在 `none` 与至少一个响应选项（鸣牌**或荣和**）。
  *
- * 这种"过"是一次真实决策（模型可能想吃/碰/杠），必须参与一致率与差异统计；
+ * 这种"过"是一次真实决策（模型可能想吃/碰/杠/荣和），必须参与一致率与差异统计；
  * 只有完全没有选择余地的自动过才应被排除。
  */
 export function isReplayResponsePassOpportunity(
   entry: DecisionLogEntry | null | undefined,
 ): boolean {
   let hasNone = false;
-  let hasCall = false;
+  let hasOption = false;
   for (const candidate of entry?.candidates ?? []) {
     const type = candidate?.action?.type;
     if (type === 'none') hasNone = true;
-    else if (type && RESPONSE_CALL_TYPES.has(type)) hasCall = true;
-    if (hasNone && hasCall) return true;
+    else if (type && RESPONSE_OPTION_TYPES.has(type)) hasOption = true;
+    if (hasNone && hasOption) return true;
   }
   return false;
 }

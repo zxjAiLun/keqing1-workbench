@@ -4,7 +4,7 @@
 覆盖四类已确认缺陷：
 1. ``_merge_terminal_event_details`` 曾用 ``{**action, **event}`` 把模型决策
    (``chosen``) 覆盖成"玩家实际打出的牌" → 一致率/类似度虚高、多个模型数字完全相同；
-2. runtime teacher report 曾丢弃"玩家选择过、模型想鸣牌"的真实响应决策
+2. runtime teacher report 曾丢弃"玩家选择过、模型想鸣牌/荣和"的真实响应决策
    （``decision_kind == "pass"``）→ 直接少掉约 20% 的可比决策；
 3. GUI 多模型 Review 曾允许 ``resolve_bot_spec("mortal")`` 在 V2 缺失时静默 alias 到 70k；
 4. teacher report 未写 ``expected_prob`` / ``actual_prob``，前端只能拿 top1 概率冒充。
@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-from inference.review import same_action
 from replay.server import (
     _build_runtime_teacher_report,
     _load_teacher_report_entries,
@@ -50,7 +49,7 @@ def _own_entry(*, step: int, chosen: dict, gt_action: dict | None, candidates: l
 
 
 def test_normal_action_event_leaves_decisions_untouched():
-    """模型打 E、玩家实际打 S（同为 dahai）→ 两者都不被事件改写。"""
+    """模型打 E、玩家实际打 S（同为 dahai）→ 两者都不被事件改写（含不能凭事件补字段）。"""
     decisions = {"log": [_own_entry(step=9, chosen=_dahai("E"), gt_action=_dahai("S"))]}
     decisions["log"][0]["source_event_index"] = 3
     before = json.loads(json.dumps(decisions))
@@ -61,28 +60,7 @@ def test_normal_action_event_leaves_decisions_untouched():
     assert merged["log"] == before["log"], "普通 dahai 事件不得改写 chosen/gt_action（统计失真根因回归）"
     assert merged["log"][0]["chosen"]["pai"] == "E"
     assert merged["log"][0]["gt_action"]["pai"] == "S"
-
-
-def test_merge_only_handles_terminal_event_types():
-    """同一份 decisions：普通事件不动，终局事件才补结算字段。"""
-    decisions = {"log": [
-        _own_entry(step=1, chosen=_dahai("E"), gt_action=_dahai("S")),
-        _own_entry(step=2, chosen={"type": "ryukyoku", "actor": PLAYER_ID}, gt_action={"type": "ryukyoku", "actor": PLAYER_ID}),
-    ]}
-    decisions["log"][0]["source_event_index"] = 0
-    decisions["log"][1]["source_event_index"] = 1
-    events = [
-        _dahai("S", tsumogiri=True),
-        {"type": "ryukyoku", "reason": "ryanmen", "deltas": [1000, -1000, -1000, -1000], "scores": [26000, 24000, 25000, 25000]},
-    ]
-
-    entry_dahai, entry_ryukyoku = _merge_terminal_event_details(decisions, events)["log"]
-
-    assert entry_dahai["chosen"] == _dahai("E") and entry_dahai["gt_action"] == _dahai("S")
-    assert "deltas" not in entry_dahai["gt_action"]
-    assert entry_ryukyoku["gt_action"]["deltas"] == [1000, -1000, -1000, -1000]
-    assert entry_ryukyoku["gt_action"]["scores"] == [26000, 24000, 25000, 25000]
-    assert entry_ryukyoku["chosen"]["deltas"] == [1000, -1000, -1000, -1000]
+    assert "deltas" not in merged["log"][0]["gt_action"], "普通事件不得带进结算字段"
 
 
 def test_terminal_result_details_are_filled_without_overwriting_model_choice():
@@ -115,20 +93,17 @@ def test_terminal_result_details_are_filled_without_overwriting_model_choice():
     assert entry["chosen"]["pai"] == "5m" and entry["chosen"]["actor"] == PLAYER_ID, "模型决策字段不得被改写"
     assert entry["gt_action"]["target"] == 2
 
-
-def test_merge_keeps_agreement_rate_meaningful():
-    """一致性不能被事件覆盖刷成 100%：模型分歧必须仍然可见。"""
-    decisions = {"log": [
-        _own_entry(step=1, chosen=_dahai("1p"), gt_action=_dahai("1p")),
-        _own_entry(step=2, chosen=_dahai("E"), gt_action=_dahai("S")),
-    ]}
-    decisions["log"][0]["source_event_index"] = 1
-    decisions["log"][1]["source_event_index"] = 2
-    events = [None, _dahai("1p"), _dahai("S", tsumogiri=True)]
-
-    merged = _merge_terminal_event_details(decisions, events)["log"]
-    matches = sum(1 for entry in merged if same_action(entry.get("chosen"), entry.get("gt_action")))
-    assert matches == 1, f"应只有 1 步一致（得到 {matches}/2）—— 事件覆盖会让它变成 2/2"
+    # ryukyoku 同属终局事件，deltas/scores 同样要补齐（两份键都补）
+    ryukyoku = {"type": "ryukyoku", "reason": "ryanmen", "deltas": [1000, -1000, -1000, -1000], "scores": [26000, 24000, 25000, 25000]}
+    ryu_decisions = {"log": [_own_entry(
+        step=20,
+        chosen={"type": "ryukyoku", "actor": PLAYER_ID},
+        gt_action={"type": "ryukyoku", "actor": PLAYER_ID},
+    )]}
+    ryu_decisions["log"][0]["source_event_index"] = 0
+    ryu = _merge_terminal_event_details(ryu_decisions, [ryukyoku])["log"][0]
+    assert ryu["gt_action"]["scores"] == [26000, 24000, 25000, 25000]
+    assert ryu["chosen"]["deltas"] == [1000, -1000, -1000, -1000]
 
 
 # --------------------------------------------------------------------------
@@ -137,15 +112,16 @@ def test_merge_keeps_agreement_rate_meaningful():
 
 
 def _pass_opportunity_entry(*, step: int = 7, chosen_type: str = "pon") -> dict:
-    pon = {"type": "pon", "actor": PLAYER_ID, "pai": "5m", "target": 2}
-    chosen = pon if chosen_type == "pon" else {"type": "none", "actor": PLAYER_ID}
+    pon_action = {"type": "pon", "actor": PLAYER_ID, "pai": "5m", "target": 2}
+    hora_action = {"type": "hora", "actor": PLAYER_ID, "target": 2, "pai": "5m"}
+    option = hora_action if chosen_type == "hora" else pon_action
     return _own_entry(
         step=step,
-        chosen=chosen,
+        chosen=option,
         gt_action={"type": "none", "actor": PLAYER_ID},
         candidates=[
             {"action": {"type": "none", "actor": PLAYER_ID}, "final_score": -0.1, "prob": 0.25},
-            {"action": pon, "final_score": 0.4, "prob": 0.75},
+            {"action": option, "final_score": 0.4, "prob": 0.75},
         ],
     )
 
@@ -161,21 +137,36 @@ def _report_entries(model: str, decisions: dict) -> list[dict]:
     return [entry for kyoku in report["review"]["kyokus"] for entry in kyoku["entries"]]
 
 
-def test_response_pass_is_reported_as_real_decision():
-    """玩家"过"/模型想碰：必须挂载，且 expected=碰、actual=过 → 差异可见。"""
-    entries = _report_entries("70k", {"player_id": PLAYER_ID, "log": [_pass_opportunity_entry()]})
+@pytest.mark.parametrize("chosen_type", ["pon", "hora"])
+def test_response_pass_is_reported_as_real_decision(chosen_type):
+    """玩家"过"/模型想碰**或想荣和**：必须挂载，且 expected=动作、actual=过 → 差异可见。"""
+    entries = _report_entries("70k", {"player_id": PLAYER_ID, "log": [_pass_opportunity_entry(chosen_type=chosen_type)]})
     assert len(entries) == 1, "真实响应窗口的'过'被 drop（不对称漏报回归）"
     entry = entries[0]
     assert entry["decision_kind"] == "pass"
     assert entry["actor"] == PLAYER_ID
     assert entry["actual"] == {"type": "none", "actor": PLAYER_ID}
-    assert entry["expected"]["type"] == "pon"
+    assert entry["expected"]["type"] == chosen_type
     assert entry["is_equal"] is False
     assert len(entry["details"]) == 2
 
 
+def test_player_hora_is_not_rewritten_into_a_pass():
+    """玩家自己荣和：终局动作另有归属，不得被当成"过"（借none→pass路径改写 actual）。"""
+    entry = _own_entry(
+        step=8,
+        chosen={"type": "hora", "actor": PLAYER_ID, "target": 2, "pai": "5m"},
+        gt_action={"type": "hora", "actor": PLAYER_ID, "target": 2, "pai": "5m"},
+        candidates=[
+            {"action": {"type": "none", "actor": PLAYER_ID}, "final_score": -0.1, "prob": 0.25},
+            {"action": {"type": "hora", "actor": PLAYER_ID, "target": 2, "pai": "5m"}, "final_score": 0.4, "prob": 0.75},
+        ],
+    )
+    assert _report_entries("70k", {"player_id": PLAYER_ID, "log": [entry]}) == []
+
+
 def test_auto_pass_without_call_option_is_not_reported():
-    """没有鸣牌选项的自动过仍不算决策。"""
+    """没有鸣牌/荣和选项的自动过仍不算决策。"""
     decisions = {"player_id": PLAYER_ID, "log": [{
         "step": 4,
         "is_obs": False,

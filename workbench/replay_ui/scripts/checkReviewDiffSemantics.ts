@@ -113,6 +113,35 @@ const realPass = asEntry({
 check(isReplayReviewComparableEntry(realPass, P0) === true, 'F2: 真实响应窗口的"过"必须可比');
 check(isReplayReviewDiffForPlayer(realPass, P0, 'A') === true, 'F2: 玩家过 / 模型想碰 → 差异可达');
 
+// `none + hora`（玩家过 / 模型想荣和）属于同一类真实响应窗口，后端 join 后同步加入。
+// 这里用 legacy 形状（gt_action 缺失）锁前端自己的丢掉路径：isImplicitPass 不得把它当"自动过"。
+const horaPass = asEntry({
+  step: 16,
+  is_obs: false,
+  actor_to_move: P0,
+  chosen: null,
+  gt_action: null,
+  candidates: [
+    { action: { type: 'none', actor: P0 } },
+    { action: { type: 'hora', actor: P0, target: 2, pai: '5m' } },
+  ],
+  teacher_reviews: [
+    review({
+      model: 'A',
+      actual_action: { type: 'none', actor: P0 },
+      expected_action: { type: 'hora', actor: P0, target: 2, pai: '5m' },
+      is_equal: false,
+    }),
+  ],
+});
+check(isReplayReviewComparableEntry(horaPass, P0) === true, 'F2: 玩家过 / 模型想荣和 必须可比');
+check(isReplayReviewDiffForPlayer(horaPass, P0, 'A') === true, 'F2: 荣和漏报（none vs hora）必须可达');
+const horaRows = computeReviewModelStats([horaPass], P0);
+check(
+  horaRows.length === 1 && horaRows[0].total === 1,
+  `F2: 玩家过 / 模型想荣和 不得被当成"自动过"丢弃（得到 total=${horaRows[0]?.total}）`,
+);
+
 // --- F3 / F4：统计公式 ------------------------------------------------------
 const probScoredBad = asEntry({
   step: 20,

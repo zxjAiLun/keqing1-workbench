@@ -70,6 +70,7 @@ jobs:
           npm run check:ladder-season-semantics
           npm run check:ladder-ingest-semantics
           npm run check:review-daiminkan
+          npm run check:review-diff-semantics
           npm run check:review-e2e
           npm run check:season-manager-semantics
 

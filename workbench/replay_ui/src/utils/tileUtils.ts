@@ -261,6 +261,13 @@ export function isReplayDiffForPlayer(entry: ReplayDecisionLike, playerId: numbe
   );
 }
 
+/**
+ * 判定某一手是否属于「该模型的 Review 分歧」（原「上一差异 / 下一差异」谓词）。
+ *
+ * `activeTeacherModel` 指定时只认这个模型：该步没有它的 review 就返回 false，
+ * 不允许用 `teacherReviews[0]` 顶替 —— 否则切到 B 模型后，按钮会静默按 A 的
+ * 判定跳过 B 认为有分歧的步。只有 legacy（未指定模型）才用第一个 review。
+ */
 export function isReplayReviewDiffForPlayer(
   entry: ReplayDecisionLike,
   playerId: number,
@@ -277,7 +284,7 @@ export function isReplayReviewDiffForPlayer(
   }
 
   const review = activeTeacherModel
-    ? teacherReviews.find((item) => item.model === activeTeacherModel) ?? teacherReviews[0]
+    ? teacherReviews.find((item) => item.model === activeTeacherModel)
     : teacherReviews[0];
   if (!review) return false;
   const actualAction = review.actual_action

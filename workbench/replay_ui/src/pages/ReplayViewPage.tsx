@@ -7,6 +7,7 @@ import type { DecisionLogEntry } from '../types/replay';
 import { replayApi } from '../api/replayApi';
 import { legacyRoutes, routes } from '../routes';
 import { actionLabel, isReplayReviewDiffForPlayer, sameReplayAction } from '../utils/tileUtils';
+import { isReplayReviewComparableEntry } from '../utils/reviewComparable';
 import { ReplayStatsDialog } from '../components/ReviewWorkspace/ReplayStatsDialog';
 import { CN_BAKAZE, SEAT_NAMES_CN } from '../utils/constants';
 import { decisionColors, decisionBg } from '../components/BattleBoard/tableStyles';
@@ -410,7 +411,9 @@ export function ReplayViewPage() {
   }) : [];
 
   const isDiff = useCallback((e: DecisionLogEntry) =>
-    data !== null && isReplayReviewDiffForPlayer(e, data.player_id)
+    data !== null
+      && isReplayReviewComparableEntry(e, data.player_id)
+      && isReplayReviewDiffForPlayer(e, data.player_id)
   , [data]);
 
   const jumpToPrevDiff = useCallback(() => {

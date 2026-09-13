@@ -14,6 +14,7 @@ import { replayApi } from '../api/replayApi';
 import { routes } from '../routes';
 import { CN_BAKAZE } from '../utils/constants';
 import { isReplayReviewDiffForPlayer, TILE_ORDER } from '../utils/tileUtils';
+import { isForcedRiichiTsumogiriEntry } from '../utils/reviewComparable';
 import { normalizeReplayPlayerNames, replayPlayerDisplayName } from '../utils/replayNames';
 import type { Action, ReplayData } from '../types/replay';
 import {
@@ -29,18 +30,6 @@ const REPLAY_BOARD_PHASE_LABELS: Record<ReplayBoardPhase, string> = {
   reach: '立直',
   post: '动作后',
 };
-
-function isForcedRiichiTsumogiriEntry(entry: ReplayData['log'][number] | null | undefined): boolean {
-  const action = getActualReplayAction(entry);
-  return Boolean(
-    entry
-    && !entry.is_obs
-    && action?.type === 'dahai'
-    && action.tsumogiri
-    && action.actor !== undefined
-    && entry.reached?.[action.actor],
-  );
-}
 
 export function GameBoardReplayPage() {
   const location = useLocation();

@@ -222,6 +222,10 @@ export function ReplayDecisionPanel({
   const comparisonExempt = Boolean(entry.comparison_exempt);
 
   const activeTeacherReview = teacherReviews.find((review) => review.model === selectedTeacherModel);
+  // 策略梯度端点的输出是动作分数，不是 Q。列名必须跟着变，
+  // 否则面板会把 logit 当成动作价值展示。
+  const activeIsActionScore = activeTeacherReview?.score_semantics === 'action_score';
+  const scoreColumnLabel = activeIsActionScore ? '动作分数' : 'Q';
   const teacherExpected = teacherAction(activeTeacherReview);
   const usesJointReachCandidates = activeTeacherReview?.display_mode === 'joint_reach_dahai'
     && Boolean(activeTeacherReview.candidates?.length);
@@ -288,14 +292,14 @@ export function ReplayDecisionPanel({
             候选动作
           </span>
           <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', opacity: 0.8 }}>
-            {selectedTeacherModel ?? '本地'} Q / P
+            {selectedTeacherModel ?? '本地'} {scoreColumnLabel} / P
           </span>
         </div>
 
         {/* 表头 */}
         <div style={tableHeaderStyle}>
           <div style={{ width: COL1_W }}>动作</div>
-          <div style={{ flex: 1, textAlign: 'right' }}>Q</div>
+          <div style={{ flex: 1, textAlign: 'right' }}>{scoreColumnLabel}</div>
           <div style={{ width: 66, textAlign: 'right' }}>P</div>
         </div>
 

@@ -27,9 +27,13 @@ from .ladder import (
 )
 from .model import (
     MORTAL_CHECKPOINTS,
+    MORTAL_SCORE_SEMANTICS,
+    SCORE_SEMANTICS_ACTION_SCORE,
+    SCORE_SEMANTICS_CALIBRATED_Q,
     SUPPORTED_BOT_NAMES,
     resolve_bot_spec,
     resolve_model_checkpoint,
+    score_semantics_for,
     search_authoritative_checkpoint,
 )
 from .season import (
@@ -45,7 +49,11 @@ __all__ = [
     "data_path",
     "_override_path",
     "MORTAL_CHECKPOINTS",
+    "MORTAL_SCORE_SEMANTICS",
+    "SCORE_SEMANTICS_ACTION_SCORE",
+    "SCORE_SEMANTICS_CALIBRATED_Q",
     "SUPPORTED_BOT_NAMES",
+    "score_semantics_for",
     "resolve_model_checkpoint",
     "resolve_bot_spec",
     "search_authoritative_checkpoint",

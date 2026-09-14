@@ -3,7 +3,11 @@ from __future__ import annotations
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
-from inference.mortal_bot import MortalReviewBot
+from inference.mortal_bot import (
+    SCORE_SEMANTICS_ACTION_SCORE,
+    SCORE_SEMANTICS_CALIBRATED_Q,
+    MortalReviewBot,
+)
 from inference.rulebase_bot import RulebaseBot
 from project_data import data_root
 
@@ -14,6 +18,9 @@ from project_data import data_root
 _ANCHOR_70K = Path("K0_70k/mortal_default_70k_promoted_candidate.pth")
 _EXT_MORTAL = Path("ext_mortal/external_mortal_20240308_best_min.pth")
 _V2_CANDIDATE = Path("V2_74000/mortal_74000.pth")
+# P4-M11 direct-PG endpoint (U32, Adam step 36). Published as its own
+# authoritative bundle rather than added to the immutable D3 bundle.
+_P4M11_U32 = Path("P4M11_U32/U32_eval_weights.pth")
 
 # Named local Mortal checkpoints. ``mortal`` prefers the promoted V2 candidate
 # once available and falls back to the 70k anchor during training.
@@ -23,7 +30,35 @@ MORTAL_CHECKPOINTS: dict[str, Path] = {
     "ext_mortal": _EXT_MORTAL,
     "weak": _EXT_MORTAL,
     "weak_mortal": _EXT_MORTAL,
+    "p4m11_u32": _P4M11_U32,
 }
+
+# What a model's per-action scores MEAN.  The DQN-era checkpoints emit an
+# action-value estimate; the P4-M11 endpoint came out of a direct policy-gradient
+# run, so its scores are policy action scores.  A difference between two action
+# scores is NOT a benefit loss, so anything that derives a quantity from Q
+# differences must be disabled or labelled inapplicable for the latter.
+# The constants themselves live next to the loader that reads them off the
+# checkpoint contract (``inference.mortal_bot``).
+MORTAL_SCORE_SEMANTICS: dict[str, str] = {
+    "mortal": SCORE_SEMANTICS_CALIBRATED_Q,
+    "70k": SCORE_SEMANTICS_CALIBRATED_Q,
+    "ext_mortal": SCORE_SEMANTICS_CALIBRATED_Q,
+    "weak": SCORE_SEMANTICS_CALIBRATED_Q,
+    "weak_mortal": SCORE_SEMANTICS_CALIBRATED_Q,
+    "p4m11_u32": SCORE_SEMANTICS_ACTION_SCORE,
+}
+
+
+def score_semantics_for(spec: str) -> str:
+    """Score semantics for a named spec; unknown specs default to calibrated Q.
+
+    A bare checkpoint path is treated as calibrated Q because that is what every
+    DQN-era local model emits.  A new lineage has to be registered here by name
+    to be described honestly rather than silently inheriting the Q reading.
+    """
+    return MORTAL_SCORE_SEMANTICS.get(str(spec).strip(), SCORE_SEMANTICS_CALIBRATED_Q)
+
 
 SUPPORTED_BOT_NAMES = {"rulebase", *MORTAL_CHECKPOINTS.keys()}
 

@@ -199,9 +199,58 @@ if (rowA && rowB) {
   );
 }
 
+// --- F5：策略梯度端点（action_score）的 Q 差值量不适用 ----------------------
+// 服务端对 action_score 模型把 q_loss 置空（见 tests/test_p4m11_u32_candidate.py）。
+// 这里锁前端自己的底线：即使拿到一份陈旧的、仍带 q_loss 的报告，也不得把 Q 差值
+// 当成"错误严重度"；Rating（实际动作在 Q 分布中的归一化位置）同样判为不适用。
+// expected_action 置空是为了让流程真正走到 q_loss 那一个分支，而不是被"一致"早退。
+const scoreSemanticsCase = (semantics: string) => asEntry({
+  step: 20,
+  is_obs: false,
+  actor_to_move: P0,
+  chosen: dahai('1p'),
+  gt_action: dahai('1p'),
+  candidates: [
+    { action: dahai('1p'), final_score: -5, teachers: [{ model: 'A', q_value: -5, prob: 0.6 }] },
+    { action: dahai('9s'), final_score: -1, teachers: [{ model: 'A', q_value: -1, prob: 0.4 }] },
+  ],
+  teacher_reviews: [
+    review({
+      model: 'A',
+      actual_action: dahai('1p'),
+      expected_action: null,
+      top1: null,
+      is_equal: true,
+      score_semantics: semantics,
+      q_loss: 4,
+      actual_q: -5,
+    }),
+  ],
+});
+
+check(
+  isReplayReviewDiffForPlayer(scoreSemanticsCase('calibrated_q'), P0, 'A') === true,
+  'F5 对照: calibrated_q 的 q_loss 必须仍算差异（否则这条锁的是空行为）',
+);
+check(
+  isReplayReviewDiffForPlayer(scoreSemanticsCase('action_score'), P0, 'A') === false,
+  'F5: action_score 模型的 q_loss 不得产生"错误严重度"差异',
+);
+
+const calibratedRows = computeReviewModelStats([scoreSemanticsCase('calibrated_q')], P0);
+const actionScoreRows = computeReviewModelStats([scoreSemanticsCase('action_score')], P0);
+check(
+  calibratedRows.every((row) => row.rating !== null && row.ratingNotApplicable === false),
+  'F5 对照: calibrated_q 的 Rating 必须仍给出数值',
+);
+check(
+  actionScoreRows.every((row) => row.rating === null && row.ratingNotApplicable === true),
+  'F5: action_score 模型的 Rating 必须判为不适用，而不是换一个数字继续显示',
+);
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exitCode = 1;
 } else {
-  console.log('review diff semantics OK (F1-F4)');
+  console.log('review diff semantics OK (F1-F5)');
 }

@@ -335,11 +335,28 @@ def _infer_teacher_model_tag(report: dict, report_path: Path) -> str:
     return stem or "teacher"
 
 
+def _teacher_spec_from_report(report: dict, model_tag: str | None) -> str:
+    """Recover the spec name a teacher report describes (``model_tag`` is a label)."""
+    for key in ("bot_type", "model_type"):
+        value = report.get(key) if isinstance(report, dict) else None
+        if value:
+            return str(value)
+    if model_tag:
+        for spec, label in _GUI_MORTAL_MODEL_LABELS.items():
+            if label == model_tag:
+                return spec
+        return str(model_tag)
+    return ""
+
+
 def _load_teacher_report_entries(report_path: Path, decisions: dict) -> tuple[str, int | None, list[dict]]:
+    from workbench.runtime.resolver import score_semantics_for
+
     report = json.loads(report_path.read_text(encoding="utf-8"))
     review = report.get("review", {}) if isinstance(report, dict) else {}
     kyokus = review.get("kyokus", []) if isinstance(review, dict) else []
     model_tag = _infer_teacher_model_tag(report, report_path)
+    score_semantics = score_semantics_for(_teacher_spec_from_report(report, model_tag))
     report_player_id = report.get("player_id")
     decision_player_id = decisions.get("player_id")
     if (
@@ -370,9 +387,7 @@ def _load_teacher_report_entries(report_path: Path, decisions: dict) -> tuple[st
             best_candidate = candidates[0] if candidates else None
             actual_q = actual_candidate.get("q_value") if actual_candidate else None
             best_q = best_candidate.get("q_value") if best_candidate else None
-            q_loss = None
-            if actual_q is not None and best_q is not None:
-                q_loss = max(0.0, float(best_q) - float(actual_q))
+            q_loss = _q_loss(best_q, actual_q, score_semantics)
             teacher_entries.append(
                 {
                     "model": model_tag,
@@ -398,12 +413,29 @@ def _load_teacher_report_entries(report_path: Path, decisions: dict) -> tuple[st
                     "best_q": best_q,
                     "best_prob": best_candidate.get("prob") if best_candidate else None,
                     "q_loss": q_loss,
+                    "score_semantics": score_semantics,
                     "candidates": candidates,
                     "top1": best_candidate,
                     "top2": candidates[1] if len(candidates) > 1 else None,
                 }
             )
     return model_tag, report_player_id, teacher_entries
+
+
+def _q_loss(best_q: float | None, actual_q: float | None, semantics: str | None) -> float | None:
+    """Benefit loss (best Q - played Q), or None when it is not defined.
+
+    A direct policy-gradient endpoint emits policy action scores: the gap between
+    the best and the played action is a logit gap, NOT a benefit loss, so it is
+    reported as not applicable rather than as a number.
+    """
+    from workbench.runtime.resolver import SCORE_SEMANTICS_ACTION_SCORE
+
+    if semantics == SCORE_SEMANTICS_ACTION_SCORE:
+        return None
+    if best_q is None or actual_q is None:
+        return None
+    return max(0.0, float(best_q) - float(actual_q))
 
 
 def _teacher_same_action(local_action, teacher_action) -> bool:
@@ -534,8 +566,9 @@ def _attach_teacher_report_overlays(
                 review_entry["is_equal"] = _teacher_same_action(actual_action, review_entry.get("expected_action"))
                 best_q = review_entry.get("best_q")
                 actual_q = review_entry.get("actual_q")
-                if best_q is not None and actual_q is not None:
-                    review_entry["q_loss"] = max(0.0, float(best_q) - float(actual_q))
+                review_entry["q_loss"] = _q_loss(
+                    best_q, actual_q, review_entry.get("score_semantics")
+                )
         entry.setdefault("teacher_reviews", []).append(review_entry)
         entry.setdefault("teacher_review", review_entry)
 
@@ -785,6 +818,7 @@ _GUI_MORTAL_MODEL_LABELS = {
     "mortal": "V2 candidate",
     "70k": "70k",
     "ext_mortal": "External Mortal",
+    "p4m11_u32": "P4-M11 U32 (policy)",
 }
 
 
@@ -1349,6 +1383,8 @@ async def replay_multi_teacher(
     from replay.api import run_replay_single_raw
     from replay.bot import render_replay_json
 
+    from workbench.runtime.resolver import score_semantics_for
+
     selected_models = [model.strip() for model in model_types if model and model.strip()]
     if not selected_models:
         selected_models = ["ext_mortal", "70k", "mortal"]
@@ -1437,6 +1473,9 @@ async def replay_multi_teacher(
                 "type": model_type,
                 "label": _GUI_MORTAL_MODEL_LABELS.get(model_type, model_type),
                 "checkpoint": str(checkpoints[model_type]),
+                # calibrated_q vs action_score: the panel must not present a
+                # policy-gradient model's action scores as action values.
+                "score_semantics": score_semantics_for(model_type),
             }
             for model_type in selected_models
         ]

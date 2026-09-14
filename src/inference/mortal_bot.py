@@ -25,6 +25,46 @@ MORTAL_DISCARD_ID_TO_TILE = (
 )
 _MORTAL_UNSUPPORTED_ANNOUNCE_EVENTS = {"kakan_accepted"}
 
+# What a model's per-action scores MEAN.  A DQN checkpoint emits an action-value
+# estimate; a direct policy-gradient endpoint emits policy action scores, and a
+# difference between two of those is NOT a benefit loss.  The checkpoint's own
+# contract declares which one it is, so the panel never has to guess.
+SCORE_SEMANTICS_CALIBRATED_Q = "calibrated_q"
+SCORE_SEMANTICS_ACTION_SCORE = "action_score"
+STUDENT_POLICY_CONTRACT_SCHEMA = "keqing.mortal.student_policy_v1"
+
+
+def _model_dimensions(state: dict[str, Any]) -> tuple[int, int, int]:
+    """Read (version, conv_channels, num_blocks) from a standard or student-policy checkpoint.
+
+    Mirrors keqing1_experiment/training/mortal/four_player_native.py::_model_dimensions,
+    the loader the training/eval stack uses on these same files.
+    """
+    cfg = state.get("config")
+    if cfg is not None:
+        return (
+            int(cfg["control"].get("version", 4)),
+            int(cfg["resnet"]["conv_channels"]),
+            int(cfg["resnet"]["num_blocks"]),
+        )
+    contract = state.get("training_contract")
+    if isinstance(contract, dict) and contract.get("schema") == STUDENT_POLICY_CONTRACT_SCHEMA:
+        student = contract["student"]
+        return (
+            int(student.get("version", 4)),
+            int(student["conv_channels"]),
+            int(student["num_blocks"]),
+        )
+    raise KeyError("checkpoint has neither standard config nor student-policy training_contract")
+
+
+def _score_semantics_of(state: dict[str, Any]) -> str:
+    """Which kind of number a checkpoint's per-action output is."""
+    contract = state.get("training_contract")
+    if isinstance(contract, dict) and contract.get("schema") == STUDENT_POLICY_CONTRACT_SCHEMA:
+        return SCORE_SEMANTICS_ACTION_SCORE
+    return SCORE_SEMANTICS_CALIBRATED_Q
+
 
 def sanitize_event_for_mortal(event: dict[str, Any]) -> dict[str, Any] | None:
     event_type = str(event.get("type", ""))
@@ -85,6 +125,8 @@ class MortalReviewBot:
         self.game_state = GameState()
         self.model = shared_model
         self._mortal_engine = shared_mortal_engine
+        # Overwritten from the checkpoint's own contract once it is loaded.
+        self.score_semantics = SCORE_SEMANTICS_CALIBRATED_Q
 
         self._mortal_bot = self._load_native_mortal_bot(
             enable_amp=self._enable_amp,
@@ -199,10 +241,8 @@ class MortalReviewBot:
             return Bot(self._mortal_engine, self.player_id)
 
         state = torch.load(self.model_path, weights_only=True, map_location=torch.device("cpu"))
-        cfg = state["config"]
-        version = int(cfg["control"].get("version", 4))
-        conv_channels = int(cfg["resnet"]["conv_channels"])
-        num_blocks = int(cfg["resnet"]["num_blocks"])
+        version, conv_channels, num_blocks = _model_dimensions(state)
+        self.score_semantics = _score_semantics_of(state)
 
         brain = Brain(version=version, conv_channels=conv_channels, num_blocks=num_blocks).eval()
         dqn = DQN(version=version).eval()

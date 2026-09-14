@@ -104,6 +104,8 @@ export interface TeacherReviewEntry {
   best_q?: number | null;
   best_prob?: number | null;
   q_loss?: number | null;
+  /** calibrated_q（DQN 动作价值）或 action_score（策略梯度动作分数）。 */
+  score_semantics?: string | null;
   top1?: { action: Action; q_value?: number | null; prob?: number | null; rank?: number | null } | null;
   top2?: { action: Action; q_value?: number | null; prob?: number | null; rank?: number | null } | null;
   candidate_count?: number;
@@ -183,6 +185,7 @@ export interface ReplayData {
     type: BotType;
     label: string;
     checkpoint: string;
+    score_semantics?: string | null;
   }>;
   teacher_review_overlays?: TeacherReviewOverlay[];
   teacher_review_overlay?: TeacherReviewOverlay;

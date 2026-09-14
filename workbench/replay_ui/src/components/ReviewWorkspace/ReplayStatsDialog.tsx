@@ -85,6 +85,7 @@ export function ReplayStatsDialog({ data, onClose }: { data: ReplayData; onClose
                   pct: fallbackPct,
                   similarity: null,
                   rating: data.rating,
+                  ratingNotApplicable: false,
                   badMoveRate: null,
                 }]).map((item) => {
                   const pct = item.total ? item.match / item.total * 100 : 0;
@@ -99,7 +100,9 @@ export function ReplayStatsDialog({ data, onClose }: { data: ReplayData; onClose
                         {item.badMoveRate === null || item.badMoveRate === undefined ? '—' : `${item.badMoveRate.toFixed(1)}%`}
                       </td>
                       <td style={{ ...statsTdStyle, textAlign: 'right', fontFamily: 'Menlo, Consolas, monospace' }}>
-                        {item.rating === null || item.rating === undefined ? '—' : item.rating.toFixed(1)}
+                        {item.ratingNotApplicable
+                          ? '不适用'
+                          : item.rating === null || item.rating === undefined ? '—' : item.rating.toFixed(1)}
                       </td>
                       <td style={{ ...statsTdStyle, textAlign: 'right', fontFamily: 'Menlo, Consolas, monospace' }}>{item.match}</td>
                       <td style={{ ...statsTdStyle, textAlign: 'right', fontFamily: 'Menlo, Consolas, monospace' }}>{item.total}</td>

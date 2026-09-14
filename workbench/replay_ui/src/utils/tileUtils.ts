@@ -236,6 +236,7 @@ type TeacherReviewLike = {
   expected_action?: ComparableAction | null;
   is_equal?: boolean | null;
   q_loss?: number | null;
+  score_semantics?: string | null;
   top1?: { action?: ComparableAction | null } | null;
 };
 
@@ -294,7 +295,10 @@ export function isReplayReviewDiffForPlayer(
     return false;
   }
   if (review.is_equal === false) return true;
-  if (typeof review.q_loss === 'number' && Number.isFinite(review.q_loss) && review.q_loss > 1e-9) {
+  // Q 差值只对 calibrated_q 模型有意义；策略梯度端点的 q_loss 不适用
+  // （服务端已置空，这里再挡一次陈旧报告）。
+  if (review.score_semantics !== 'action_score'
+    && typeof review.q_loss === 'number' && Number.isFinite(review.q_loss) && review.q_loss > 1e-9) {
     return true;
   }
 

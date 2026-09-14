@@ -13,6 +13,13 @@ import inference.bot_registry as br
 
 MORTAL_CHECKPOINTS = br.MORTAL_CHECKPOINTS
 SUPPORTED_BOT_NAMES = br.SUPPORTED_BOT_NAMES
+MORTAL_SCORE_SEMANTICS = br.MORTAL_SCORE_SEMANTICS
+SCORE_SEMANTICS_CALIBRATED_Q = br.SCORE_SEMANTICS_CALIBRATED_Q
+SCORE_SEMANTICS_ACTION_SCORE = br.SCORE_SEMANTICS_ACTION_SCORE
+
+
+def score_semantics_for(spec: str) -> str:
+    return br.score_semantics_for(spec)
 
 
 def search_authoritative_checkpoint(relative: str | Path) -> Path | None:

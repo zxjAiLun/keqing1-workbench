@@ -59,14 +59,17 @@ NETWORK_TO_SPEC: Dict[str, str] = {
     "mortal": "mortal",
     "70k": "70k",
     "ext_mortal": "ext_mortal",
+    "p4m11_u32": "p4m11_u32",
 }
 
 # R11-B：Play-with-you 运行时模型目录。只暴露具名 Mortal checkpoints
-# （70k / ext_mortal）；不读 Participants registry，后续从 keqing-data
-# authoritative 扩展时再扩充此目录。
+# （70k / ext_mortal / p4m11_u32）；不读 Participants registry，后续从
+# keqing-data authoritative 扩展时再扩充此目录。
+# p4m11_u32 是 K0 替代候选（Gate A 通过 / Gate B 未通过），可选但**不是**默认。
 PLAYWITHYOU_MODEL_CATALOG: list[dict] = [
     {"model_id": "70k", "label": "70k"},
     {"model_id": "ext_mortal", "label": "ext_mortal"},
+    {"model_id": "p4m11_u32", "label": "P4-M11 U32 (policy)"},
 ]
 _PLAYWITHYOU_MODEL_IDS = {entry["model_id"] for entry in PLAYWITHYOU_MODEL_CATALOG}
 

@@ -30,6 +30,8 @@ export type ReviewModelStatsRow = {
   pct: number;
   similarity: number | null;
   rating: number | null;
+  /** rating 依赖 Q 差值；策略梯度模型的输出是动作分数，该列不适用。 */
+  ratingNotApplicable: boolean;
   badMoveRate: number | null;
 };
 
@@ -60,13 +62,14 @@ export function computeReviewModelStats(
     probScored: number;
     ratingScores: number[];
     similarityScores: number[];
+    ratingNotApplicable: boolean;
   }>();
 
   const ensure = (model: string) => {
     const key = model || 'model';
     let item = stats.get(key);
     if (!item) {
-      item = { model: key, total: 0, match: 0, badMove: 0, probScored: 0, ratingScores: [], similarityScores: [] };
+      item = { model: key, total: 0, match: 0, badMove: 0, probScored: 0, ratingScores: [], similarityScores: [], ratingNotApplicable: false };
       stats.set(key, item);
     }
     return item;
@@ -125,6 +128,13 @@ export function computeReviewModelStats(
         }
       }
 
+      // Rating 是 "实际动作在 Q 分布中的归一化位置"：差值语义。
+      // 直接策略梯度端点的输出是动作分数（logit），归一化位置不是收益损失，
+      // 所以该模型这一列判为不适用，而不是换一个数字继续显示。
+      if (review.score_semantics === 'action_score') {
+        item.ratingNotApplicable = true;
+        continue;
+      }
       if (actualQ === null || qValues.length < 2) continue;
       if (!qValues.some((value) => value === actualQ)) qValues.push(actualQ);
       const minQ = Math.min(...qValues);
@@ -151,6 +161,7 @@ export function computeReviewModelStats(
       probScored: item.probScored,
       pct,
       rating: rating === null ? null : Math.round(rating * 10) / 10,
+      ratingNotApplicable: item.ratingNotApplicable,
       similarity: similarity === null ? null : Math.round(similarity * 10) / 10,
       badMoveRate: item.probScored ? item.badMove / item.probScored * 100 : null,
     };

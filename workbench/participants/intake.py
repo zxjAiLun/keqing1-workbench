@@ -167,6 +167,10 @@ def _final_scores(events: list[dict]) -> list[int]:
         etype = event.get("type")
         if etype == "start_kyoku":
             scores = [int(s) for s in (event.get("scores") or [25000] * 4)]
+        elif etype == "reach_accepted" and scores is not None:
+            actor = event.get("actor")
+            if actor is not None:
+                scores[int(actor)] -= 1000
         elif etype in ("hora", "ryukyoku") and scores is not None:
             deltas = [int(d) for d in (event.get("deltas") or [0, 0, 0, 0])]
             scores = [scores[i] + deltas[i] for i in range(4)]

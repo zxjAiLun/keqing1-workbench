@@ -1,6 +1,17 @@
 import convert.tenhou6_utils as tenhou6_utils
 from convert.tenhou6_utils import _decode_kakan, _result_events, _take_meld_matches_discard, tenhou6_to_mjai_events
+from participants.intake import _final_scores
 from replay.bot import _load_events_from_source
+
+
+def test_final_scores_deduct_accepted_riichi_stick() -> None:
+    events = [
+        {"type": "start_kyoku", "scores": [25000, 25000, 25000, 25000]},
+        {"type": "reach_accepted", "actor": 1},
+        {"type": "hora", "actor": 0, "target": 1, "deltas": [10000, -5000, -4000, 0]},
+    ]
+
+    assert _final_scores(events) == [35000, 19000, 21000, 25000]
 
 
 def test_tenhou6_kakan_marker_can_appear_inside_meld_string() -> None:

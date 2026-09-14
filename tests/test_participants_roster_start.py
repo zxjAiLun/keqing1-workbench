@@ -633,10 +633,13 @@ def test_model_only_launchers_reject_unknown_model(pw_env):
 
 
 def test_playwithyou_models_catalog():
-    """R11-B：catalog 只暴露具名 Mortal checkpoints（70k / ext_mortal），不读 Participants。"""
+    """R11-B：catalog 只暴露具名 Mortal checkpoints，不读 Participants。
+
+    P4-M11 后新增第三个具名条目 p4m11_u32（K0 替代候选，可选但非默认）。
+    """
     from gateway.api.playwithyou import PLAYWITHYOU_MODEL_CATALOG, list_playwithyou_models
 
-    assert {m["model_id"] for m in PLAYWITHYOU_MODEL_CATALOG} == {"70k", "ext_mortal"}
+    assert {m["model_id"] for m in PLAYWITHYOU_MODEL_CATALOG} == {"70k", "ext_mortal", "p4m11_u32"}
     payload = list_playwithyou_models()
     assert payload["models"] == PLAYWITHYOU_MODEL_CATALOG
 

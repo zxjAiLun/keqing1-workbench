@@ -20,6 +20,8 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import threading
+import time
 
 import pytest
 
@@ -274,19 +276,50 @@ def test_review_labels_u32_as_action_scores_and_withholds_q_loss(tmp_path):
 
 PLAY_SEED = 20260915
 PLAY_TURNS = 12
+# bot_driver._call_bot wraps bot.react in asyncio.wait_for(..., timeout=5.0) and
+# substitutes its own fallback action on timeout, on exception, and on an empty
+# return.  A turn that hit any of those is not evidence about the model.
+REACT_TIMEOUT_SECONDS = 5.0
 
 
 class _RecordingBot:
-    """Wrap a runtime bot so the test can see that it was really asked to move."""
+    """Wraps a runtime bot and records the RAW return of every ``react()`` call.
+
+    ``driver.take_turn()`` returns the driver's *post-fallback* action, so matching
+    a discarded tile against it only proves the driver played what the driver
+    chose -- a fallback has a concrete tile too.  The raw record is what can be
+    attributed to the model.
+
+    Decision calls are the ones the driver makes through ``asyncio.to_thread``;
+    event-sync calls run on the loop thread.  That is what ties a recorded call to
+    the turn that awaited it.
+    """
 
     def __init__(self, inner):
         self.inner = inner
-        self.calls: list[tuple[str, object]] = []
+        self.calls: list[dict] = []
 
     def react(self, event, *args, **kwargs):
-        chosen = self.inner.react(event, *args, **kwargs)
-        self.calls.append((str((event or {}).get("type")), chosen))
+        entry = {
+            "event_type": str((event or {}).get("type")),
+            "decision": threading.current_thread() is not threading.main_thread(),
+            "returned": None,
+            "error": None,
+            "seconds": None,
+        }
+        self.calls.append(entry)
+        started = time.perf_counter()
+        try:
+            chosen = self.inner.react(event, *args, **kwargs)
+        except BaseException as exc:  # recorded, then re-raised for the driver
+            entry["error"] = f"{type(exc).__name__}: {exc}"
+            raise
+        entry["seconds"] = time.perf_counter() - started
+        entry["returned"] = chosen
         return chosen
+
+    def decisions(self) -> list[dict]:
+        return [call for call in self.calls if call["decision"]]
 
     def reset(self):
         return self.inner.reset()
@@ -295,21 +328,21 @@ class _RecordingBot:
         return getattr(self.inner, name)
 
 
-async def _drive_u32_hand(turns: int = PLAY_TURNS) -> tuple[object, dict, list]:
+async def _drive_hand(create_inner, *, turns: int = PLAY_TURNS) -> tuple[object, dict, list]:
     """Drive real turns of a 4-bot hand through the battle entry's own driver.
 
-    The replay test above only *reads* stored decisions -- the stored log decides
-    the moves, so it never shows the model moving the game.  This runs the code
-    path `/battle/start_4bot` and `/battle/advance` use: ``BotDriver.take_turn``
-    calls ``bot.react``, validates the returned action against the legal set
-    (``validate_and_apply``) and applies it to ``room.state``, which advances the
-    hand.
+    This runs the code path ``/battle/start_4bot`` and ``/battle/advance`` use:
+    ``BotDriver.take_turn`` calls ``bot.react``, validates the returned action
+    against the legal set (``validate_and_apply``) and applies it to
+    ``room.state``, which advances the hand.
+
+    ``create_inner(seat)`` supplies the underlying bot, so the same drive path can
+    be pointed at U32 or at a stub for a control.
     """
     import asyncio
 
     from gateway.battle import BattleConfig, BattleManager
     from gateway.bot_driver import BotDriver
-    from inference.bot_registry import create_runtime_bot
 
     manager = BattleManager()
     config = BattleConfig(
@@ -323,18 +356,7 @@ async def _drive_u32_hand(turns: int = PLAY_TURNS) -> tuple[object, dict, list]:
     manager.start_kyoku(room, seed=PLAY_SEED)
     room.bot_event_cursor = {}
 
-    wrappers = {}
-    for seat in range(4):
-        bot = create_runtime_bot(
-            bot_name=MODEL_ID,
-            player_id=seat,
-            project_root=REPO_ROOT,
-            device="cuda",
-            verbose=False,
-        )
-        bot.reset()
-        wrappers[seat] = _RecordingBot(bot)
-
+    wrappers = {seat: _RecordingBot(create_inner(seat)) for seat in range(4)}
     driver = BotDriver(manager, lambda seat: wrappers[seat])
     # Feeds start_game/start_kyoku through the real event path, so the engine is
     # loaded here rather than inside take_turn's 5s react timeout.
@@ -347,13 +369,16 @@ async def _drive_u32_hand(turns: int = PLAY_TURNS) -> tuple[object, dict, list]:
         actor = room.state.actor_to_move
         if actor is None:
             break
-        before = len(room.events)
+        recorder = wrappers[actor]
+        before_calls = len(recorder.decisions())
+        before_events = len(room.events)
         chosen = await driver.take_turn(room, actor)
-        new_events = room.events[before:]
+        new_events = room.events[before_events:]
         transcript.append(
             {
                 "actor": actor,
                 "chosen": chosen,
+                "decisions": recorder.decisions()[before_calls:],
                 "new_events": new_events,
                 "discards": [e.get("pai") for e in new_events if e.get("type") == "dahai"],
             }
@@ -363,13 +388,106 @@ async def _drive_u32_hand(turns: int = PLAY_TURNS) -> tuple[object, dict, list]:
     return room, wrappers, transcript
 
 
+def _play_attribution_problems(transcript: list[dict], *, min_attributed: int = 1) -> list[str]:
+    """Why these recorded turns do NOT prove U32 moved the hand.
+
+    Every check below reads the model's *own* return out of the recorder.  The
+    driver's post-fallback action is never used as the comparator, because a
+    fallback carries a concrete tile of its own -- matching against it would pass
+    even if the model crashed on every single decision.
+
+    ``take_turn``'s return value is not enough on its own either: it is
+    ``_call_bot``'s result, so it equals the model's return even when
+    ``validate_and_apply`` later substitutes a different tile.  That case is caught
+    by comparing the return against the tile that actually reached the table.
+
+    Turns where nothing reached the table are not attributed: declining an offer
+    (``{\"type\": \"none\"}``) or having nothing to answer (``None`` on a ``none``
+    event) is legitimate model behaviour, and there is simply no action to attribute.
+    """
+    if not transcript:
+        return ["the driver produced no turns"]
+
+    problems: list[str] = []
+    attributed = 0
+    for index, turn in enumerate(transcript):
+        decisions = turn["decisions"]
+        if len(decisions) != 1:
+            problems.append(f"turn {index}: {len(decisions)} model decision calls, expected exactly 1")
+            continue
+
+        call = decisions[0]
+        # A crash or a timeout anywhere means the driver substituted its own action,
+        # whether or not this particular turn changed the table.
+        if call["error"] is not None:
+            problems.append(f"turn {index}: the model raised, so the driver's fallback was applied ({call['error']})")
+            continue
+        if call["seconds"] is None:
+            problems.append(f"turn {index}: react() had not finished when the turn ended (timeout fallback)")
+            continue
+        if call["seconds"] >= REACT_TIMEOUT_SECONDS:
+            problems.append(
+                f"turn {index}: react() took {call['seconds']:.1f}s, at or past the {REACT_TIMEOUT_SECONDS}s timeout"
+            )
+            continue
+
+        if not turn["discards"]:
+            continue  # nothing reached the table; nothing to attribute
+
+        returned = call["returned"]
+        if not isinstance(returned, dict) or not returned.get("type"):
+            problems.append(
+                f"turn {index}: the model returned nothing usable ({returned!r}) yet a tile reached the table, "
+                "so the driver chose that tile"
+            )
+            continue
+
+        chosen = turn["chosen"] or {}
+        if chosen.get("type") != returned.get("type") or chosen.get("pai") != returned.get("pai"):
+            problems.append(
+                f"turn {index}: the driver reported {chosen.get('type')}/{chosen.get('pai')} "
+                f"but the model returned {returned.get('type')}/{returned.get('pai')}"
+            )
+            continue
+
+        pai = returned.get("pai")
+        if pai is not None and pai in turn["discards"]:
+            attributed += 1
+        else:
+            problems.append(
+                f"turn {index}: the model asked for {pai!r} but {turn['discards']!r} reached the table "
+                "(an illegal or unrecognised action was substituted)"
+            )
+
+    if attributed < min_attributed:
+        problems.append(
+            f"only {attributed} turn(s) had a table tile matching what the model itself returned "
+            f"(need {min_attributed})"
+        )
+    return problems
+
+
+def _make_u32(seat: int):
+    from inference.bot_registry import create_runtime_bot
+
+    bot = create_runtime_bot(
+        bot_name=MODEL_ID,
+        player_id=seat,
+        project_root=REPO_ROOT,
+        device="cuda",
+        verbose=False,
+    )
+    bot.reset()
+    return bot
+
+
 @pytest.fixture(scope="module")
 def _played_hand():
     import asyncio
 
     _require_cuda()
     _require_bundle(MODEL_ID)
-    return asyncio.run(_drive_u32_hand())
+    return asyncio.run(_drive_hand(_make_u32))
 
 
 def test_u32_is_selectable_in_the_play_entry():
@@ -384,122 +502,75 @@ def test_u32_is_selectable_in_the_play_entry():
 def test_u32_actions_are_executed_and_advance_the_hand(_played_hand):
     room, wrappers, transcript = _played_hand
 
-    # the model was actually asked to move (through the real event path)
+    # the model was really asked to move, through the real event path
     for seat, bot in wrappers.items():
         assert bot.calls, f"seat {seat} was never asked to act"
     assert any(
-        event_type == "start_game"
-        for bot in wrappers.values()
-        for event_type, _ in bot.calls
+        call["event_type"] == "start_game" for bot in wrappers.values() for call in bot.calls
     ), "the hand never reached the bots through start_game"
 
     assert transcript, "the driver produced no turns"
 
-    # at least one turn ended with a discard that the driver applied, i.e. the
-    # model's action reached room.state and moved the hand on
-    moved = [turn for turn in transcript if turn["discards"]]
-    assert moved, "no turn produced a discard; the action was never executed"
-
-    # the hand advanced: the event stream grew and the discard count accumulated
+    # the hand advanced: the event stream grew and discards accumulated
     assert len(room.events) > 0
-    total_discards = sum(len(turn["discards"]) for turn in transcript)
-    assert total_discards >= 1
     assert sum(len(turn["new_events"]) for turn in transcript) > 0
+    assert any(turn["discards"] for turn in transcript), "no turn produced a discard"
 
-    # it was the model's decision that was applied, not the driver's fallback:
-    # the fallback only runs when react() raises or exceeds 5s, and it always
-    # returns a legal action, so its absence has to be shown positively.  A
-    # discard whose pai equals the pai the model asked for can only come from the
-    # model -- the fallback would have picked the first legal pai instead.
-    discarding_turns = [turn for turn in transcript if turn["discards"]]
-    for turn in discarding_turns:
-        assert turn["chosen"] is not None
-        assert turn["chosen"].get("type") != "none"
-    exact = [
-        turn
-        for turn in discarding_turns
-        if turn["chosen"].get("pai") in turn["discards"]
-    ]
-    assert exact, (
-        "the applied discards never matched the pai the model asked for: "
-        f"chosen={[t['chosen'].get('pai') for t in discarding_turns]} "
-        f"applied={[t['discards'] for t in discarding_turns]}"
-    )
+    # attribution: this reads the RAW model returns AND the tiles that actually
+    # reached the table, so neither a driver fallback nor an illegal-action
+    # substitution can satisfy it (see test_play_attribution_rejects_a_driver_fallback)
+    problems = _play_attribution_problems(transcript, min_attributed=2)
+    assert problems == [], "the play smoke is not attributable to U32:\n  - " + "\n  - ".join(problems)
 
 
-def test_driver_honours_the_requested_tile_and_substitutes_when_there_is_none():
-    """What the play smoke above may and may not claim (no model, no CUDA).
+class _RaisingBot:
+    """A bot whose *decision* calls always raise, so the driver must fall back.
 
-    Measured here: at a discard decision the driver discards SOMETHING even when
-    the bot returns ``{"type": "none"}`` -- ``action_dict_to_spec`` reads that as a
-    discard and ``validate_and_apply`` then falls back to ``legal_dahai[0]``.  So
-    "a discard appeared and the hand moved on" is NOT evidence that the model's
-    decision ran; the attributable evidence is that the applied tile equals the
-    tile the model asked for.  Both halves are pinned here so the smoke's claim
-    cannot silently become the weaker one.
+    Event-sync calls run on the loop thread and must not raise, or the driver
+    crashes before it ever reaches a decision.
+    """
+
+    def __init__(self):
+        self.forced_errors = 0
+
+    def react(self, event, *args, **kwargs):
+        if threading.current_thread() is not threading.main_thread():
+            self.forced_errors += 1
+            raise RuntimeError("forced decision failure (negative control)")
+        return {"type": "none"}
+
+    def reset(self):
+        return None
+
+
+def test_play_attribution_rejects_a_driver_fallback():
+    """Negative control for the play smoke (no model, no CUDA, runs in CI).
+
+    Forces every decision call to raise and lets the real driver apply its own
+    fallback.  The hand still advances and tiles still reach the table, so an
+    acceptance check that compares against ``take_turn``'s return value passes
+    here -- that is exactly the hole this control closes.  The shared acceptance
+    function must fail instead.
     """
     import asyncio
 
-    from gateway.battle import BattleConfig, BattleManager
-    from gateway.bot_driver import BotDriver
+    bots: dict[int, _RaisingBot] = {}
 
-    def _run_turn(request_index: int | None) -> tuple[str | None, str | None]:
-        """Play one turn; return (tile the stub asked for, tile actually discarded)."""
-        manager = BattleManager()
-        room = manager.create_room(
-            BattleConfig(
-                player_count=4,
-                players=[{"id": f"bot_{i}", "name": f"P{i}", "type": "bot"} for i in range(4)],
-                game_length="tonpu",
-                allow_west_round=False,
-            ),
-            seed=PLAY_SEED,
-        )
-        room.human_player_id = -1
-        manager.start_kyoku(room, seed=PLAY_SEED)
-        room.bot_event_cursor = {}
-        asked: dict[str, str | None] = {"pai": None}
+    def _make(seat: int):
+        bots[seat] = _RaisingBot()
+        return bots[seat]
 
-        class _StubBot:
-            def react(self, event, *args, **kwargs):
-                if request_index is None:
-                    return {"type": "none"}
-                actor = room.state.actor_to_move
-                hand = sorted(room.state.players[actor].hand)
-                if not hand:
-                    return {"type": "none"}
-                tile = hand[0] if request_index == 0 else hand[-1]
-                asked["pai"] = tile
-                return {"type": "dahai", "actor": actor, "pai": tile}
+    room, _wrappers, transcript = asyncio.run(_drive_hand(_make, turns=4))
+    forced = sum(bot.forced_errors for bot in bots.values())
 
-            def reset(self):
-                return None
-
-        driver = BotDriver(manager, lambda _seat: _StubBot())
-        driver.sync_all_bots(room)
-
-        async def _drive() -> str | None:
-            actor = room.state.actor_to_move
-            before = len(room.events)
-            await driver.take_turn(room, actor)
-            discards = [e.get("pai") for e in room.events[before:] if e.get("type") == "dahai"]
-            return discards[0] if discards else None
-
-        return asked["pai"], asyncio.run(_drive())
-
-    # (a) asking for nothing still produces a discard -> the weak claim is vacuous
-    asked_none, applied_none = _run_turn(None)
-    assert asked_none is None
-    assert applied_none is not None, "the driver no longer substitutes a discard; re-check the trap"
-
-    # (b) naming a tile does put *that* tile on the table, and two different
-    #     requests produce two different discards -- so the strong claim holds
-    asked_first, applied_first = _run_turn(0)
-    asked_last, applied_last = _run_turn(-1)
-    assert asked_first is not None and asked_last is not None
-    assert applied_first == asked_first, (applied_first, asked_first)
-    assert applied_last == asked_last, (applied_last, asked_last)
-    assert applied_first != applied_last, (
-        "both requests produced the same discard, so the driver is choosing the tile "
-        "and the play smoke's pai match would be meaningless"
+    # the control is only meaningful if the fallback actually ran for every turn
+    assert forced == len(transcript) > 0, (forced, len(transcript))
+    assert any(turn["discards"] for turn in transcript), (
+        "the fallback did not move the hand, so this control does not exercise the hole"
     )
+    assert len(room.events) > 0
+
+    problems = _play_attribution_problems(transcript)
+    assert problems, "the acceptance function accepted a pure driver fallback"
+    assert any("the model raised" in problem for problem in problems)
+    assert any("had a table tile matching" in problem for problem in problems)

@@ -31,6 +31,14 @@ export const BOT_CATALOG: BotCatalogEntry[] = [
     description: 'artifacts/external_mortal_20240308_best_min.pth。外部 Mortal 参考权重。',
   },
   {
+    value: 'p4m11_u32',
+    label: 'P4-M11 U32 (policy)',
+    shortLabel: 'U32',
+    badge: 'policy 候选',
+    description:
+      'P4-M11 直连策略梯度端点（U32）。输出是 policy action score（非校准 Q），Review 不显示收益损失；候选，不是默认模型。',
+  },
+  {
     value: 'rulebase',
     label: 'rulebase',
     shortLabel: '基线',
@@ -39,7 +47,7 @@ export const BOT_CATALOG: BotCatalogEntry[] = [
   },
 ];
 
-const GUI_MODEL_ORDER: BotType[] = ['ext_mortal', '70k', 'mortal'];
+const GUI_MODEL_ORDER: BotType[] = ['ext_mortal', '70k', 'mortal', 'p4m11_u32'];
 
 export const GUI_BOT_CATALOG: BotCatalogEntry[] = BOT_CATALOG
   .filter((entry) => entry.value !== 'rulebase')
@@ -51,6 +59,7 @@ export const BOT_CHECKPOINT_DEFAULTS: Record<BotType, string> = {
   mortal: 'artifacts/experiments/model_pool_2026_07/V2_population_mixed_v4_warmstart_2026_07/checkpoints/mortal_74000.pth',
   '70k': 'artifacts/mortal_training/checkpoints/mortal_default_70k_promoted_candidate.pth',
   ext_mortal: 'artifacts/external_mortal_20240308_best_min.pth',
+  p4m11_u32: 'mortal/authoritative/P4M11_U32_2026_09/models/P4M11_U32/U32_eval_weights.pth',
   rulebase: '',
 };
 

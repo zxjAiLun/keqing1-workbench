@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
 import threading
 import time
 
@@ -39,6 +40,7 @@ from workbench.replay.server import (
     _build_runtime_teacher_report,
     _load_teacher_report_entries,
     _q_loss,
+    _review_checkpoint_for_bot_type,
 )
 from workbench.runtime.resolver import (
     MORTAL_CHECKPOINTS,
@@ -135,6 +137,38 @@ def test_p4m11_u32_is_registered_as_a_candidate_and_keeps_k0_default():
     assert MORTAL_CHECKPOINTS[MODEL_ID].name == "U32_eval_weights.pth"
     for spec in ("mortal", "70k", "ext_mortal", "weak", "weak_mortal"):
         assert MORTAL_CHECKPOINTS[spec] != MORTAL_CHECKPOINTS[MODEL_ID]
+
+
+def test_u32_is_selectable_in_the_gui_model_picker_but_is_not_the_default():
+    """The product's model picker is a second, hand-maintained list.
+
+    A model can therefore be fully wired server-side and still be unreachable
+    from the UI -- which is what happened to U32: ``_GUI_MORTAL_MODEL_LABELS``
+    (the server's allow-list for ``POST /api/replay/multi-teacher``) knew it,
+    while the GUI catalog did not, so no review could be launched for it.
+    Lock the two lists together instead of trusting them to agree.
+    """
+    catalog_ts = (REPO_ROOT / "workbench" / "replay_ui" / "src" / "utils" / "botCatalog.ts").read_text(
+        encoding="utf-8"
+    )
+    bot_types_ts = (REPO_ROOT / "workbench" / "replay_ui" / "src" / "types" / "bot.ts").read_text(
+        encoding="utf-8"
+    )
+    listed = set(re.findall(r"value:\s*'([a-z0-9_]+)'", catalog_ts))
+    missing = sorted(set(_GUI_MORTAL_MODEL_LABELS) - listed)
+    assert not missing, f"review models missing from the GUI picker: {missing}"
+    assert f"'{MODEL_ID}'" in bot_types_ts, "the GUI BotType union does not know U32"
+
+    # selectable, but still a candidate: the defaults must not move onto U32
+    assert "DEFAULT_BOT_TYPE: BotType = 'mortal'" in catalog_ts
+    default_selection = re.search(r"useState<BotType\[\]>\(\[(.*?)\]\)", (
+        REPO_ROOT / "workbench" / "replay_ui" / "src" / "components" / "Upload" / "UploadForm.tsx"
+    ).read_text(encoding="utf-8"))
+    assert default_selection is not None
+    assert MODEL_ID not in default_selection.group(1)
+
+    # the picker's value is what the review endpoint hands to the checkpoint resolver
+    assert _review_checkpoint_for_bot_type(MODEL_ID) == _u32_checkpoint()
 
 
 def test_p4m11_u32_resolves_to_the_frozen_export():

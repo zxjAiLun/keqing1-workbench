@@ -5,7 +5,7 @@ import { fetchWithTimeout } from "./battleApi";
 
 const BASE = "/api/battle/playwithyou";
 
-export type NetworkId = "none" | "mortal" | "70k" | "ext_mortal" | "custom";
+export type NetworkId = "none" | "mortal" | "70k" | "ext_mortal" | "p4m11_u32" | "custom";
 export type SpeedId = "slow" | "normal" | "fast" | "turbo";
 export type DeviceId = "cuda" | "cpu";
 

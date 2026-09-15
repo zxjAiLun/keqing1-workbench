@@ -9,6 +9,11 @@ Delivery scope for this integration:
   it, because its output is a policy action score, not a calibrated Q.
 
 U32 is a candidate: it must not take the default or any alias.
+
+The play smoke at the bottom drives the *battle* entry (the one
+``/battle/start_4bot`` and ``/battle/advance`` use) rather than the stored-replay
+review path, so it shows the model moving a live hand instead of only reading
+stored decisions.
 """
 from __future__ import annotations
 
@@ -261,3 +266,240 @@ def test_review_labels_u32_as_action_scores_and_withholds_q_loss(tmp_path):
     control_entries = _report_entries(control, tmp_path, "70k")
     assert all(entry["score_semantics"] == SCORE_SEMANTICS_CALIBRATED_Q for entry in control_entries)
     assert any(entry["q_loss"] is not None for entry in control_entries)
+
+
+# --------------------------------------------------------------------------
+# 6. the PLAY entry: U32's action is executed and the hand moves on
+# --------------------------------------------------------------------------
+
+PLAY_SEED = 20260915
+PLAY_TURNS = 12
+
+
+class _RecordingBot:
+    """Wrap a runtime bot so the test can see that it was really asked to move."""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.calls: list[tuple[str, object]] = []
+
+    def react(self, event, *args, **kwargs):
+        chosen = self.inner.react(event, *args, **kwargs)
+        self.calls.append((str((event or {}).get("type")), chosen))
+        return chosen
+
+    def reset(self):
+        return self.inner.reset()
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+
+async def _drive_u32_hand(turns: int = PLAY_TURNS) -> tuple[object, dict, list]:
+    """Drive real turns of a 4-bot hand through the battle entry's own driver.
+
+    The replay test above only *reads* stored decisions -- the stored log decides
+    the moves, so it never shows the model moving the game.  This runs the code
+    path `/battle/start_4bot` and `/battle/advance` use: ``BotDriver.take_turn``
+    calls ``bot.react``, validates the returned action against the legal set
+    (``validate_and_apply``) and applies it to ``room.state``, which advances the
+    hand.
+    """
+    import asyncio
+
+    from gateway.battle import BattleConfig, BattleManager
+    from gateway.bot_driver import BotDriver
+    from inference.bot_registry import create_runtime_bot
+
+    manager = BattleManager()
+    config = BattleConfig(
+        player_count=4,
+        players=[{"id": f"bot_{i}", "name": f"{MODEL_ID}-{i + 1}号机", "type": "bot"} for i in range(4)],
+        game_length="tonpu",
+        allow_west_round=False,
+    )
+    room = manager.create_room(config, seed=PLAY_SEED)
+    room.human_player_id = -1  # no human seat, same as /start_4bot
+    manager.start_kyoku(room, seed=PLAY_SEED)
+    room.bot_event_cursor = {}
+
+    wrappers = {}
+    for seat in range(4):
+        bot = create_runtime_bot(
+            bot_name=MODEL_ID,
+            player_id=seat,
+            project_root=REPO_ROOT,
+            device="cuda",
+            verbose=False,
+        )
+        bot.reset()
+        wrappers[seat] = _RecordingBot(bot)
+
+    driver = BotDriver(manager, lambda seat: wrappers[seat])
+    # Feeds start_game/start_kyoku through the real event path, so the engine is
+    # loaded here rather than inside take_turn's 5s react timeout.
+    driver.sync_all_bots(room)
+
+    transcript: list[dict] = []
+    for _ in range(turns):
+        if room.phase != "playing":
+            break
+        actor = room.state.actor_to_move
+        if actor is None:
+            break
+        before = len(room.events)
+        chosen = await driver.take_turn(room, actor)
+        new_events = room.events[before:]
+        transcript.append(
+            {
+                "actor": actor,
+                "chosen": chosen,
+                "new_events": new_events,
+                "discards": [e.get("pai") for e in new_events if e.get("type") == "dahai"],
+            }
+        )
+        await asyncio.sleep(0)
+
+    return room, wrappers, transcript
+
+
+@pytest.fixture(scope="module")
+def _played_hand():
+    import asyncio
+
+    _require_cuda()
+    _require_bundle(MODEL_ID)
+    return asyncio.run(_drive_u32_hand())
+
+
+def test_u32_is_selectable_in_the_play_entry():
+    """`/battle/start_4bot` validates bot_model against this set."""
+    from gateway.api.battle import SUPPORTED_BOT_MODELS
+
+    assert MODEL_ID in SUPPORTED_BOT_MODELS
+    # and it is still not the default this entry falls back to
+    assert "mortal" in SUPPORTED_BOT_MODELS
+
+
+def test_u32_actions_are_executed_and_advance_the_hand(_played_hand):
+    room, wrappers, transcript = _played_hand
+
+    # the model was actually asked to move (through the real event path)
+    for seat, bot in wrappers.items():
+        assert bot.calls, f"seat {seat} was never asked to act"
+    assert any(
+        event_type == "start_game"
+        for bot in wrappers.values()
+        for event_type, _ in bot.calls
+    ), "the hand never reached the bots through start_game"
+
+    assert transcript, "the driver produced no turns"
+
+    # at least one turn ended with a discard that the driver applied, i.e. the
+    # model's action reached room.state and moved the hand on
+    moved = [turn for turn in transcript if turn["discards"]]
+    assert moved, "no turn produced a discard; the action was never executed"
+
+    # the hand advanced: the event stream grew and the discard count accumulated
+    assert len(room.events) > 0
+    total_discards = sum(len(turn["discards"]) for turn in transcript)
+    assert total_discards >= 1
+    assert sum(len(turn["new_events"]) for turn in transcript) > 0
+
+    # it was the model's decision that was applied, not the driver's fallback:
+    # the fallback only runs when react() raises or exceeds 5s, and it always
+    # returns a legal action, so its absence has to be shown positively.  A
+    # discard whose pai equals the pai the model asked for can only come from the
+    # model -- the fallback would have picked the first legal pai instead.
+    discarding_turns = [turn for turn in transcript if turn["discards"]]
+    for turn in discarding_turns:
+        assert turn["chosen"] is not None
+        assert turn["chosen"].get("type") != "none"
+    exact = [
+        turn
+        for turn in discarding_turns
+        if turn["chosen"].get("pai") in turn["discards"]
+    ]
+    assert exact, (
+        "the applied discards never matched the pai the model asked for: "
+        f"chosen={[t['chosen'].get('pai') for t in discarding_turns]} "
+        f"applied={[t['discards'] for t in discarding_turns]}"
+    )
+
+
+def test_driver_honours_the_requested_tile_and_substitutes_when_there_is_none():
+    """What the play smoke above may and may not claim (no model, no CUDA).
+
+    Measured here: at a discard decision the driver discards SOMETHING even when
+    the bot returns ``{"type": "none"}`` -- ``action_dict_to_spec`` reads that as a
+    discard and ``validate_and_apply`` then falls back to ``legal_dahai[0]``.  So
+    "a discard appeared and the hand moved on" is NOT evidence that the model's
+    decision ran; the attributable evidence is that the applied tile equals the
+    tile the model asked for.  Both halves are pinned here so the smoke's claim
+    cannot silently become the weaker one.
+    """
+    import asyncio
+
+    from gateway.battle import BattleConfig, BattleManager
+    from gateway.bot_driver import BotDriver
+
+    def _run_turn(request_index: int | None) -> tuple[str | None, str | None]:
+        """Play one turn; return (tile the stub asked for, tile actually discarded)."""
+        manager = BattleManager()
+        room = manager.create_room(
+            BattleConfig(
+                player_count=4,
+                players=[{"id": f"bot_{i}", "name": f"P{i}", "type": "bot"} for i in range(4)],
+                game_length="tonpu",
+                allow_west_round=False,
+            ),
+            seed=PLAY_SEED,
+        )
+        room.human_player_id = -1
+        manager.start_kyoku(room, seed=PLAY_SEED)
+        room.bot_event_cursor = {}
+        asked: dict[str, str | None] = {"pai": None}
+
+        class _StubBot:
+            def react(self, event, *args, **kwargs):
+                if request_index is None:
+                    return {"type": "none"}
+                actor = room.state.actor_to_move
+                hand = sorted(room.state.players[actor].hand)
+                if not hand:
+                    return {"type": "none"}
+                tile = hand[0] if request_index == 0 else hand[-1]
+                asked["pai"] = tile
+                return {"type": "dahai", "actor": actor, "pai": tile}
+
+            def reset(self):
+                return None
+
+        driver = BotDriver(manager, lambda _seat: _StubBot())
+        driver.sync_all_bots(room)
+
+        async def _drive() -> str | None:
+            actor = room.state.actor_to_move
+            before = len(room.events)
+            await driver.take_turn(room, actor)
+            discards = [e.get("pai") for e in room.events[before:] if e.get("type") == "dahai"]
+            return discards[0] if discards else None
+
+        return asked["pai"], asyncio.run(_drive())
+
+    # (a) asking for nothing still produces a discard -> the weak claim is vacuous
+    asked_none, applied_none = _run_turn(None)
+    assert asked_none is None
+    assert applied_none is not None, "the driver no longer substitutes a discard; re-check the trap"
+
+    # (b) naming a tile does put *that* tile on the table, and two different
+    #     requests produce two different discards -- so the strong claim holds
+    asked_first, applied_first = _run_turn(0)
+    asked_last, applied_last = _run_turn(-1)
+    assert asked_first is not None and asked_last is not None
+    assert applied_first == asked_first, (applied_first, asked_first)
+    assert applied_last == asked_last, (applied_last, asked_last)
+    assert applied_first != applied_last, (
+        "both requests produced the same discard, so the driver is choosing the tile "
+        "and the play smoke's pai match would be meaningless"
+    )

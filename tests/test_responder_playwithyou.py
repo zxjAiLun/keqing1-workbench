@@ -8,6 +8,10 @@ start (see issue: "开局后三个ai立即全部掉线"):
      every bot simultaneously at game start.
   2. Init must emit start_kyoku with kyoku 1-indexed (BoundedU8<1,4>) and raw
      point totals (e.g. 25000), not the 0-indexed seed value or *100.
+  3. Opponent discards must read tsumogiri from the tag's letter case
+     (lowercase = tsumogiri, uppercase = tedashi).  The responder had this
+     inverted until 2026-09-15, which fed every gateway-connected model a
+     flipped tedashi/tsumogiri discard history.
 
 The responder module is pure Python (no torch), so this runs without the model.
 """
@@ -283,3 +287,44 @@ def test_reach_step_missing_discard_uses_legal_fallback(monkeypatch):
         )
     )
     assert sent_to_tenhou == [{"tag": "D", "p": 4}]
+
+
+# --- 对手弃牌大小写 = 手切/摸切（2026-09-15 呼出与 Review 分歧的根因回归）---
+#
+# 下面每个 tag 都取自 2026-09-15 真实呼出会话
+# （keqing-data/logs/playwithyou/1789464804-27836ebec24a.log 的原始 websocket
+# 帧），并与同局 tenhou6 牌谱逐条对齐：小写 = 摸切（tsumogiri=True），
+# 大写 = 手切（tsumogiri=False）；同局 582 次弃牌的对手副本 873/873 无例外。
+# 注意第 46 步（碰三万后弃八万）正落在这条路径上。
+#
+# 自己的弃牌不同：天凤固定回传大写 `D<物理编号>`（同局 289 个自己副本全是大写，
+# 其中 114 次其实是摸切），所以自己那条只能用物理编号判断，不能看大小写。
+OPPONENT_DISCARD_FRAMES = (
+    ({"tag": "e2"}, 1, "1m", True),    # 下家摸切一万
+    ({"tag": "f43"}, 2, "2p", True),   # 对家摸切二筒
+    ({"tag": "F117"}, 2, "W", False),  # 对家手切西
+    ({"tag": "E116"}, 1, "W", False),  # 手切西（与下行 G116 是同一事件的两个副本；
+    ({"tag": "G116"}, 3, "W", False),  #  字母按接收者重编号：同一张牌=1号位/3号位）
+)
+
+
+def test_opponent_discard_case_marks_tsumogiri_for_real_frames():
+    for message, actor, pai, tsumogiri in OPPONENT_DISCARD_FRAMES:
+        state = State(name="NoName-1", room="L2147_9")
+        sent = _run(responder.Dahai().process, state, message)
+        assert len(sent) == 1, message
+        event = sent[0]
+        assert (event["type"], event["actor"], event["pai"]) == ("dahai", actor, pai), message
+        assert event["tsumogiri"] is tsumogiri, message
+
+
+def test_own_discard_tsumogiri_still_reads_the_physical_tile_index():
+    for tag, hand, expected in (
+        ({"tag": "D28"}, [101, 28], True),    # 打出刚摸进的 8m → 摸切
+        ({"tag": "D101"}, [101, 28], False),  # 手切 8s
+    ):
+        state = State(name="NoName-1", room="L2147_9")
+        state.hand = list(hand)
+        sent = _run(responder.Dahai().process, state, tag)
+        assert sent[0]["tsumogiri"] is expected, tag
+        assert state.hand == [t for t in hand if t != int(tag["tag"][1:])], tag

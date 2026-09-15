@@ -418,7 +418,11 @@ class Dahai(Base):
         actor = ord(str.upper(tag[0])) - ord('D')
         index = int(tag[1:])
         pai = tenhou_to_mjai_one(index)
-        tsumogiri = str.isupper(tag[0]) if actor != 0 else index == state.hand[-1]
+        # 天凤用字母大小写区分**对手**的弃牌方式：小写=摸切，大写=手切
+        # （回归样例见 tests/test_responder_playwithyou.py，取自 2026-09-15
+        # 真实呼出会话的原始帧）。自己那一条天凤固定回传大写 D<物理编号>，
+        # 摸切只能用物理编号是否等于最后摸牌来判断，不能看大小写。
+        tsumogiri = str.islower(tag[0]) if actor != 0 else index == state.hand[-1]
         possible_actions = []
 
         sent = {

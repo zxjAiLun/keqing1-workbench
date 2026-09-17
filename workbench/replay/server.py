@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 import numpy as np
 from pathlib import Path
@@ -121,6 +122,7 @@ if _REACT_DIST.exists():
 # ========== 存储相关 ==========
 
 from replay.storage import get_storage
+from workbench.runtime.resolver import data_path
 
 
 def _normalize_replay_events(events: list[dict] | None) -> list[dict]:
@@ -1570,6 +1572,102 @@ async def list_teacher_reports(
             "model_tags": tags,
             "sources": sources,
             "reports": reports,
+        }
+    )
+
+
+@app.post("/api/teacher-reports/import", response_class=JSONResponse)
+async def import_teacher_reports(
+    urls: Annotated[str, Form()] = "",
+    replay_id: Annotated[str, Form()] = "",
+    player_id: Annotated[int, Form()] = -1,
+):
+    """把跑谱报告链接归档（牌谱积累的主要入口）。
+
+    urls：一行一个链接（也容忍空格/逗号分隔）；同一份报告重复贴只会累计引用。
+    replay_id：可选，给定则把报告挂到该牌谱名下（写 replay 目录副本 + 登记引用）；
+    未给或该牌谱不存在时仅归档，``orphan`` 标记为 true。此时重放该局拿到的
+    报告会靠内容指纹自动归并到同一份，不会重复占盘。
+    player_id：可选，用于覆盖报告里声明的视角（默认沿用报告自身）。
+    """
+    from replay import teacher_reports as archive
+    from replay.external_reports import resolve_external_report_url
+
+    tokens = [token for token in re.split(r"[\s,;]+", urls or "") if token]
+    if not tokens:
+        return JSONResponse(status_code=400, content={"error": "请至少填写一个报告链接"})
+
+    replay_exists = bool(replay_id) and (data_path("replays") / replay_id).is_dir()
+    storage = get_storage() if replay_exists else None
+
+    results: list[dict] = []
+    ok_count = 0
+    for token in tokens:
+        try:
+            kind = "naga" if "naga" in token.lower() else "mortal"
+            resolved = resolve_external_report_url(token, kind)
+            raw = fetch_external_raw_reports({kind: resolved})[kind]
+        except ValueError as exc:
+            results.append({"url": token, "status": "error", "error": str(exc)})
+            continue
+        except Exception as exc:  # 网络/解析失败不阻断其余链接
+            results.append({"url": token, "status": "error", "error": f"获取失败：{exc}"})
+            continue
+
+        review = raw.get("review") if isinstance(raw.get("review"), dict) else {}
+        model_tag = str(review.get("model_tag") or ("NAGA" if kind == "naga" else "Mortal"))
+        if not model_tag.startswith(("Mortal ", "NAGA ")):
+            model_tag = f"{kind.capitalize()} {model_tag}"
+        # 报告自身的视角优先；玩家用 player_id 显式覆盖时以显式值为准
+        report_player_id = raw.get("player_id")
+        effective_player_id = player_id if player_id >= 0 else report_player_id
+
+        entry = archive.archive_teacher_report(
+            raw,
+            source=kind,
+            source_url=resolved,
+            model_tag=model_tag,
+            player_id=effective_player_id if effective_player_id is not None else report_player_id,
+            replay_id=replay_id or None,
+        )
+        copied = None
+        if replay_exists:
+            copied = archive.write_replay_report_copy(
+                raw,
+                replay_id=replay_id,
+                label=model_tag,
+                player_id=int(effective_player_id if effective_player_id is not None else 0),
+            )
+        if storage is not None:
+            meta = storage.load_meta(replay_id) or {}
+            links = dict(meta.get("external_review_links") or {})
+            links[kind] = resolved
+            storage.update_meta(replay_id, {"external_review_links": links})
+
+        ok_count += 1
+        results.append(
+            {
+                "url": token,
+                "status": "archived",
+                "report_id": entry["report_id"],
+                "model_tag": entry["model_tag"],
+                "player_id": entry["player_id"],
+                "kyoku_count": entry["kyoku_count"],
+                "decision_count": entry["decision_count"],
+                "replay_ids": entry["replay_ids"],
+                "copied_to": str(copied) if copied else "",
+            }
+        )
+
+    orphan = bool(replay_id) and not replay_exists
+    return JSONResponse(
+        content={
+            "imported": ok_count,
+            "failed": len(results) - ok_count,
+            "replay_id": replay_id or None,
+            "replay_exists": replay_exists,
+            "orphan": orphan,
+            "results": results,
         }
     )
 

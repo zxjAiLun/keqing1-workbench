@@ -5,10 +5,10 @@
 // 页面只做「看得见」：列表 + 登记字段 + 展开原始报告。口径写死在页面上，
 // 避免把展示概率/单视角标签误当成训练目标。
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Database, ExternalLink, RefreshCw } from 'lucide-react';
+import { Database, ExternalLink, Plus, RefreshCw } from 'lucide-react';
 import { replayApi } from '../api/replayApi';
 import { PageHeader, PageShell } from '../components/Layout/PageScaffold';
-import type { TeacherReportEntry } from '../types/replay';
+import type { TeacherReportEntry, TeacherReportImportResult } from '../types/replay';
 
 export function TeacherReportsPage() {
   const [entries, setEntries] = useState<TeacherReportEntry[]>([]);
@@ -20,6 +20,12 @@ export function TeacherReportsPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [detail, setDetail] = useState<unknown>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [urls, setUrls] = useState('');
+  const [replayId, setReplayId] = useState('');
+  const [playerOverride, setPlayerOverride] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<TeacherReportImportResult | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -37,6 +43,34 @@ export function TeacherReportsPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  const submitImport = useCallback(async () => {
+    const links = urls.split(/[\s,;]+/).filter(Boolean);
+    if (links.length === 0) {
+      setImportError('请先粘贴至少一个跑谱报告链接');
+      return;
+    }
+    setImporting(true);
+    setImportError(null);
+    setImportResult(null);
+    try {
+      const override = playerOverride.trim();
+      const result = await replayApi.importTeacherReports(
+        links.join('\n'),
+        replayId.trim(),
+        override === '' ? undefined : Number(override),
+      );
+      setImportResult(result);
+      if (result.imported > 0) {
+        setUrls('');
+        await load();
+      }
+    } catch (reason) {
+      setImportError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setImporting(false);
+    }
+  }, [urls, replayId, playerOverride, load]);
 
   const visible = useMemo(
     () => (filterTag ? entries.filter((item) => item.model_tag === filterTag) : entries),
@@ -90,6 +124,71 @@ export function TeacherReportsPage() {
         一份报告只提供<strong>所选玩家</strong>的教师标签（不是四家标签）；<code>prob</code> 是站点展示温度
         （如 0.1）下的产物，训练应使用原始分数。<code>报告决策数</code>是报告内条目数，不等于该局全部决策。
       </p>
+
+      <section style={importPanelStyle}>
+        <div style={importTitleStyle}><Plus size={13} /> 导入跑谱报告</div>
+        <textarea
+          value={urls}
+          onChange={(event) => setUrls(event.target.value)}
+          placeholder={'粘贴跑谱报告链接，一行一个（也支持逗号/空格分隔）：\nhttps://mjai.ekyu.moe/killerducky/?data=/report/xxxxxxxx.json'}
+          rows={4}
+          style={textareaStyle}
+        />
+        <div style={importRowStyle}>
+          <label style={labelStyle}>
+            关联牌谱 ID（可选）
+            <input
+              value={replayId}
+              onChange={(event) => setReplayId(event.target.value)}
+              placeholder="replay_xxxxxxxx_0000000000；不填则只归档"
+              style={inputStyle}
+            />
+          </label>
+          <label style={labelStyle}>
+            视角覆盖（可选）
+            <input
+              value={playerOverride}
+              onChange={(event) => setPlayerOverride(event.target.value)}
+              placeholder="0-3；默认用报告自带视角"
+              inputMode="numeric"
+              style={{ ...inputStyle, width: 160 }}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => void submitImport()}
+            disabled={importing}
+            className="btn-primary"
+            style={importButtonStyle}
+          >
+            <Database size={14} />
+            {importing ? '导入中...' : '导入并归档'}
+          </button>
+        </div>
+        {importError && <div style={{ ...statusInlineStyle, color: 'var(--error)' }}>{importError}</div>}
+        {importResult && (
+          <div style={importResultStyle}>
+            <div>
+              已归档 <strong>{importResult.imported}</strong> 份
+              {importResult.failed > 0 && <>, 失败 <strong style={{ color: 'var(--error)' }}>{importResult.failed}</strong> 份</>}
+              {importResult.replay_id && (
+                importResult.replay_exists
+                  ? <> · 已关联到 <code>{importResult.replay_id}</code></>
+                  : <> · <span style={{ color: 'var(--warn, var(--text-muted))' }}>未找到牌谱 <code>{importResult.replay_id}</code>，已作为独立归档保存</span></>
+              )}
+            </div>
+            <ul style={importListStyle}>
+              {importResult.results.map((item) => (
+                <li key={item.url} style={{ color: item.status === 'archived' ? 'var(--text-secondary)' : 'var(--error)' }}>
+                  {item.status === 'archived'
+                    ? <>✓ {item.model_tag} · p{item.player_id ?? '?'} · {item.kyoku_count}局/{item.decision_count}条 · <code>{item.report_id}</code></>
+                    : <>✗ {item.url} — {item.error}</>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </section>
 
       <div style={summaryStyle}>
         <span><Database size={13} /> 归档 {visible.length} 份 · 报告内决策 {totalDecisions} 条</span>
@@ -259,3 +358,29 @@ const openButtonStyle: React.CSSProperties = {
 const actionButtonStyle: React.CSSProperties = { height: 32, display: 'inline-flex', alignItems: 'center', gap: 6 };
 const selectStyle: React.CSSProperties = { height: 32, fontSize: 12 };
 const statusStyle: React.CSSProperties = { padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 };
+const importPanelStyle: React.CSSProperties = {
+  marginTop: 12,
+  padding: '10px 12px',
+  border: '1px solid var(--border)',
+  borderRadius: 7,
+  background: 'var(--card-bg)',
+  display: 'grid',
+  gap: 8,
+};
+const importTitleStyle: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700 };
+const textareaStyle: React.CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  fontFamily: 'Menlo, Consolas, monospace',
+  fontSize: 11,
+  lineHeight: 1.5,
+  padding: 8,
+  resize: 'vertical',
+};
+const importRowStyle: React.CSSProperties = { display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' };
+const labelStyle: React.CSSProperties = { display: 'grid', gap: 3, fontSize: 10, color: 'var(--text-muted)', flex: '1 1 240px' };
+const inputStyle: React.CSSProperties = { height: 30, fontSize: 11, fontFamily: 'Menlo, Consolas, monospace', padding: '0 8px' };
+const importButtonStyle: React.CSSProperties = { height: 30, display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' };
+const statusInlineStyle: React.CSSProperties = { fontSize: 11 };
+const importResultStyle: React.CSSProperties = { fontSize: 11, color: 'var(--text-secondary)', display: 'grid', gap: 4 };
+const importListStyle: React.CSSProperties = { margin: 0, paddingLeft: 16, display: 'grid', gap: 2, fontSize: 10.5 };

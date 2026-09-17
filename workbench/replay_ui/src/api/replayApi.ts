@@ -5,6 +5,7 @@ import type {
   ReviewHistoryItem,
   SelfplayAnomalyReplayGroup,
   TeacherReportEntry,
+  TeacherReportImportResult,
   TeacherReportListResponse,
 } from '../types/replay';
 import type { BotType } from '../types/bot';
@@ -26,10 +27,12 @@ export class ApiError extends Error {
 }
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  // FormData 必须让浏览器自己带 boundary，不能手写 Content-Type
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...options.headers,
     },
   });
@@ -87,6 +90,24 @@ export const replayApi = {
     api<{ entry: TeacherReportEntry; report: unknown }>(
       `/teacher-reports/${encodeURIComponent(reportId)}`,
     ),
+
+  /** 导入跑谱报告链接（牌谱积累入口） */
+  importTeacherReports: (
+    urls: string,
+    replayId = '',
+    playerId?: number,
+  ): Promise<TeacherReportImportResult> => {
+    const formData = new FormData();
+    formData.append('urls', urls);
+    formData.append('replay_id', replayId);
+    if (playerId !== undefined && !Number.isNaN(playerId)) {
+      formData.append('player_id', String(playerId));
+    }
+    return api<TeacherReportImportResult>('/teacher-reports/import', {
+      method: 'POST',
+      body: formData,
+    });
+  },
 
   /** 获取回放完整数据 */
   get: (

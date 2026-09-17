@@ -252,6 +252,29 @@ export interface TeacherReportListResponse {
   reports: TeacherReportEntry[];
 }
 
+/** 导入接口的单条结果。 */
+export interface TeacherReportImportItem {
+  url: string;
+  status: 'archived' | 'error';
+  error?: string;
+  report_id?: string;
+  model_tag?: string;
+  player_id?: number | null;
+  kyoku_count?: number;
+  decision_count?: number;
+  replay_ids?: string[];
+  copied_to?: string;
+}
+
+export interface TeacherReportImportResult {
+  imported: number;
+  failed: number;
+  replay_id: string | null;
+  replay_exists: boolean;
+  orphan: boolean;
+  results: TeacherReportImportItem[];
+}
+
 export interface ReplaySubmitRequest {
   input_type: 'tenhou_url' | 'tenhou6_json' | 'mjson_file' | 'mjson_text';
   content: string;

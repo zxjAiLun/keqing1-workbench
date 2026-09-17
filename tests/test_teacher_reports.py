@@ -68,7 +68,10 @@ def isolated_roots(tmp_path, monkeypatch):
     archive = tmp_path / "teacher-reports"
     replays = tmp_path / "replays"
     monkeypatch.setattr(teacher_reports, "teacher_reports_root", lambda: archive)
+    # 归档模块在函数内 import data_path，server 与 teacher_reports 则是模块级 from-import，三处都要隔离
     monkeypatch.setattr("workbench.runtime.resolver.data_path", lambda *parts: tmp_path.joinpath(*parts))
+    monkeypatch.setattr("replay.server.data_path", lambda *parts: tmp_path.joinpath(*parts), raising=False)
+    monkeypatch.setattr(teacher_reports, "data_path", lambda *parts: tmp_path.joinpath(*parts), raising=False)
     return archive, replays
 
 
@@ -255,3 +258,91 @@ def test_teacher_report_endpoints_list_and_read(isolated_roots, monkeypatch):
 
     missing = asyncio.run(server.get_teacher_report("deadbeef0000"))
     assert missing.status_code == 404
+
+
+def test_import_endpoint_archives_links_and_survives_partial_failure(isolated_roots, monkeypatch):
+    """导入端点：一行一个链接；单条失败不阻断其余；重复贴同一链接不重复占盘。"""
+    archive, replays = isolated_roots
+    raw = _raw_report(model_tag="4.1b", player_id=2, decisions=4)
+
+    from replay import server
+
+    fetched: list[str] = []
+
+    def fake_fetch(links: dict[str, str]) -> dict[str, dict]:
+        fetched.extend(links.values())
+        out = {}
+        for kind, link in links.items():
+            if "bad" in link:
+                raise ValueError(f"下载 {kind} Review 报告失败：连接失败")
+            out[kind] = raw
+        return out
+
+    monkeypatch.setattr("replay.external_reports.resolve_external_report_url", lambda url, kind: url)
+    monkeypatch.setattr(server, "fetch_external_raw_reports", fake_fetch)
+
+    good = "https://mjai.ekyu.moe/killerducky/?data=/report/30bfcaf5c9aff36c.json"
+    bad = "https://mjai.ekyu.moe/report/bad.json"
+    payload = json.loads(asyncio.run(server.import_teacher_reports(urls=f"{good}\n{bad}", replay_id="", player_id=-1)).body)
+
+    assert payload["imported"] == 1 and payload["failed"] == 1
+    assert payload["replay_exists"] is False and payload["orphan"] is False  # 没给 replay_id 就不算孤儿
+    assert {item["status"] for item in payload["results"]} == {"archived", "error"}
+    archived = next(item for item in payload["results"] if item["status"] == "archived")
+    assert archived["model_tag"] == "Mortal 4.1b"
+    assert archived["decision_count"] == 4
+    assert len(fetched) == 2  # 两条都尝试过：失败一条不影响另一条
+    assert len(teacher_reports.list_teacher_reports(root=archive)) == 1
+
+    # 同一链接再导入一次：仍只有一条登记，fetch_count 增长（内容去重）
+    asyncio.run(server.import_teacher_reports(urls=good, replay_id="", player_id=-1))
+    entries = teacher_reports.list_teacher_reports(root=archive)
+    assert len(entries) == 1
+    assert entries[0]["fetch_count"] == 2
+
+    # 空输入 → 400
+    assert asyncio.run(server.import_teacher_reports(urls="  ", replay_id="", player_id=-1)).status_code == 400
+
+
+def test_import_endpoint_links_report_to_existing_replay(isolated_roots, monkeypatch):
+    """给了存在的牌谱：写副本 + 登记引用；不存在的牌谱标记 orphan 但仍归档。"""
+    archive, replays = isolated_roots
+    raw = _raw_report(model_tag="4.1b", player_id=0, decisions=2)
+    replay_id = "replay_ABC"
+    (replays / replay_id).mkdir(parents=True)
+
+    from replay import server
+
+    monkeypatch.setattr("replay.external_reports.resolve_external_report_url", lambda url, kind: url)
+    monkeypatch.setattr(server, "fetch_external_raw_reports", lambda links: {"mortal": raw})
+
+    class _Storage:
+        def __init__(self):
+            self.seen: dict = {}
+
+        def load_meta(self, _replay_id):
+            return {}
+
+        def update_meta(self, _replay_id, updates):
+            self.seen = updates
+            return True
+
+    storage = _Storage()
+    monkeypatch.setattr(server, "get_storage", lambda: storage)
+
+    payload = json.loads(asyncio.run(server.import_teacher_reports(
+        urls="https://mjai.ekyu.moe/report/c87abfa74d78a178.json", replay_id=replay_id, player_id=-1,
+    )).body)
+
+    assert payload["replay_exists"] is True and payload["orphan"] is False
+    assert payload["results"][0]["replay_ids"] == [replay_id]
+    assert (replays / replay_id / "external_reports").is_dir()
+    assert storage.seen["external_review_links"]["mortal"].endswith("c87abfa74d78a178.json")
+
+    # 不存在的牌谱 → orphan，但仍归档
+    monkeypatch.setattr(server, "get_storage", lambda: None)
+    orphan = json.loads(asyncio.run(server.import_teacher_reports(
+        urls="https://mjai.ekyu.moe/report/30bfcaf5c9aff36c.json", replay_id="replay_missing", player_id=-1,
+    )).body)
+    assert orphan["replay_exists"] is False and orphan["orphan"] is True
+    assert orphan["imported"] == 1

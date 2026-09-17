@@ -349,14 +349,16 @@ def test_import_endpoint_links_report_to_existing_replay(isolated_roots, monkeyp
 
 
 def test_only_site_downloads_are_valid_raw_reports():
-    """只有站点下载（含 mjai_log）才是原始报告；本地运行时教师产物不是。
+    """只有站点下载（带 mjai_log + review.kyokus）才是原始报告；本地产物不是。
 
     artifacts/replay_model_reviews 下有两类同名前缀文件：
-      - *__Mortal_4.1b__*    = external_teacher_report.v1（站点下载，有 mjai_log）
+      - *__Mortal_4.1b__*     = external_teacher_report.v1（站点下载，有 mjai_log）
       - *__External_Mortal__* = runtime_teacher_report.v1（本地跑的外部模型，无 mjai_log）
-    回填/归档必须只认前者，否则本地重建会冒充原始语料。
+    External_Mortal 不是 Mortal 4.1a/b/c：checkpoint 为
+    external_mortal_20240308_best_min.pth（2024-03-08），与站点 4.1b 同局同视角
+    决策对齐度仅 10–16%，不可作为站点语料入库。
     """
-    site = {
+    site_wrapped = {
         "schema": "keqing1.external_teacher_report.v1",
         "source": "mortal",
         "replay_id": "replay_demo",
@@ -364,39 +366,59 @@ def test_only_site_downloads_are_valid_raw_reports():
         "mjai_log": [{"type": "start_kyoku"}, {"type": "tsumo"}],
         "review": {"model_tag": "Mortal 4.1b", "kyokus": [{"entries": [{"details": []}]}]},
     }
+    # 刚下载下来的裸报告：站点还没补 schema/source，由调用方传入 source 判定
+    site_bare = {
+        "player_id": 2,
+        "mjai_log": [{"type": "start_kyoku"}],
+        "review": {"model_tag": "4.1b", "kyokus": [{"entries": []}]},
+    }
     runtime = {
         "schema": "keqing1.runtime_teacher_report.v1",
         "bot_type": "ext_mortal",
+        "checkpoint": "external_mortal_20240308_best_min.pth",
         "player_id": 2,
         "replay_id": "replay_demo",
         "review": {"model_tag": "External Mortal", "kyokus": [{"entries": [{"step": 1}]}]},
     }
 
-    assert teacher_reports.is_raw_site_report(site) is True
+    assert teacher_reports.is_raw_site_report(site_wrapped) is True
+    assert teacher_reports.is_raw_site_report(site_bare, source="mortal") is True
+    # 本地产物：无 mjai_log 且 schema 为 runtime_*，绝不放行
     assert teacher_reports.is_raw_site_report(runtime) is False
-
-    # 逐条守卫生效：只有同时满足 schema+source+mjai_log 才算原始报告。
-    # 单独去掉任一条件都必须判 False —— 否则本地产物可能混进语料。
-    for missing in ("schema", "source", "mjai_log"):
-        weakened = {k: v for k, v in site.items() if k != missing}
-        assert teacher_reports.is_raw_site_report(weakened) is False, f"缺少 {missing} 时仍被判为原始报告"
-    assert teacher_reports.is_raw_site_report({**site, "mjai_log": []}) is False  # 空 mjai_log
-    assert teacher_reports.is_raw_site_report({**site, "source": "unknown"}) is False  # 未知来源
-    # 本地运行时产物确实缺原始报告的关键字段
+    assert teacher_reports.is_raw_site_report(runtime, source="mortal") is False
     assert "mjai_log" not in runtime and "source" not in runtime
 
+    # schema 守卫必须被单独钉住：设想未来某本地产品恰好也带 source+mjai_log+review.kyokus，
+    # 此时只有「schema 不是 external_teacher_report.v1」这一条能拦住它。
+    sneaky_local = {
+        "schema": "keqing1.runtime_teacher_report.v1",
+        "source": "mortal",
+        "mjai_log": [{"type": "start_kyoku"}],
+        "review": {"kyokus": [{"entries": []}]},
+    }
+    assert teacher_reports.is_raw_site_report(sneaky_local) is False
+    assert teacher_reports.is_raw_site_report(sneaky_local, source="mortal") is False
+
+    # 逐条守护：缺 mjai_log / 空 mjai_log / 未知来源 / 缺 review.kyokus 都必须 False
+    assert teacher_reports.is_raw_site_report({k: v for k, v in site_wrapped.items() if k != "mjai_log"}) is False
+    assert teacher_reports.is_raw_site_report({**site_wrapped, "mjai_log": []}) is False
+    assert teacher_reports.is_raw_site_report({**site_wrapped, "source": "unknown"}) is False
+    assert teacher_reports.is_raw_site_report({**site_wrapped, "review": {}}) is False
+    assert teacher_reports.is_raw_site_report(site_bare) is False  # 没传 source 也认不出
+
+    # 归档入口强制同一判据：本地产物直接抛错，不能悄悄入库
+    import pytest
+
+    with pytest.raises(ValueError, match="本地产物不得入库"):
+        teacher_reports.archive_teacher_report(runtime, source="mortal")
+
     # 剥掉本地包装 → 还原成原始报告（model_tag 前缀去掉）
-    stripped = teacher_reports.strip_local_wrapping(site)
+    stripped = teacher_reports.strip_local_wrapping(site_wrapped)
     assert set(stripped) == {"mjai_log", "review", "player_id"}
     assert stripped["review"]["model_tag"] == "4.1b"
-    assert stripped["mjai_log"] == site["mjai_log"]
+    assert teacher_reports.is_raw_site_report(stripped, source="mortal") is True
 
-    # 剥包装后重新判定：mjai_log 还在，但 schema/source 已摘除 → 不再是「站点产物」标记
-    assert "schema" not in stripped and "source" not in stripped
-
-    # NAGA 前缀同样被剥掉
-    naga = {**site, "source": "naga", "review": {"model_tag": "NAGA ニシキ"}}
+    # NAGA 前缀同样被剥掉；没有 review 时不炸
+    naga = {**site_wrapped, "source": "naga", "review": {"model_tag": "NAGA ニシキ"}}
     assert teacher_reports.strip_local_wrapping(naga)["review"]["model_tag"] == "ニシキ"
-
-    # 没有 review / 非 dict 时不炸
     assert teacher_reports.strip_local_wrapping({"mjai_log": []}) == {"mjai_log": []}

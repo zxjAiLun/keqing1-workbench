@@ -72,6 +72,41 @@ def report_id_for(content_sha256: str) -> str:
     return content_sha256[:12]
 
 
+def is_raw_site_report(value: dict) -> bool:
+    """是否是站点下载的原始报告（可用于归档/回填）。
+
+    ``artifacts/replay_model_reviews`` 下有两类同名前缀产物，必须区分：
+      - ``*__Mortal_4.1b__*``：站点下载，schema=external_teacher_report.v1，带 mjai_log；
+      - ``*__External_Mortal__*``：运行时网关跑的外部模型，schema=runtime_teacher_report.v1，无 mjai_log。
+    只有前者是原始语料，后者是本地重建，不能冒充原始报告入库。
+    """
+    return (
+        value.get("schema") == "keqing1.external_teacher_report.v1"
+        and isinstance(value.get("mjai_log"), list)
+        and bool(value["mjai_log"])
+        and value.get("source") in {"mortal", "naga"}
+    )
+
+
+def strip_local_wrapping(local: dict) -> dict:
+    """从 external_teacher_report.v1 产物里剥掉本地包装，还原站点原始报告。
+
+    build_mortal_teacher_report 做的是 ``result = dict(raw)`` 再补
+    ``{schema, source, replay_id}`` 并把 ``review.model_tag`` 加上 ``Mortal `` 前缀；
+    去掉这三处即得原始报告（已验证与重新下载逐字节一致）。
+    """
+    raw = {key: value for key, value in local.items() if key not in ("schema", "source", "replay_id")}
+    if isinstance(raw.get("review"), dict):
+        review = dict(raw["review"])
+        tag = str(review.get("model_tag") or "")
+        for prefix in ("Mortal ", "NAGA "):
+            if tag.startswith(prefix):
+                review["model_tag"] = tag[len(prefix):]
+                break
+        raw["review"] = review
+    return raw
+
+
 def _review_counts(raw: dict) -> tuple[int, int]:
     """(局数, 决策数)：Mortal 报告用 review.kyokus[].entries。"""
     review = raw.get("review") if isinstance(raw.get("review"), dict) else {}

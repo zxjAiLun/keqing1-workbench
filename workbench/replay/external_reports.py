@@ -473,6 +473,20 @@ def build_mortal_teacher_report(raw: dict, decisions: dict, player_id: int, repl
     return result
 
 
+def fetch_external_raw_reports(links: dict[str, str]) -> dict[str, dict]:
+    """先抓取所有外部原始报告（不落盘），失败直接抛出。
+
+    与写报告分开调用的原因：抓取是唯一会失败的一步，应当发生在昂贵的
+    本地推理之前（否则本地跑完才发现链接抓不到，白跑一轮）。
+    """
+    raws: dict[str, dict] = {}
+    for kind in ("naga", "mortal"):
+        link = links.get(kind)
+        if link:
+            raws[kind] = fetch_external_report(link, kind)
+    return raws
+
+
 def write_external_teacher_reports(
     *,
     replay_id: str,
@@ -480,26 +494,54 @@ def write_external_teacher_reports(
     decisions: dict,
     links: dict[str, str],
     output_dir: Path,
+    raws: dict[str, dict] | None = None,
+    archive_root: Path | None = None,
+    replays_root: Path | None = None,
 ) -> list[Path]:
+    """写外部教师报告（并归档原始报告）。
+
+    ``raws`` 已给定时不再重新下载（见 ``fetch_external_raw_reports``）。
+    每份原始报告会：① 按内容指纹归档到 keqing-data/teacher-reports/；
+    ② 在牌谱目录写一份副本。报告本身仍照旧写 ``output_dir``。
+    """
+    from replay import teacher_reports as archive
+
     output_dir.mkdir(parents=True, exist_ok=True)
+    raws = dict(raws or {})
     reports: list[dict] = []
     if links.get("naga"):
-        reports.extend(build_naga_teacher_reports(fetch_external_report(links["naga"], "naga"), decisions, player_id, replay_id))
+        raw = raws.get("naga") or fetch_external_report(links["naga"], "naga")
+        reports.extend(build_naga_teacher_reports(raw, decisions, player_id, replay_id))
     if links.get("mortal"):
-        reports.append(
-            build_mortal_teacher_report(
-                fetch_external_report(links["mortal"], "mortal"),
-                decisions,
-                player_id,
-                replay_id,
-            )
-        )
+        raw = raws.get("mortal") or fetch_external_report(links["mortal"], "mortal")
+        reports.append(build_mortal_teacher_report(raw, decisions, player_id, replay_id))
 
     paths: list[Path] = []
     for report in reports:
         label = str(report["review"]["model_tag"])
-        safe_label = label.replace("@", "_").replace("/", "_").replace("\\", "_").replace(" ", "_")
+        safe_label = archive.safe_label(label)
         path = output_dir / f"{replay_id}__{safe_label}__p{player_id}.json"
         path.write_text(json.dumps(report, ensure_ascii=False, allow_nan=False, indent=2), encoding="utf-8")
         paths.append(path)
+
+        source = str(report.get("source") or "")
+        raw = raws.get(source)
+        if not isinstance(raw, dict):
+            continue
+        archive.archive_teacher_report(
+            raw,
+            source=source,
+            source_url=links.get(source),
+            model_tag=label,
+            player_id=int(player_id),
+            replay_id=replay_id,
+            root=archive_root,
+        )
+        archive.write_replay_report_copy(
+            raw,
+            replay_id=replay_id,
+            label=label,
+            player_id=int(player_id),
+            replays_root=replays_root,
+        )
     return paths

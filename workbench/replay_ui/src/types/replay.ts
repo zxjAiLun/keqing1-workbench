@@ -221,6 +221,37 @@ export interface ReviewHistoryItem {
   external_review_links?: ExternalReviewLinks;
 }
 
+/**
+ * 已归档的外部教师报告（牌谱积累）。
+ *
+ * 口径：一份报告只提供「所选玩家」的教师标签；`decision_count` 是**报告内**
+ * 的决策条数（不代表四家全部决策）；展示概率是站点温度下的产物，训练要用原始
+ * 分数。报告原文只在站点保留约 15 天，本地归档是长期副本。
+ */
+export interface TeacherReportEntry {
+  report_id: string;
+  content_sha256: string;
+  source: string;
+  source_url: string;
+  model_tag: string;
+  player_id: number | null;
+  kyoku_count: number;
+  decision_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  fetch_count: number;
+  replay_ids: string[];
+  path: string;
+}
+
+export interface TeacherReportListResponse {
+  root: string;
+  count: number;
+  model_tags: string[];
+  sources: string[];
+  reports: TeacherReportEntry[];
+}
+
 export interface ReplaySubmitRequest {
   input_type: 'tenhou_url' | 'tenhou6_json' | 'mjson_file' | 'mjson_text';
   content: string;

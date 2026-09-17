@@ -18,7 +18,12 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from replay.normalize import normalize_replay_decisions
 from replay import ladder as ladder_data
 from replay.ladder import SeasonNotFoundError, SeasonRegistryError
-from replay.external_reports import write_external_teacher_reports, _action_actor, _decision_kind
+from replay.external_reports import (
+    fetch_external_raw_reports,
+    write_external_teacher_reports,
+    _action_actor,
+    _decision_kind,
+)
 
 
 class _NumpyEncoder(json.JSONEncoder):
@@ -1398,6 +1403,22 @@ async def replay_multi_teacher(
 
     try:
         external_links = _external_review_links(naga_url, mortal_url)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+    if external_links:
+        # 先抓外部报告：抓取是唯一会失败的一步，放在本地推理之前，
+        # 否则本地跑完 30s+ 才发现链接抓不到。用户填错链接属于 400。
+        try:
+            external_raws = fetch_external_raw_reports(external_links)
+        except ValueError as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": f"外部 Review 报告获取失败：{e}"})
+    else:
+        external_raws = {}
+
+    try:
         # 天凤链接时从 URL 提取 tw 作为默认视角
         if input_type == "url" and player_id == 0 and json_text.strip():
             try:
@@ -1458,6 +1479,7 @@ async def replay_multi_teacher(
                     player_id=player_id,
                     decisions=base_decisions,
                     links=external_links,
+                    raws=external_raws,
                     output_dir=BASE_DIR.parent.parent / "artifacts" / "replay_model_reviews",
                 )
             )
@@ -1527,6 +1549,41 @@ async def list_replays():
 async def list_review_history():
     """列出已持久化且包含 teacher report 的 Review。"""
     return JSONResponse(content=_list_review_history())
+
+
+@app.get("/api/teacher-reports", response_class=JSONResponse)
+async def list_teacher_reports(
+    source: str | None = None,
+    model_tag: str | None = None,
+    player_id: int | None = None,
+):
+    """列出已归档的外部教师报告（牌谱积累）。"""
+    from replay import teacher_reports as archive
+
+    reports = archive.list_teacher_reports(source=source, model_tag=model_tag, player_id=player_id)
+    tags = sorted({str(item.get("model_tag") or "") for item in reports if item.get("model_tag")})
+    sources = sorted({str(item.get("source") or "") for item in reports if item.get("source")})
+    return JSONResponse(
+        content={
+            "root": str(archive.teacher_reports_root()),
+            "count": len(reports),
+            "model_tags": tags,
+            "sources": sources,
+            "reports": reports,
+        }
+    )
+
+
+@app.get("/api/teacher-reports/{report_id}", response_class=JSONResponse)
+async def get_teacher_report(report_id: str):
+    """读取一份已归档的原始教师报告。"""
+    from replay import teacher_reports as archive
+
+    loaded = archive.load_teacher_report(report_id)
+    if loaded is None:
+        return JSONResponse(status_code=404, content={"error": f"未知的教师报告：{report_id}"})
+    raw, entry = loaded
+    return JSONResponse(content={"entry": entry, "report": raw})
 
 
 @app.get("/api/replay/{replay_id}", response_class=JSONResponse)

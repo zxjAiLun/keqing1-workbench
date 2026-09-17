@@ -4,6 +4,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { HomePage } from './pages/HomePage';
 import { ReviewPage } from './pages/ReviewPage';
 import { ReviewHistoryPage } from './pages/ReviewHistoryPage';
+import { TeacherReportsPage } from './pages/TeacherReportsPage';
 import { ReplayViewPage } from './pages/ReplayViewPage';
 import { GameBoardReplayPage } from './pages/GameBoardReplayPage';
 import { BattlePage } from './pages/BattlePage';
@@ -60,6 +61,7 @@ export default function App() {
             <Route path={routes.home} element={<DashboardPage />} />
             <Route path={routes.reviewNew} element={<ReviewPage />} />
             <Route path={routes.reviewLibrary} element={<ReviewHistoryPage />} />
+            <Route path={routes.teacherReports} element={<TeacherReportsPage />} />
             <Route path={REVIEW_WORKSPACE_PATTERN} element={<GameBoardReplayPage />} />
             <Route path={routes.tenhou} element={<PlayWithYouPage />} />
             <Route path={routes.diagnosticsCasebook} element={<SelfplayAnomaliesPage />} />

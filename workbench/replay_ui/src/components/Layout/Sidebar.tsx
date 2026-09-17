@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   BarChart2,
   Bot,
+  Database,
   History,
   LayoutDashboard,
   ListTree,
@@ -42,6 +43,7 @@ const NAV_SECTIONS: Array<{ label: string; items: NavItem[] }> = [
     items: [
       { path: routes.reviewNew, icon: BarChart2, label: '新建 Review' },
       { path: routes.reviewLibrary, icon: History, label: 'Review Library', exact: true },
+      { path: routes.teacherReports, icon: Database, label: 'Teacher Reports' },
     ],
   },
   {

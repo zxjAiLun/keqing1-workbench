@@ -4,6 +4,8 @@ import type {
   ReplayMeta,
   ReviewHistoryItem,
   SelfplayAnomalyReplayGroup,
+  TeacherReportEntry,
+  TeacherReportListResponse,
 } from '../types/replay';
 import type { BotType } from '../types/bot';
 import { DEFAULT_BOT_TYPE } from '../utils/botCatalog';
@@ -68,6 +70,23 @@ export const replayApi = {
 
   listReviewHistory: (): Promise<ReviewHistoryItem[]> =>
     api<ReviewHistoryItem[]>('/replay/review-history'),
+
+  /** 列出已归档的外部教师报告（牌谱积累） */
+  listTeacherReports: (filters: { source?: string; modelTag?: string; playerId?: number } = {}):
+  Promise<TeacherReportListResponse> => {
+    const params = new URLSearchParams();
+    if (filters.source) params.set('source', filters.source);
+    if (filters.modelTag) params.set('model_tag', filters.modelTag);
+    if (filters.playerId !== undefined) params.set('player_id', String(filters.playerId));
+    const query = params.toString();
+    return api<TeacherReportListResponse>(`/teacher-reports${query ? `?${query}` : ''}`);
+  },
+
+  /** 读取一份已归档的原始教师报告 */
+  getTeacherReport: (reportId: string): Promise<{ entry: TeacherReportEntry; report: unknown }> =>
+    api<{ entry: TeacherReportEntry; report: unknown }>(
+      `/teacher-reports/${encodeURIComponent(reportId)}`,
+    ),
 
   /** 获取回放完整数据 */
   get: (

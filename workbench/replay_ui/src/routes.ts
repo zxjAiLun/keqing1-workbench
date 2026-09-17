@@ -9,6 +9,7 @@ export const routes = {
   home: '/',
   reviewNew: '/reviews/new',
   reviewLibrary: '/reviews',
+  teacherReports: '/teacher-reports',
   reviewWorkspace: (replayId: string) => `/reviews/${encodeURIComponent(replayId)}`,
   ladder: '/ladder',
   ladderAccount: (accountId: string) => `/ladder/accounts/${encodeURIComponent(accountId)}`,

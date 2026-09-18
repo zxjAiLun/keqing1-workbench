@@ -39,6 +39,14 @@ export const BOT_CATALOG: BotCatalogEntry[] = [
       'P4-M11 直连策略梯度端点（U32）。输出是 policy action score（非校准 Q），Review 不显示收益损失；候选，不是默认模型。',
   },
   {
+    value: 'm0_72k',
+    label: 'M0 72k (control)',
+    shortLabel: 'M0',
+    badge: '备选候选',
+    description:
+      'D1 自有种群对照 M0（M0_control / seed 20260807）。DQN 系校准 Q：分数差可解释为收益估计。solo 对 K0 未越过 U32，为备选候选，不是默认模型。',
+  },
+  {
     value: 'rulebase',
     label: 'rulebase',
     shortLabel: '基线',
@@ -47,7 +55,7 @@ export const BOT_CATALOG: BotCatalogEntry[] = [
   },
 ];
 
-const GUI_MODEL_ORDER: BotType[] = ['ext_mortal', '70k', 'mortal', 'p4m11_u32'];
+const GUI_MODEL_ORDER: BotType[] = ['ext_mortal', '70k', 'mortal', 'p4m11_u32', 'm0_72k'];
 
 export const GUI_BOT_CATALOG: BotCatalogEntry[] = BOT_CATALOG
   .filter((entry) => entry.value !== 'rulebase')
@@ -60,6 +68,7 @@ export const BOT_CHECKPOINT_DEFAULTS: Record<BotType, string> = {
   '70k': 'artifacts/mortal_training/checkpoints/mortal_default_70k_promoted_candidate.pth',
   ext_mortal: 'artifacts/external_mortal_20240308_best_min.pth',
   p4m11_u32: 'mortal/authoritative/P4M11_U32_2026_09/models/P4M11_U32/U32_eval_weights.pth',
+  m0_72k: 'mortal/authoritative/M0_72k_s20260807/models/M0_72k/mortal_72000.pth',
   rulebase: '',
 };
 

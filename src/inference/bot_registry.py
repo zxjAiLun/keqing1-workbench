@@ -21,6 +21,11 @@ _V2_CANDIDATE = Path("V2_74000/mortal_74000.pth")
 # P4-M11 direct-PG endpoint (U32, Adam step 36). Published as its own
 # authoritative bundle rather than added to the immutable D3 bundle.
 _P4M11_U32 = Path("P4M11_U32/U32_eval_weights.pth")
+# D1 project-owned population control (M0_control / seed 20260807). Its own
+# bundle because the basename ``mortal_72000.pth`` is shared across many
+# model_pool_2026_07 checkpoints: always address it by the family subpath
+# ``M0_72k/...``, never by bare basename.
+_M0_72K = Path("M0_72k/mortal_72000.pth")
 
 # Named local Mortal checkpoints. ``mortal`` prefers the promoted V2 candidate
 # once available and falls back to the 70k anchor during training.
@@ -31,6 +36,7 @@ MORTAL_CHECKPOINTS: dict[str, Path] = {
     "weak": _EXT_MORTAL,
     "weak_mortal": _EXT_MORTAL,
     "p4m11_u32": _P4M11_U32,
+    "m0_72k": _M0_72K,
 }
 
 # What a model's per-action scores MEAN.  The DQN-era checkpoints emit an
@@ -47,6 +53,9 @@ MORTAL_SCORE_SEMANTICS: dict[str, str] = {
     "weak": SCORE_SEMANTICS_CALIBRATED_Q,
     "weak_mortal": SCORE_SEMANTICS_CALIBRATED_Q,
     "p4m11_u32": SCORE_SEMANTICS_ACTION_SCORE,
+    # DQN-era checkpoint (control.version=4): emits calibrated Q estimates, so
+    # a difference between two action scores IS a benefit estimate.
+    "m0_72k": SCORE_SEMANTICS_CALIBRATED_Q,
 }
 
 
@@ -178,7 +187,8 @@ def resolve_bot_spec(
 
     A spec is interpreted as:
       * ``"rulebase"``           -> rule-based bot, no model
-      * a key in MORTAL_CHECKPOINTS (e.g. ``"mortal"``, ``"70k"``, ``"ext_mortal"``)
+      * a key in MORTAL_CHECKPOINTS (e.g. ``"mortal"``, ``"70k"``, ``"ext_mortal"``,
+        ``"p4m11_u32"``, ``"m0_72k"``)
       * an explicit path ending in ``.pth/.pt/.ckpt`` (absolute, or resolved
         relative to the project root or the shared keqing-data root)
     """

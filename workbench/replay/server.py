@@ -826,6 +826,7 @@ _GUI_MORTAL_MODEL_LABELS = {
     "70k": "70k",
     "ext_mortal": "External Mortal",
     "p4m11_u32": "P4-M11 U32 (policy)",
+    "m0_72k": "M0 72k (control)",
 }
 
 

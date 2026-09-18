@@ -39,9 +39,10 @@ _BOT_CLASSES = {
     "weak_mortal": MortalReviewBot,
     "ext_mortal": MortalReviewBot,
     "p4m11_u32": MortalReviewBot,
+    "m0_72k": MortalReviewBot,
     "rulebase": RulebaseBot,
 }
-_MORTAL_BOT_TYPES = {"mortal", "70k", "weak_mortal", "ext_mortal", "p4m11_u32"}
+_MORTAL_BOT_TYPES = {"mortal", "70k", "weak_mortal", "ext_mortal", "p4m11_u32", "m0_72k"}
 
 PLAYER_NAMES = ["East", "South", "West", "North"]
 _REVIEW_EXPORTER = DefaultRuntimeReviewExporter()

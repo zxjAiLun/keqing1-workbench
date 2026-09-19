@@ -280,14 +280,18 @@ class GatewayBotClient:
 
         message = self._annotate_public_opponent_event(message)
 
-        # "Speed" control: only throttle on our own turn (actor == seat), so
-        # opponent events are still answered instantly and we never miss a claim
-        # window.
-        if (
-            self.config.think_delay > 0
-            and self._seat is not None
-            and actor == self._seat
-        ):
+        # "Speed" control:
+        # Throttle when making a discard (dahai), both on normal turns (after tsumo)
+        # and after calling a meld (附露后切牌: chi / pon).
+        # Opponent claims / passes must remain instant so claim windows are never missed.
+        should_delay = False
+        if self.config.think_delay > 0:
+            if mtype == "tsumo" and actor is not None and actor == self._seat:
+                should_delay = True
+            elif mtype in ("chi", "pon") and (actor == self._seat or actor == 0):
+                should_delay = True
+
+        if should_delay:
             _sleep_interruptible(self.config.think_delay, self._stop_event)
 
         # A single malformed game event must not crash the bot thread: that would
@@ -302,6 +306,17 @@ class GatewayBotClient:
                 mtype,
             )
             return {"type": "none", "actor": self._seat}
+
+        # Extra safety guard: if the bot is returning a dahai (discard) and we haven't
+        # throttled yet on this turn (e.g. post-meld discard where actor was not matched),
+        # ensure the think delay is ALWAYS honored so the bot never instant-discards (秒切).
+        if (
+            self.config.think_delay > 0
+            and not should_delay
+            and isinstance(action, dict)
+            and action.get("type") == "dahai"
+        ):
+            _sleep_interruptible(self.config.think_delay, self._stop_event)
         if action is None:
             if self._seat is None:
                 return {"type": "none"}

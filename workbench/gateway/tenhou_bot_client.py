@@ -14,13 +14,14 @@ from typing import Any
 
 from gateway import settings as gateway_settings
 from gateway.tenhou_bridge import normalize_tenhou_room
-from workbench.runtime.resolver import resolve_bot_spec
+from workbench.model_catalog import DEFAULT_PLAY_MODEL
+from workbench.runtime.resolver import resolve_bot_spec, SUPPORTED_BOT_NAMES
 
 logger = logging.getLogger(__name__)
 
 # Kept for reference; actual validation goes through resolve_bot_spec so that
 # explicit .pth paths are also accepted.
-SUPPORTED_GATEWAY_BOTS = {"rulebase", "mortal", "70k", "gui", "ext_mortal", "weak"}
+SUPPORTED_GATEWAY_BOTS = SUPPORTED_BOT_NAMES
 
 
 def _is_stopped(stop_event: threading.Event | None) -> bool:
@@ -59,7 +60,7 @@ class BotClientConfig:
     port: int = gateway_settings.PORT
     room: str = "L2147_9"
     name: str = "NoName"
-    bot_name: str = "mortal"
+    bot_name: str = DEFAULT_PLAY_MODEL
     project_root: Path = Path.cwd()
     model_path: Path | None = None
     device: str = "cuda"

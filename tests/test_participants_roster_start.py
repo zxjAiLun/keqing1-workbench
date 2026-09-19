@@ -635,8 +635,7 @@ def test_model_only_launchers_reject_unknown_model(pw_env):
 def test_playwithyou_models_catalog():
     """R11-B：catalog 只暴露具名 Mortal checkpoints，不读 Participants。
 
-    P4-M11 后新增第三个具名条目 p4m11_u32（K0 替代候选，可选但非默认）；
-    M0 第四个具名条目 m0_72k（D1 种群对照，备选候选，同样非默认）。
+    U32 为实战首选；M0 为可选备选；K0 的内部 model_id 仍为 70k。
     """
     from gateway.api.playwithyou import PLAYWITHYOU_MODEL_CATALOG, list_playwithyou_models
 

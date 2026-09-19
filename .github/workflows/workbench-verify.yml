@@ -65,6 +65,7 @@ jobs:
 
       - name: Semantic checks
         run: |
+          npm run check:model-product-policy
           npm run check:participant-semantics
           npm run check:ladder-live-semantics
           npm run check:ladder-season-semantics

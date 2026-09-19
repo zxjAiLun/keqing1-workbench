@@ -323,4 +323,4 @@ def test_start_passes_ownership_markers_and_name_prefix(monkeypatch):
     assert ["--name-prefix", "NoName"] == command[
         command.index("--name-prefix") : command.index("--name-prefix") + 2
     ]
-    assert command[command.index("--bots") + 1] == "mortal"
+    assert command[command.index("--bots") + 1] == "p4m11_u32"

@@ -27,8 +27,8 @@ _P4M11_U32 = Path("P4M11_U32/U32_eval_weights.pth")
 # ``M0_72k/...``, never by bare basename.
 _M0_72K = Path("M0_72k/mortal_72000.pth")
 
-# Named local Mortal checkpoints. ``mortal`` prefers the promoted V2 candidate
-# once available and falls back to the 70k anchor during training.
+# Historical alias only: `mortal` retains V2 and its legacy K0 fallback.
+# New-game defaults live in workbench.model_catalog; never repoint this alias.
 MORTAL_CHECKPOINTS: dict[str, Path] = {
     "mortal": _V2_CANDIDATE,
     "70k": _ANCHOR_70K,
@@ -53,8 +53,7 @@ MORTAL_SCORE_SEMANTICS: dict[str, str] = {
     "weak": SCORE_SEMANTICS_CALIBRATED_Q,
     "weak_mortal": SCORE_SEMANTICS_CALIBRATED_Q,
     "p4m11_u32": SCORE_SEMANTICS_ACTION_SCORE,
-    # DQN-era checkpoint (control.version=4): emits calibrated Q estimates, so
-    # a difference between two action scores IS a benefit estimate.
+    # DQN-era action-value estimates, not guaranteed real-world收益.
     "m0_72k": SCORE_SEMANTICS_CALIBRATED_Q,
 }
 

@@ -16,6 +16,9 @@ from urllib.request import urlopen, Request
 
 from fastapi import FastAPI, File, Form, Query, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from workbench.model_catalog import (
+    DEFAULT_REVIEW_MODEL, DEFAULT_REVIEW_MODELS, MODEL_LABELS, REVIEW_MODEL_LABELS,
+)
 from replay.normalize import normalize_replay_decisions
 from replay import ladder as ladder_data
 from replay.ladder import SeasonNotFoundError, SeasonRegistryError
@@ -798,7 +801,7 @@ def _review_checkpoint_for_bot_type(bot_type: str) -> Path:
     """
     from workbench.runtime.resolver import MORTAL_CHECKPOINTS, resolve_model_checkpoint
 
-    label = _GUI_MORTAL_MODEL_LABELS.get(bot_type, bot_type)
+    label = MODEL_LABELS.get(bot_type, bot_type)
     canonical = MORTAL_CHECKPOINTS.get(bot_type)
     if canonical is None:
         raise ValueError(f"unknown review model: {bot_type}")
@@ -821,13 +824,9 @@ def _external_review_links(naga_url: str = "", mortal_url: str = "") -> dict[str
     return links
 
 
-_GUI_MORTAL_MODEL_LABELS = {
-    "mortal": "V2 candidate",
-    "70k": "70k",
-    "ext_mortal": "External Mortal",
-    "p4m11_u32": "P4-M11 U32 (policy)",
-    "m0_72k": "M0 72k (control)",
-}
+# Old report tags are data identities, not currently selectable models.
+_HISTORICAL_REVIEW_LABELS = ("V2 candidate", "P4-M11 U32 (policy)", "M0 72k (control)", "70k")
+_GUI_MORTAL_MODEL_LABELS = REVIEW_MODEL_LABELS
 
 
 def _fetch_tenhou_url_events(text: str) -> tuple[list[dict], int]:
@@ -1014,7 +1013,7 @@ def _build_runtime_teacher_report(
         "bot_type": model_type,
         "checkpoint": str(checkpoint),
         "review": {
-            "model_tag": _GUI_MORTAL_MODEL_LABELS.get(model_type, model_type),
+            "model_tag": MODEL_LABELS.get(model_type, model_type),
             "kyokus": list(kyoku_map.values()),
         },
     }
@@ -1077,7 +1076,7 @@ def _list_review_history(
             model = next(
                 (
                     label
-                    for label in _GUI_MORTAL_MODEL_LABELS.values()
+                    for label in (*_GUI_MORTAL_MODEL_LABELS.values(), *_HISTORICAL_REVIEW_LABELS)
                     if label.replace("@", "_").replace("/", "_").replace("\\", "_").replace(" ", "_") == safe_model
                 ),
                 safe_model,
@@ -1107,8 +1106,13 @@ def _list_review_history(
 
     model_order = {
         "External Mortal": 0,
+        "K0": 1,
         "70k": 1,
-        "V2 candidate": 2,
+        "U32": 2,
+        "P4-M11 U32 (policy)": 2,
+        "M0": 3,
+        "M0 72k (control)": 3,
+        "V2 candidate": 4,
     }
     history = list(grouped.values())
     for item in history:
@@ -1125,7 +1129,7 @@ def _list_review_history(
 _DEFAULT_BEHAVIOR_CASEBOOK = BASE_DIR.parent.parent / "artifacts" / "replay_model_reviews"
 _DEFAULT_PAIRED_BEHAVIOR_CASEBOOK = _DEFAULT_BEHAVIOR_CASEBOOK
 def _get_casebook_checkpoint(model_label: str) -> Path:
-    if model_label == "70k":
+    if model_label in {"70k", "K0"}:
         return _default_checkpoint_for_bot_type("70k")
     return _default_checkpoint_for_bot_type("mortal")
 
@@ -1284,7 +1288,7 @@ def _import_case_mjson(
 async def replay(
     player_id: Annotated[int, Form()] = 0,
     checkpoint: Annotated[str, Form()] = "",
-    bot_type: Annotated[str, Form()] = "mortal",
+    bot_type: Annotated[str, Form()] = DEFAULT_REVIEW_MODEL,
     files: Annotated[list[UploadFile], File()] = [],
     json_text: Annotated[str, Form()] = "",
     input_type: Annotated[str, Form()] = "url",
@@ -1395,7 +1399,7 @@ async def replay_multi_teacher(
 
     selected_models = [model.strip() for model in model_types if model and model.strip()]
     if not selected_models:
-        selected_models = ["ext_mortal", "70k", "mortal"]
+        selected_models = list(DEFAULT_REVIEW_MODELS)
     allowed_models = set(_GUI_MORTAL_MODEL_LABELS)
     invalid = [model for model in selected_models if model not in allowed_models]
     if invalid:

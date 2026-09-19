@@ -12,6 +12,7 @@ import { buildReplayHandsForBoard, removeTileOnce, type ReplayEvent } from '../u
 import { useReplayPlayer } from '../hooks/useReplayPlayer';
 import { replayApi } from '../api/replayApi';
 import { routes } from '../routes';
+import { modelDisplayName } from '../utils/modelDisplay';
 import { CN_BAKAZE } from '../utils/constants';
 import { isReplayReviewDiffForPlayer, TILE_ORDER } from '../utils/tileUtils';
 import { isForcedRiichiTsumogiriEntry } from '../utils/reviewComparable';
@@ -654,9 +655,7 @@ export function GameBoardReplayPage() {
 
 function displayReviewerModelLabel(raw: string | undefined): string {
   const label = (raw || '主视角模型').trim();
-  if (label === '70k.pth') return '70k';
-  if (label === 'V2 candidate') return 'candidate';
-  return label.endsWith('.pth') ? label.slice(0, -4) : label;
+  return modelDisplayName(label.endsWith('.pth') ? label.slice(0, -4) : label);
 }
 
 type ResultSummary = {

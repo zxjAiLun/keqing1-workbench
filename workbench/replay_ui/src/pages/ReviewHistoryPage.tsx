@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { replayApi } from '../api/replayApi';
 import { PageHeader, PageShell } from '../components/Layout/PageScaffold';
 import { reviewWorkspaceUrl, routes } from '../routes';
+import { modelDisplayName } from '../utils/modelDisplay';
 import type { ReviewHistoryItem } from '../types/replay';
 
 export function ReviewHistoryPage() {
@@ -56,7 +57,7 @@ export function ReviewHistoryPage() {
             <span style={monoStyle}>{item.created_at}</span>
             <span style={{ fontWeight: 700 }}>{item.player_name || `P${item.player_id}`}</span>
             <span style={modelListStyle}>
-              {item.models.map((model) => <span key={model} style={modelTagStyle}>{model}</span>)}
+              {item.models.map((model) => <span key={model} style={modelTagStyle}>{modelDisplayName(model)}</span>)}
             </span>
             <span>{item.kyoku_count}局 / {item.total_steps}步</span>
             <span style={actionGroupStyle}>

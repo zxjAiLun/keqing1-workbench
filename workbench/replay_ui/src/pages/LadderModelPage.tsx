@@ -11,6 +11,7 @@ import { useLadderSeasonCatalog } from '../hooks/useLadderSeasonCatalog';
 import { useVisibleLiveQuery } from '../hooks/useVisibleLiveQuery';
 import { routes, withLadderSeason } from '../routes';
 import type { LadderAccountRow, LadderModelDetail } from '../types/ladder';
+import { modelDisplayName } from '../utils/modelDisplay';
 import { fmtPt, fmtRank, fmtRate, fmtRating } from '../utils/ladderFormat';
 
 function leagueNum(entry: Record<string, unknown>, key: string): number | null {
@@ -67,7 +68,7 @@ export function LadderModelPage() {
       />
       <PageHeader
         eyebrow="Model Profile"
-        title={model?.model_id ?? modelId ?? '模型详情'}
+        title={modelDisplayName(model?.model_id ?? modelId ?? '模型详情')}
         description={detail ? `${detail.season.title || detail.season.season_id} · ${model?.checkpoint || '未登记 checkpoint'}` : undefined}
         actions={(
           <button type="button" onClick={backToLadder} className="btn-secondary" style={actionButtonStyle}>

@@ -10,7 +10,7 @@ export interface ModelPreset {
 export const MODEL_PRESETS: ModelPreset[] = [
   {
     id: '70k',
-    label: 'Mortal 70k',
+    label: 'K0',
     kind: 'local_model',
     artifact_path: 'artifacts/mortal_training/checkpoints/mortal_default_70k_promoted_candidate.pth',
   },

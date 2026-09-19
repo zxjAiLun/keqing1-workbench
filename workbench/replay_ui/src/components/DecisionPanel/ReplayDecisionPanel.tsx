@@ -1,6 +1,7 @@
 // src/replay_ui/src/components/DecisionPanel/ReplayDecisionPanel.tsx
 import { useEffect, useMemo, useState } from 'react';
 import type { DecisionLogEntry } from '../../types/replay';
+import { modelDisplayName } from '../../utils/modelDisplay';
 import { sameReplayAction } from '../../utils/tileUtils';
 import { decisionColors, decisionBg, decisionBorder } from '../BattleBoard/tableStyles';
 
@@ -193,7 +194,7 @@ export function ReplayDecisionPanel({
             onClick={() => updateTeacherModel(model)}
             style={teacherChipStyle(model === selectedTeacherModel)}
           >
-            {model}
+            {modelDisplayName(model)}
           </button>
         ))}
       </div>

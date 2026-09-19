@@ -203,7 +203,7 @@ def test_review_checkpoint_never_aliases_to_70k(monkeypatch):
         _review_checkpoint_for_bot_type("mortal")
     message = str(excinfo.value)
     assert "unavailable" in message
-    assert "V2 candidate" in message
+    assert "V2 (historical)" in message
     assert "70k" not in message, "报错信息不得暗示已回退到 70k"
 
 

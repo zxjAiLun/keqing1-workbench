@@ -7,7 +7,7 @@ Delivery scope for this integration:
   so it is actually selectable in Play / Review and not only importable,
 * it keeps the DQN-era calibrated-Q reading (its scores ARE benefit estimates,
   unlike the P4-M11 U32 policy endpoint), and
-* it stays a candidate: nothing that used to resolve elsewhere moves onto it.
+* it stays a style alternative: existing aliases do not move onto it.
 
 Why the bundle pins the checkpoint: ``mortal_72000.pth`` is a per-step basename
 shared by dozens of ``model_pool_2026_07`` checkpoints (M0/D1/D2/C/V/S0 runs and
@@ -25,12 +25,12 @@ import pytest
 from inference.mortal_bot import SCORE_SEMANTICS_CALIBRATED_Q
 from workbench.gateway.api.playwithyou import NETWORK_TO_SPEC, PLAYWITHYOU_MODEL_CATALOG
 from workbench.replay.bot import _BOT_CLASSES, _MORTAL_BOT_TYPES
-from workbench.replay.server import _GUI_MORTAL_MODEL_LABELS, _review_checkpoint_for_bot_type
+from workbench.replay.server import _GUI_MORTAL_MODEL_LABELS
 from workbench.runtime.resolver import MORTAL_CHECKPOINTS, score_semantics_for
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODEL_ID = "m0_72k"
-M0_LABEL = "M0 72k (control)"
+M0_LABEL = "M0（已弃用）"
 # Identity the P4-M13 gate-E existing-candidate re-evaluation recorded for the
 # M0 challenger (ovt_existing_m0_solo/run_identity.json).
 M0_SHA256 = "de7f6da7c0c07b89d658554050f2112f09fd9c021247104d5db44228db04823d"
@@ -52,24 +52,20 @@ def _m0_checkpoint() -> Path:
 # --------------------------------------------------------------------------
 
 
-def test_m0_72k_is_registered_as_a_candidate_and_keeps_defaults():
-    # DQN-era checkpoint -> its scores are benefit estimates, not policy logits
-    assert score_semantics_for(MODEL_ID) == SCORE_SEMANTICS_CALIBRATED_Q
-    assert score_semantics_for("p4m11_u32") != SCORE_SEMANTICS_CALIBRATED_Q
-
-    # present in every shared list a named checkpoint must appear in
+def test_m0_72k_is_registered_as_an_optional_candidate_without_repointing_aliases():
+    # DQN-era checkpoint -> its scores are calibrated Q estimates
     assert MODEL_ID in {item["model_id"] for item in PLAYWITHYOU_MODEL_CATALOG}
     assert NETWORK_TO_SPEC[MODEL_ID] == MODEL_ID
     assert MODEL_ID in _BOT_CLASSES
     assert MODEL_ID in _MORTAL_BOT_TYPES
     assert _GUI_MORTAL_MODEL_LABELS[MODEL_ID] == M0_LABEL
+    assert score_semantics_for(MODEL_ID) == SCORE_SEMANTICS_CALIBRATED_Q
+    assert score_semantics_for("p4m11_u32") != SCORE_SEMANTICS_CALIBRATED_Q
 
-    # candidate, not default: existing specs must keep resolving where they did
+    # optional candidate, not a new alias or default
     for spec in ("mortal", "70k", "ext_mortal", "weak", "weak_mortal", "p4m11_u32"):
         assert MORTAL_CHECKPOINTS[spec] != MORTAL_CHECKPOINTS[MODEL_ID]
-        assert score_semantics_for(spec) == score_semantics_for(spec)  # unchanged lookup works
 
-    # addressed by family subpath, never by the ambiguous bare basename
     relative = MORTAL_CHECKPOINTS[MODEL_ID]
     assert relative.name == "mortal_72000.pth"
     assert len(relative.parts) == 2, "must stay addressable only via M0_72k/..."
@@ -109,11 +105,7 @@ def test_m0_baeline_identity_matches_the_evaluation_record():
 
 
 def test_m0_is_selectable_in_the_gui_model_picker_but_is_not_the_default():
-    """The GUI catalog is a second hand-maintained list (see the U32 incident).
-
-    A model can be fully wired server-side and still be unreachable from the UI.
-    Lock the two lists together instead of trusting them to agree.
-    """
+    """M0 is a selectable candidate; U32 stays the Play/new-game default."""
     catalog_ts = (REPO_ROOT / "workbench" / "replay_ui" / "src" / "utils" / "botCatalog.ts").read_text(
         encoding="utf-8"
     )
@@ -121,21 +113,17 @@ def test_m0_is_selectable_in_the_gui_model_picker_but_is_not_the_default():
         encoding="utf-8"
     )
     listed = set(re.findall(r"value:\s*'([a-z0-9_]+)'", catalog_ts))
-    missing = sorted(set(_GUI_MORTAL_MODEL_LABELS) - listed)
-    assert not missing, f"review models missing from the GUI picker: {missing}"
-    assert f"'{MODEL_ID}'" in bot_types_ts, "the GUI BotType union does not know M0"
-
-    # still a candidate: defaults must not move onto M0
-    assert "DEFAULT_BOT_TYPE: BotType = 'mortal'" in catalog_ts
+    assert MODEL_ID in listed
+    assert MODEL_ID in _GUI_MORTAL_MODEL_LABELS
+    assert "DEFAULT_BOT_TYPE: BotType = 'p4m11_u32'" in catalog_ts
+    assert "DEFAULT_REVIEW_MODELS: BotType[] = ['ext_mortal', '70k']" in catalog_ts
     upload = (REPO_ROOT / "workbench" / "replay_ui" / "src" / "components" / "Upload" / "UploadForm.tsx").read_text(
         encoding="utf-8"
     )
-    default_selection = re.search(r"useState<BotType\[\]>\(\[(.*?)\]\)", upload)
-    assert default_selection is not None
-    assert MODEL_ID not in default_selection.group(1)
+    assert "useState<BotType[]>([...DEFAULT_REVIEW_MODELS])" in upload
 
-    # the picker's value must reach the checkpoint resolver
-    assert _review_checkpoint_for_bot_type(MODEL_ID) == _m0_checkpoint()
+    assert f"'{MODEL_ID}'" in bot_types_ts, "the GUI BotType union does not know M0"
+    assert "DEFAULT_REVIEW_MODELS: BotType[] = ['ext_mortal', '70k']" in catalog_ts
 
 
 # --------------------------------------------------------------------------

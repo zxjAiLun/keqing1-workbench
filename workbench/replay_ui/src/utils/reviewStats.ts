@@ -38,8 +38,14 @@ export type ReviewModelStatsRow = {
 /** 模型展示顺序：main bot 家族优先，其余按名称排在后面。 */
 const MODEL_ORDER: Record<string, number> = {
   ext_mortal: 0,
+  'External Mortal': 0,
+  K0: 1,
   '70k': 1,
-  'V2 candidate': 2,
+  U32: 2,
+  'P4-M11 U32 (policy)': 2,
+  M0: 3,
+  'M0 72k (control)': 3,
+  'V2 candidate': 4,
 };
 
 /**

@@ -11,7 +11,7 @@ export function HomePage() {
         <PageHeader
           eyebrow="Compatibility Entry"
           title="Keqing1"
-          description="这是兼容保留的 `/home` 入口。当前 GUI 支持 mortal、70k、weak mortal 和 rulebase。"
+          description="U32 实战首选，M0 可选备选，K0 基准参考。Review 教师独立选择；V2 仅保留历史复盘。"
         />
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center' }}>

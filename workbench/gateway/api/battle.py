@@ -18,6 +18,7 @@ sys.path.insert(
 from gateway.battle import BattleConfig, BattleManager, BattleRoom, get_manager
 from gateway.bot_driver import BotDriver
 from gateway.rating import RatingStore, battle_player_identity
+from workbench.model_catalog import DEFAULT_PLAY_MODEL
 from workbench.runtime.resolver import SUPPORTED_BOT_NAMES
 from workbench.runtime.resolver.model import create_runtime_bot
 from mahjong_env.legal_actions import enumerate_legal_actions
@@ -37,7 +38,7 @@ router = APIRouter(prefix="/api/battle")
 # NOTE: router 在文件末尾 include 到 app（需在所有路由定义之后）
 
 bots: Dict[int, Any] = {}
-BOT_TYPE = os.environ.get("BOT_TYPE", "mortal")
+BOT_TYPE = os.environ.get("BOT_TYPE", DEFAULT_PLAY_MODEL)
 SUPPORTED_BOT_MODELS = set(SUPPORTED_BOT_NAMES)
 
 
@@ -59,7 +60,7 @@ def _cleanup_all_bots() -> None:
 
 
 # 当前选用的 bot 模型名称（由 start_battle 设置）
-current_bot_model: str = "mortal"
+current_bot_model: str = DEFAULT_PLAY_MODEL
 
 
 def _build_bot_names(bot_model: str, count: int) -> List[str]:
@@ -166,13 +167,13 @@ class StartBattleRequest(BaseModel):
     player_name: str = "Player"
     bot_count: int = 3
     seed: Optional[int] = None
-    bot_model: str = "mortal"
+    bot_model: str = DEFAULT_PLAY_MODEL
     game_length: str = "hanchan"
 
 
 class Start4BotRequest(BaseModel):
     seed: Optional[int] = None
-    bot_model: str = "mortal"
+    bot_model: str = DEFAULT_PLAY_MODEL
     game_length: str = "hanchan"
 
 

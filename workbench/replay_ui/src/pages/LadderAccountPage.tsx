@@ -12,6 +12,7 @@ import { useLadderSeasonCatalog } from '../hooks/useLadderSeasonCatalog';
 import { useVisibleLiveQuery } from '../hooks/useVisibleLiveQuery';
 import { routes, withLadderSeason } from '../routes';
 import type { LadderAccountDetail, LadderAccountRow, LadderSeasonScoring } from '../types/ladder';
+import { modelDisplayName } from '../utils/modelDisplay';
 import { fmtPt, fmtRate, fmtRating, fmtSignedInt } from '../utils/ladderFormat';
 
 const RECENT_GAMES_LIMIT = 50;
@@ -68,7 +69,7 @@ export function LadderAccountPage() {
       <PageHeader
         eyebrow="Account Profile"
         title={account?.display_name ?? '账号详情'}
-        description={detail ? `${detail.season.title || detail.season.season_id} · ${account?.model_id}` : undefined}
+        description={detail ? `${detail.season.title || detail.season.season_id} · ${modelDisplayName(account?.model_id ?? '')}` : undefined}
         actions={(
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button type="button" onClick={backToLadder} className="btn-secondary" style={actionButtonStyle}>
@@ -121,7 +122,7 @@ export function LadderAccountPage() {
                   )}
                 </div>
                 <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
-                  模型 <button type="button" onClick={openModel} style={linkButtonStyle}>{account.model_id}</button>
+                  模型 <button type="button" onClick={openModel} style={linkButtonStyle}>{modelDisplayName(account.model_id)}</button>
                 </div>
                 {account.checkpoint && (
                   <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text-muted)', fontFamily: 'Menlo, Consolas, monospace', wordBreak: 'break-all' }}>

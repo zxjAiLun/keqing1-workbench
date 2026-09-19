@@ -295,15 +295,16 @@
       <div style="flex:1;min-width:130px">
         <label for="bot-type">模型类型</label>
         <select id="bot-type">
-          <option value="mortal" selected>mortal · 当前主线</option>
-          <option value="70k">70k · 标准锚点</option>
-          <option value="ext_mortal">External Mortal</option>
+          <option value="ext_mortal" selected>External Mortal · Review 参考</option>
+          <option value="70k">K0 · 基准参考</option>
+          <option value="p4m11_u32">U32 · 实战首选（非 Q）</option>
+          <option value="m0_72k">M0 · 可选备选</option>
           <option value="rulebase">rulebase · 规则基线</option>
         </select>
       </div>
       <div style="flex:2;min-width:200px">
         <label for="checkpoint">模型路径</label>
-        <input type="text" id="checkpoint" value="artifacts/mortal_serving/gui_mortal.pth">
+        <input type="text" id="checkpoint" value="" placeholder="留空按模型 ID 解析">
       </div>
       <button id="btn-run">▶ 运行 Review</button>
     </div>
@@ -760,9 +761,10 @@ jsonTextarea.addEventListener('input', () => {
 
 // bot 类型切换时自动更新默认 checkpoint 路径
 const BOT_DEFAULTS = {
-  mortal: 'artifacts/mortal_serving/gui_mortal.pth',
-  '70k': 'artifacts/mortal_serving/70k.pth',
-  ext_mortal: 'artifacts/external_mortal_20240308_best_min.pth',
+  '70k': '',
+  ext_mortal: '',
+  p4m11_u32: '',
+  m0_72k: '',
   rulebase: '',
 };
 const checkpointInput = document.getElementById('checkpoint');

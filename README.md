@@ -3,6 +3,15 @@
 Control-plane application for the Mortal-based Riichi Mahjong stack: Tenhou
 Gateway, replay/review, participants/ladder operations, and the React UI.
 
+## 模型与资料入口
+
+- [模型选择、别名与研究/产品状态](workbench/MODELS.md)：**U32 实战首选、M0 可选备选、K0 基准参考**（内部 ID 保留 `70k`）。`mortal` 保留历史 V2 身份，不改指 U32。
+- 强度、打法和后续训练看相邻 Experiment 的 [研发总览](../keqing1_experiment/training/docs/mortal/研发总览_当前.md)，Workbench 不另维护研究裁决。
+- 共享资产在 `E:/AUbuntuProject/keqing-data`：发布权重位于 `mortal/authoritative/`，网站教师原始报告位于 `teacher-reports/`；本地 Review 输出仍在本仓库 `artifacts/replay_model_reviews/`，二者不能混作蒸馏来源。
+- 新对局默认 U32；Review 默认教师独立为 External Mortal + K0，U32/M0 可加入对照，V2 不再提供新建 Review 选项。历史记录与权重不改写；产品首选不等于已证明实力分档。
+
+下方 setup 是准备新环境的流程，不是每次使用前必跑。已有 Windows CUDA 环境不因文档整理而重装。
+
 This repository was split from `keqing1` at commit `b714e5c` (initial split).
 The training repository is `keqing1_experiment`; runtime data shared between
 them lives in `KEQING_DATA_ROOT` (defaults to the shared `keqing-data`

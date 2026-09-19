@@ -18,6 +18,8 @@ import {
 } from "../api/playwithyouApi";
 import { useNavigate } from "react-router-dom";
 import { routes } from "../routes";
+import { defaultPlayModel } from "../utils/botCatalog";
+import { modelDisplayName } from "../utils/modelDisplay";
 
 const ACCENT = "var(--accent)";
 
@@ -38,7 +40,7 @@ function shortSpec(spec: string): string {
   if (spec.includes("/") || spec.includes("\\")) {
     return spec.split(/[\\/]/).pop() || spec;
   }
-  return spec;
+  return modelDisplayName(spec);
 }
 
 function Segmented<T extends string>({
@@ -96,7 +98,7 @@ export function PlayWithYouPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // PWY UX Repair：固定三槽；catalog 加载完成后再决定 AI #1 默认值（70k 或首个）。
+  // 固定三槽：目录加载后 AI #1 默认 U32；缺失时不静默替换其它模型。
   const [slots, setSlots] = useState<string[]>(["", "", ""]);
   const [models, setModels] = useState<RuntimeModelInfo[]>([]);
   const [catalogLoaded, setCatalogLoaded] = useState(false);
@@ -176,12 +178,9 @@ export function PlayWithYouPage() {
       .then((resp) => {
         setModels(resp.models);
         setCatalogLoaded(true);
-        // 运行时模型目录驱动的安全默认：AI #1 = 70k（存在时），否则 catalog 第一个；
-        // AI #2/#3 维持"不呼出"；已选但已不在目录的槽位回退为不呼出。
+        // AI #1 = U32；AI #2/#3 维持不呼出。
         setSlots((prev) => {
-          const first = resp.models.find((m) => m.model_id === "70k")?.model_id
-            ?? resp.models[0]?.model_id
-            ?? "";
+          const first = defaultPlayModel(resp.models);
           return [
             first,
             resp.models.some((m) => m.model_id === prev[1]) ? prev[1] : "",

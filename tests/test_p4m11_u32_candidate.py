@@ -8,7 +8,8 @@ Delivery scope for this integration:
 * the Q-difference features (benefit loss / error severity) are NOT applied to
   it, because its output is a policy action score, not a calibrated Q.
 
-U32 is a candidate: it must not take the default or any alias.
+U32 is the preferred new-game model; historical aliases keep their checkpoints.
+Review teacher defaults remain independent.
 
 The play smoke at the bottom drives the *battle* entry (the one
 ``/battle/start_4bot`` and ``/battle/advance`` use) rather than the stored-replay
@@ -53,7 +54,7 @@ MODEL_ID = "p4m11_u32"
 PLAYER_ID = 0
 # Frozen identity of the P4-M11 evaluation export, see U32_eval_weights.provenance.json.
 U32_SHA256 = "3703c943a64a00ca128f4a5f5f989d446dc5814c7e70dc50527d2756039a8add"
-U32_LABEL = "P4-M11 U32 (policy)"
+U32_LABEL = "U32"
 
 
 def _require_cuda():
@@ -117,11 +118,11 @@ def _play_u32_once() -> dict:
 
 
 # --------------------------------------------------------------------------
-# 1. registration: independent id, K0 keeps the default and the aliases
+# 1. registration: independent id, historical aliases unchanged
 # --------------------------------------------------------------------------
 
 
-def test_p4m11_u32_is_registered_as_a_candidate_and_keeps_k0_default():
+def test_p4m11_u32_is_registered_without_repointing_aliases():
     assert score_semantics_for(MODEL_ID) == SCORE_SEMANTICS_ACTION_SCORE
     assert score_semantics_for("70k") == SCORE_SEMANTICS_CALIBRATED_Q
     assert score_semantics_for("ext_mortal") == SCORE_SEMANTICS_CALIBRATED_Q
@@ -132,14 +133,14 @@ def test_p4m11_u32_is_registered_as_a_candidate_and_keeps_k0_default():
     assert MODEL_ID in _MORTAL_BOT_TYPES
     assert _GUI_MORTAL_MODEL_LABELS[MODEL_ID] == U32_LABEL
 
-    # candidate, not default: nothing that used to resolve elsewhere moved onto U32
+    # New-game preference is explicit; no existing alias moves onto U32.
     assert NETWORK_TO_SPEC["mortal"] == "mortal"
     assert MORTAL_CHECKPOINTS[MODEL_ID].name == "U32_eval_weights.pth"
     for spec in ("mortal", "70k", "ext_mortal", "weak", "weak_mortal"):
         assert MORTAL_CHECKPOINTS[spec] != MORTAL_CHECKPOINTS[MODEL_ID]
 
 
-def test_u32_is_selectable_in_the_gui_model_picker_but_is_not_the_default():
+def test_u32_is_selectable_and_preferred_for_play_not_default_review():
     """The product's model picker is a second, hand-maintained list.
 
     A model can therefore be fully wired server-side and still be unreachable
@@ -159,13 +160,13 @@ def test_u32_is_selectable_in_the_gui_model_picker_but_is_not_the_default():
     assert not missing, f"review models missing from the GUI picker: {missing}"
     assert f"'{MODEL_ID}'" in bot_types_ts, "the GUI BotType union does not know U32"
 
-    # selectable, but still a candidate: the defaults must not move onto U32
-    assert "DEFAULT_BOT_TYPE: BotType = 'mortal'" in catalog_ts
-    default_selection = re.search(r"useState<BotType\[\]>\(\[(.*?)\]\)", (
+    # Owner final decision: new Play = U32; Review remains independent.
+    assert "DEFAULT_BOT_TYPE: BotType = 'p4m11_u32'" in catalog_ts
+    assert "DEFAULT_REVIEW_MODELS: BotType[] = ['ext_mortal', '70k']" in catalog_ts
+    upload = (
         REPO_ROOT / "workbench" / "replay_ui" / "src" / "components" / "Upload" / "UploadForm.tsx"
-    ).read_text(encoding="utf-8"))
-    assert default_selection is not None
-    assert MODEL_ID not in default_selection.group(1)
+    ).read_text(encoding="utf-8")
+    assert "useState<BotType[]>([...DEFAULT_REVIEW_MODELS])" in upload
 
     # the picker's value is what the review endpoint hands to the checkpoint resolver
     assert _review_checkpoint_for_bot_type(MODEL_ID) == _u32_checkpoint()

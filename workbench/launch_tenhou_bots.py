@@ -26,6 +26,7 @@ from gateway.tenhou_bot_client import (
 )
 from gateway.tenhou_bridge import normalize_tenhou_room
 
+from workbench.model_catalog import DEFAULT_PLAY_MODEL
 from workbench.runtime.resolver import MORTAL_CHECKPOINTS, resolve_bot_spec
 
 MAX_BOTS = 4
@@ -280,9 +281,9 @@ def main() -> None:
     parser.add_argument(
         "--bots",
         nargs="+",
-        default=["mortal"],
+        default=[DEFAULT_PLAY_MODEL],
         help=(
-            "One spec per bot account (order = seat-agnostic accounts). "
+            "One spec per bot account (default U32; M0 style alternative; 70k = K0). "
             f"Known names: {sorted(MORTAL_CHECKPOINTS)} and 'rulebase'; "
             "or an explicit .pth/.pt/.ckpt path. Max %d accounts." % MAX_BOTS
         ),

@@ -11,6 +11,7 @@ import { useEffect } from 'react';
 import type { ReplayData } from '../../types/replay';
 import { sameReplayAction } from '../../utils/tileUtils';
 import { isReplayReviewComparableEntry } from '../../utils/reviewComparable';
+import { modelDisplayName } from '../../utils/modelDisplay';
 import { computeReviewModelStats } from '../../utils/reviewStats';
 
 export function ReplayStatsDialog({ data, onClose }: { data: ReplayData; onClose: () => void }) {
@@ -91,7 +92,7 @@ export function ReplayStatsDialog({ data, onClose }: { data: ReplayData; onClose
                   const pct = item.total ? item.match / item.total * 100 : 0;
                   return (
                     <tr key={item.model} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={statsTdStyle} title={item.model}>{item.model}</td>
+                      <td style={statsTdStyle} title={item.model}>{modelDisplayName(item.model)}</td>
                       <td style={{ ...statsTdStyle, textAlign: 'right', fontFamily: 'Menlo, Consolas, monospace' }}>
                         {item.similarity === null || item.similarity === undefined ? '—' : `${item.similarity.toFixed(1)}%`}
                       </td>

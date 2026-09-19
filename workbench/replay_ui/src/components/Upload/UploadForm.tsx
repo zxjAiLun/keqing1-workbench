@@ -1,7 +1,7 @@
 // src/replay_ui/src/components/Upload/UploadForm.tsx
 import { useState, useRef } from 'react';
 import type { BotType } from '../../types/bot';
-import { GUI_BOT_CATALOG } from '../../utils/botCatalog';
+import { REVIEW_BOT_CATALOG, DEFAULT_REVIEW_MODELS } from '../../utils/botCatalog';
 
 interface UploadFormProps {
   onDataLoaded: (data: unknown) => void;
@@ -444,9 +444,9 @@ function ModelSelector({
           </button>
         </span>
       </div>
-      <FieldHint>选择一个或多个 checkpoint 生成并排 teacher overlay。</FieldHint>
+      <FieldHint>默认教师为 External Mortal + K0，与 U32 实战默认独立。U32 / M0 可加入动作对照；V2 仅保留历史复盘。</FieldHint>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 6, marginTop: 6 }}>
-        {GUI_BOT_CATALOG.map((bot) => {
+        {REVIEW_BOT_CATALOG.map((bot) => {
           const active = selectedModels.includes(bot.value);
           return (
             <button
@@ -507,7 +507,7 @@ export function UploadForm({ onDataLoaded, onUploadStart }: UploadFormProps) {
   const [tenhou6Files, setTenhou6Files] = useState<File[]>([]);
   const [mjaiFiles, setMjaiFiles] = useState<File[]>([]);
   const [playerId, setPlayerId]   = useState<string>('auto');
-  const [selectedModels, setSelectedModels] = useState<BotType[]>(['ext_mortal', '70k', 'mortal']);
+  const [selectedModels, setSelectedModels] = useState<BotType[]>([...DEFAULT_REVIEW_MODELS]);
   const [nagaUrl, setNagaUrl] = useState('');
   const [mortalUrl, setMortalUrl] = useState('');
   const [loading, setLoading]     = useState(false);
@@ -729,7 +729,7 @@ export function UploadForm({ onDataLoaded, onUploadStart }: UploadFormProps) {
         <ModelSelector
           selectedModels={selectedModels}
           onToggle={toggleModel}
-          onSelectAll={() => setSelectedModels(GUI_BOT_CATALOG.map((bot) => bot.value))}
+          onSelectAll={() => setSelectedModels(REVIEW_BOT_CATALOG.map((bot) => bot.value))}
           onClear={() => setSelectedModels([])}
           disabled={loading}
         />

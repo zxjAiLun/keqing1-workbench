@@ -30,6 +30,7 @@ for _dir in (str(_SRC_DIR), str(_SCRIPTS_DIR), str(_PROJECT_ROOT)):
 
 from inference.rulebase_bot import RulebaseBot
 from inference.mortal_bot import MortalReviewBot
+from workbench.model_catalog import DEFAULT_REVIEW_MODEL, REVIEW_MODEL_LABELS
 from workbench.runtime.resolver import resolve_bot_spec, resolve_model_checkpoint
 
 # bot 类型 → run_replay_from_source 内部创建 Bot 时用
@@ -177,7 +178,7 @@ def run_replay_from_source(
         输入内容类型："auto"（自动检测）、"tenhou6"（tenhou6 JSON）、"mjai"（mjai JSONL）。
         "url" 模式下 source 已是 mjai 事件列表。
     bot_type : str
-        Bot type: `mortal` / `70k` / `ext_mortal` / `rulebase`.
+        Named checkpoint ID (U32 / M0 / K0 / External), or historical `mortal`.
         `rulebase` 不加载 checkpoint；其余模型在 checkpoint 为 None 时使用默认路径。
 
     Returns
@@ -568,9 +569,9 @@ def main():
     )
     parser.add_argument(
         "--bot-type",
-        default="mortal",
-        choices=["mortal", "70k", "ext_mortal", "rulebase"],
-        help="Bot 类型：mortal / 70k / ext_mortal / rulebase",
+        default=DEFAULT_REVIEW_MODEL,
+        choices=[*REVIEW_MODEL_LABELS, "rulebase"],
+        help="Review 模型：External / K0(70k) / U32(p4m11_u32) / M0(m0_72k) / rulebase；V2 仅保留历史",
     )
     parser.add_argument("--output", default=None, help="HTML 输出路径")
     parser.add_argument(

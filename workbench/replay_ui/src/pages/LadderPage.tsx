@@ -11,6 +11,7 @@ import { useLadderSeasonCatalog } from '../hooks/useLadderSeasonCatalog';
 import { useVisibleLiveQuery } from '../hooks/useVisibleLiveQuery';
 import { routes, withLadderSeason } from '../routes';
 import type { LadderAccountRow, LadderModelSummary, LadderResponse, LadderSeasonScoring } from '../types/ladder';
+import { modelDisplayName } from '../utils/modelDisplay';
 import { fmtPt, fmtRank, fmtRate, fmtRating } from '../utils/ladderFormat';
 
 const SORT_OPTIONS = [
@@ -180,7 +181,7 @@ export function LadderPage() {
                     style={modelCardStyle}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>{model.model_id}</span>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>{modelDisplayName(model.model_id)}</span>
                       <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{model.accounts} 账号 · {model.games} 场</span>
                     </div>
                     <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -244,7 +245,7 @@ export function LadderPage() {
                       >
                         <td style={{ ...tdStyle, fontWeight: 800, color: 'var(--text-muted)' }}>{row.rank_position}</td>
                         <td style={{ ...tdStyle, fontWeight: 800, color: 'var(--accent)' }}>{row.display_name}</td>
-                        <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{row.model_id}</td>
+                        <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{modelDisplayName(row.model_id)}</td>
                         <td style={{ ...tdStyle, fontWeight: 800 }}>
                           {row.rank_name || '七段'}
                           {row.tenhou_reached ? ' 👑' : ''}

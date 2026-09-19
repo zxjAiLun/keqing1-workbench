@@ -24,6 +24,8 @@ from riichienv import Observation, Observation3P, RiichiEnv
 
 from mahjong_env.action_space import IDX_TO_TILE_NAME
 from mahjong_env.tiles import normalize_tile
+from workbench.model_catalog import DEFAULT_PLAY_MODEL
+from workbench.runtime.resolver import MORTAL_CHECKPOINTS
 from mahjong.tile import FIVE_RED_MAN, FIVE_RED_PIN, FIVE_RED_SOU
 
 logger = logging.getLogger(__name__)
@@ -226,13 +228,14 @@ def _resolve_model_path(
         return None
     if model_path is not None:
         return Path(model_path)
-    # Named Mortal checkpoints now live under the shared keqing-data root
-    # (authoritative models dir).  Reuse bot_registry's family-relative anchor
-    # for the "mortal" default so V2/V3-style collisions never get guessed.
-    from workbench.runtime.resolver import MORTAL_CHECKPOINTS, resolve_model_checkpoint
+    # Explicit named models use their frozen family path. Keep this client's
+    # historical `mortal` -> K0 compatibility; never repoint an old alias to U32.
+    from workbench.runtime.resolver import resolve_model_checkpoint
 
     if bot_name == "mortal":
         anchor = MORTAL_CHECKPOINTS["70k"]
+    elif bot_name in MORTAL_CHECKPOINTS:
+        anchor = MORTAL_CHECKPOINTS[bot_name]
     else:
         anchor = Path("artifacts") / "models" / bot_name / "best.pth"
     try:
@@ -1268,7 +1271,7 @@ class DecisionAgentSpec:
     rank_pt_lambda: float = 0.0
 
 
-DEFAULT_DECISION_AGENT_SPEC = DecisionAgentSpec(model_version="mortal")
+DEFAULT_DECISION_AGENT_SPEC = DecisionAgentSpec(model_version=DEFAULT_PLAY_MODEL)
 DECISION_AGENT_SPECS: dict[str, DecisionAgentSpec] = {}
 
 
@@ -1627,7 +1630,7 @@ def create_riichi_dev_agent(
         return ValidationSafeAgent()
     if bot_name == "rulebase":
         return RulebaseObservationAgent()
-    if bot_name == "mortal":
+    if bot_name in MORTAL_CHECKPOINTS:
         resolved_model_path = _resolve_model_path(
             bot_name=bot_name,
             project_root=project_root,
@@ -1648,7 +1651,7 @@ def create_riichi_dev_agent(
 @dataclass(slots=True)
 class RiichiDevClientConfig:
     token: str
-    bot_name: str = "mortal"
+    bot_name: str = DEFAULT_PLAY_MODEL
     model_version: str | None = None
     queue: str = "ranked"
     base_url: str = DEFAULT_BASE_URL
@@ -2289,8 +2292,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run supported keqing bots on riichi.dev")
     parser.add_argument(
         "--bot-name",
-        default="mortal",
-        help="bot family / checkpoint namespace to run (mortal, rulebase)",
+        default=DEFAULT_PLAY_MODEL,
+        help="named model: p4m11_u32 (preferred), 70k (K0), ext_mortal; or rulebase; M0 is historical and deprecated",
     )
     parser.add_argument(
         "--model-version",
@@ -2416,7 +2419,7 @@ async def _async_main(args: argparse.Namespace) -> None:
     explicit_model_path = Path(args.model_path) if args.model_path else None
 
     if args.mode == "local":
-        isolated_agents = args.bot_name == "mortal" and not args.validation_safe
+        isolated_agents = args.bot_name in MORTAL_CHECKPOINTS and not args.validation_safe
         agent = None
         agents = None
         if isolated_agents:
@@ -2486,7 +2489,7 @@ async def _async_main(args: argparse.Namespace) -> None:
         model_version=args.model_version or None,
         rank_pt_lambda=args.rank_pt_lambda,
         validation_safe=args.validation_safe,
-        preload_mortal=args.bot_name == "mortal",
+        preload_mortal=args.bot_name in MORTAL_CHECKPOINTS,
     )
 
     config = RiichiDevClientConfig(
@@ -2507,7 +2510,7 @@ async def _async_main(args: argparse.Namespace) -> None:
         auto_reconnect=not args.no_auto_reconnect,
         reconnect_delay_sec=args.reconnect_delay_sec,
         action_deadline_ms=args.action_deadline_ms,
-        preload_mortal=args.bot_name == "mortal",
+        preload_mortal=args.bot_name in MORTAL_CHECKPOINTS,
         disable_ws_proxy=not args.allow_ws_proxy,
         ws_proxy=args.ws_proxy or None,
     )

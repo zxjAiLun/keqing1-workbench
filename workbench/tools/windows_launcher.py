@@ -170,7 +170,12 @@ def load_review_history(project_root: Path) -> list[dict]:
 
     grouped: dict[tuple[str, int], dict] = {}
     model_labels = {
-        "70k": "70k",
+        "70k": "K0",
+        "K0": "K0",
+        "U32": "U32",
+        "P4-M11_U32_(policy)": "U32",
+        "M0": "M0",
+        "M0_72k_(control)": "M0",
         "ext_mortal": "ext_mortal",
         "V2_candidate": "V2 candidate",
     }
@@ -203,8 +208,10 @@ def load_review_history(project_root: Path) -> list[dict]:
 
     model_order = {
         "ext_mortal": 0,
-        "70k": 1,
-        "V2 candidate": 2,
+        "K0": 1,
+        "U32": 2,
+        "M0": 3,
+        "V2 candidate": 4,
     }
     items = list(grouped.values())
     for item in items:

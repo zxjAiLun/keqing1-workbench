@@ -60,7 +60,7 @@ export function ModelFormModal({
         </label>
         <label style={labelStyle}>
           名称
-          <input value={label} onChange={(e) => setLabel(e.target.value)} style={inputStyle} autoFocus placeholder="如 Mortal 70k / Mortal 4.1b" />
+          <input value={label} onChange={(e) => setLabel(e.target.value)} style={inputStyle} autoFocus placeholder="如 K0 / U32 / M0 / Mortal 4.1b" />
         </label>
         <label style={labelStyle}>
           类型

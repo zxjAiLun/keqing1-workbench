@@ -11,9 +11,8 @@ Design notes:
   private gateway selected from the configured dedicated port range. A second
   concurrent session is still rejected until the first one is stopped.
  * UI sends human-friendly network ids (``mortal`` / ``70k`` / ``ext_mortal`` /
-  ``none`` / ``custom``); we translate them into launcher specs
-  (named checkpoints or absolute ``.pth`` paths) here, keeping the frontend
-  dumb.
+  ``p4m11_u32`` / ``m0_72k`` / ``none`` / ``custom``); we translate them into launcher specs
+  (named checkpoints or absolute ``.pth`` paths) here, keeping the frontend dumb.
 """
 from __future__ import annotations
 
@@ -32,6 +31,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from workbench.model_catalog import DEFAULT_PLAY_MODEL, PLAY_MODEL_CATALOG
 from workbench.runtime.resolver import data_path, ladder_capture_root
 
 logger = logging.getLogger(__name__)
@@ -63,17 +63,9 @@ NETWORK_TO_SPEC: Dict[str, str] = {
     "m0_72k": "m0_72k",
 }
 
-# R11-B：Play-with-you 运行时模型目录。只暴露具名 Mortal checkpoints
-# （70k / ext_mortal / p4m11_u32 / m0_72k）；不读 Participants registry，后续从
-# keqing-data authoritative 扩展时再扩充此目录。
-# p4m11_u32 是 K0 替代候选（Gate A 通过 / Gate B 未通过），可选但**不是**默认。
-# m0_72k 是 D1 population control（备选候选，solo 对 K0 未越 U32），同样可选、非默认。
-PLAYWITHYOU_MODEL_CATALOG: list[dict] = [
-    {"model_id": "70k", "label": "70k"},
-    {"model_id": "ext_mortal", "label": "ext_mortal"},
-    {"model_id": "p4m11_u32", "label": "P4-M11 U32 (policy)"},
-    {"model_id": "m0_72k", "label": "M0 72k (control)"},
-]
+# Named runtime choices, not Participants identities. IDs and checkpoint bindings
+# are stable; product labels/order reflect the final existing-candidate decision.
+PLAYWITHYOU_MODEL_CATALOG = PLAY_MODEL_CATALOG
 _PLAYWITHYOU_MODEL_IDS = {entry["model_id"] for entry in PLAYWITHYOU_MODEL_CATALOG}
 
 # Hard cap on remembered log lines per session (bound memory; GUI shows a tail).
@@ -694,7 +686,7 @@ class StartPlayWithYouRequest(BaseModel):
     speed: str = "normal"
     quantity: int = 1
     # Per-slot network id, length 4. Slots beyond `quantity` are ignored; "none" = no bot.
-    networks: List[str] = ["mortal", "none", "none", "none"]
+    networks: List[str] = [DEFAULT_PLAY_MODEL, "none", "none", "none"]
     # Absolute custom checkpoint paths keyed by slot index (0-based) for "custom".
     custom_paths: Dict[int, str] = {}
     device: str = "cuda"
@@ -774,7 +766,7 @@ class PlayWithYouStatus(BaseModel):
 def list_playwithyou_models() -> dict:
     """R11-B：Play-with-you 运行时模型目录。
 
-    只暴露具名 Mortal checkpoints（70k / ext_mortal），不读 Participants
+    只暴露具名 checkpoint（U32 / M0 / K0 / External Mortal），不读 Participants
     ModelIdentity/Artifact。前端据此渲染"模型下拉"。
     """
     return {

@@ -9,6 +9,11 @@
 | --- | --- | --- |
 | `p4m11_u32`（U32） | 新对局 / Play 实战首选 | policy action score；Review 不显示 Q 差收益损失 |
 | `m0_72k`（M0） | 可选备选；M0_control / seed 20260807 / 72k。**不是 V2@74000** | DQN calibrated Q；不是默认、不是正式天梯晋级 |
+| `consensus_v1`（共识v1） | 外部蒸馏模型；distill_consensus_v3.pth | DQN calibrated Q；已开放赛季天梯/Play/Review |
+| `nova_v1`（novav1） | 外部蒸馏模型；distill_nova.pth | DQN calibrated Q；已开放赛季天梯/Play/Review |
+| `luckyj_v1`（luckyjv1） | 外部模型；luckyj_clone_v1.pth | DQN calibrated Q；已开放赛季天梯/Play/Review |
+| `unknown_v1`（未知v1） | 外部模型；unknown1.pth (PolicyNet 2层MLP) | policy action score；已开放赛季天梯/Play/Review |
+| `nova_v2`（novav2） | 外部蒸馏模型；distill_nova_v2.pth | DQN calibrated Q；已开放赛季天梯/Play/Review |
 | `70k`（K0） | 基准参考；内部 ID、路径和历史关联保留 | DQN 动作价值估计 |
 | `ext_mortal` | 本地 2024-03-08 external 参考权重，不是网站 4.1a/b/c | DQN 动作价值估计 |
 | `mortal` | 历史 V2 别名，缺失时仍保留旧 K0 回退；不重指 U32 | 不再提供新建 Review 选项 |
@@ -37,7 +42,12 @@
 - external：同一发布包下 `models/ext_mortal/external_mortal_20240308_best_min.pth`
 - V2：同一发布包下 `models/V2_74000/mortal_74000.pth`
 - U32：`mortal/authoritative/P4M11_U32_2026_09/models/P4M11_U32/U32_eval_weights.pth`
-- M0：`mortal/authoritative/M0_72k_s20260807/models/M0_72k/mortal_72000.pth`（历史、已弃用）
+- M0：`mortal/authoritative/M0_72k_s20260807/models/M0_72k/mortal_72000.pth`（历史、可选）
+- 共识v1：`mortal/authoritative/external/distill_consensus_v3.pth`
+- novav1：`mortal/authoritative/external/distill_nova.pth`
+- luckyjv1：`mortal/authoritative/external/luckyj_clone_v1.pth`
+- 未知v1：`mortal/authoritative/external/unknown1.pth`
+- novav2：`mortal/authoritative/external/distill_nova_v2.pth`
 
 U32 本次文件 SHA-256 核对为 `3703c943a64a00ca128f4a5f5f989d446dc5814c7e70dc50527d2756039a8add`，
 与既有发布身份一致。没有重新导出、覆盖或加载 GPU。

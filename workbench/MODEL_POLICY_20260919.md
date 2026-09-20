@@ -4,7 +4,9 @@
 
 - U32：新实战首选；M0：可选备选；70k：展示名 K0，内部 ID 不变。
 - Review 默认 External Mortal + K0，与实战默认独立；可手选 U32/M0。
-- 新建 Review（React、旧 HTML、multi-teacher API、Review CLI）提供 External、K0、U32 和 M0；V2/mortal 仅保留历史。
+- 新建 Review（React、旧 HTML、multi-teacher API、Review CLI）提供 External、K0、U32、M0 以及外部 5 模型（共识v1、novav1、luckyjv1、未知v1、novav2）；V2/mortal 仅保留历史。
+- 外部 5 模型（共识v1、novav1、luckyjv1、未知v1、novav2）已在 participants 注册并授予 ladder_eligible（赛季天梯）、playwithyou_allowed（个室呼出）与 review_allowed（复盘审查）。
+- Review 页面采用直观复选框 (Checkbox) 形式，支持自由多选勾选哪些模型就用哪些模型跑审查。
 - 历史 V2 报告和严格 checkpoint 解析保留；旧 HTTP/Python API 显式调用兼容保留。
 - U32 policy action score 不显示 Q 差收益损失；DQN 的 Q 是模型价值估计，不保证真实收益。
 

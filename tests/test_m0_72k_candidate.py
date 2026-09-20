@@ -30,7 +30,7 @@ from workbench.runtime.resolver import MORTAL_CHECKPOINTS, score_semantics_for
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODEL_ID = "m0_72k"
-M0_LABEL = "M0（已弃用）"
+M0_LABEL = "M0"
 # Identity the P4-M13 gate-E existing-candidate re-evaluation recorded for the
 # M0 challenger (ovt_existing_m0_solo/run_identity.json).
 M0_SHA256 = "de7f6da7c0c07b89d658554050f2112f09fd9c021247104d5db44228db04823d"

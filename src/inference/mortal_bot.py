@@ -60,6 +60,8 @@ def _model_dimensions(state: dict[str, Any]) -> tuple[int, int, int]:
 
 def _score_semantics_of(state: dict[str, Any]) -> str:
     """Which kind of number a checkpoint's per-action output is."""
+    if "policy_net" in state:
+        return SCORE_SEMANTICS_ACTION_SCORE
     contract = state.get("training_contract")
     if isinstance(contract, dict) and contract.get("schema") == STUDENT_POLICY_CONTRACT_SCHEMA:
         return SCORE_SEMANTICS_ACTION_SCORE
@@ -240,14 +242,33 @@ class MortalReviewBot:
         if self._mortal_engine is not None:
             return Bot(self._mortal_engine, self.player_id)
 
-        state = torch.load(self.model_path, weights_only=True, map_location=torch.device("cpu"))
+        state = torch.load(self.model_path, weights_only=False, map_location=torch.device("cpu"))
         version, conv_channels, num_blocks = _model_dimensions(state)
         self.score_semantics = _score_semantics_of(state)
 
         brain = Brain(version=version, conv_channels=conv_channels, num_blocks=num_blocks).eval()
-        dqn = DQN(version=version).eval()
         brain.load_state_dict(state["mortal"])
-        dqn.load_state_dict(state["current_dqn"])
+
+        if "policy_net" in state:
+            import torch.nn as nn
+
+            class PolicyNetHead(nn.Module):
+                def __init__(self, state_dict):
+                    super().__init__()
+                    self.fc1 = nn.Linear(1024, 256)
+                    self.act = nn.Mish()
+                    self.fc2 = nn.Linear(256, MORTAL_ACTION_SPACE)
+                    self.load_state_dict(state_dict)
+
+                def forward(self, phi, mask):
+                    x = self.act(self.fc1(phi))
+                    logits = self.fc2(x)
+                    return logits.masked_fill(~mask, -torch.inf)
+
+            dqn = PolicyNetHead(state["policy_net"]).eval()
+        else:
+            dqn = DQN(version=version).eval()
+            dqn.load_state_dict(state["current_dqn"])
         self.model = brain
         engine = MortalEngine(
             brain,

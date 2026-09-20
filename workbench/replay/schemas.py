@@ -7,7 +7,19 @@ from pydantic import BaseModel, Field
 from workbench.model_catalog import DEFAULT_REVIEW_MODEL
 
 # Includes historical V2 metadata; it is not a new Review picker option.
-BotType = Literal["mortal", "70k", "ext_mortal", "p4m11_u32", "m0_72k", "rulebase"]
+BotType = Literal[
+    "mortal",
+    "70k",
+    "ext_mortal",
+    "p4m11_u32",
+    "m0_72k",
+    "consensus_v1",
+    "nova_v1",
+    "luckyj_v1",
+    "unknown_v1",
+    "nova_v2",
+    "rulebase",
+]
 
 
 class ReplaySubmitRequest(BaseModel):

@@ -41,9 +41,26 @@ _BOT_CLASSES = {
     "ext_mortal": MortalReviewBot,
     "p4m11_u32": MortalReviewBot,
     "m0_72k": MortalReviewBot,
+    "consensus_v1": MortalReviewBot,
+    "nova_v1": MortalReviewBot,
+    "luckyj_v1": MortalReviewBot,
+    "unknown_v1": MortalReviewBot,
+    "nova_v2": MortalReviewBot,
     "rulebase": RulebaseBot,
 }
-_MORTAL_BOT_TYPES = {"mortal", "70k", "weak_mortal", "ext_mortal", "p4m11_u32", "m0_72k"}
+_MORTAL_BOT_TYPES = {
+    "mortal",
+    "70k",
+    "weak_mortal",
+    "ext_mortal",
+    "p4m11_u32",
+    "m0_72k",
+    "consensus_v1",
+    "nova_v1",
+    "luckyj_v1",
+    "unknown_v1",
+    "nova_v2",
+}
 
 PLAYER_NAMES = ["East", "South", "West", "North"]
 _REVIEW_EXPORTER = DefaultRuntimeReviewExporter()

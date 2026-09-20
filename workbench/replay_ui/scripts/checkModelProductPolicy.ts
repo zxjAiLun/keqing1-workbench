@@ -10,8 +10,28 @@ import { modelDisplayName } from '../src/utils/modelDisplay.ts';
 assert.equal(DEFAULT_BOT_TYPE, 'p4m11_u32');
 assert.equal(DEFAULT_REVIEW_BOT_TYPE, 'ext_mortal');
 assert.deepEqual(DEFAULT_REVIEW_MODELS, ['ext_mortal', '70k']);
-assert.deepEqual(GUI_BOT_CATALOG.map((m) => m.value), ['p4m11_u32', 'm0_72k', '70k', 'ext_mortal']);
-assert.deepEqual(REVIEW_BOT_CATALOG.map((m) => m.value), ['ext_mortal', '70k', 'p4m11_u32', 'm0_72k']);
+assert.deepEqual(GUI_BOT_CATALOG.map((m) => m.value), [
+  'p4m11_u32',
+  'm0_72k',
+  '70k',
+  'ext_mortal',
+  'consensus_v1',
+  'nova_v1',
+  'luckyj_v1',
+  'unknown_v1',
+  'nova_v2',
+]);
+assert.deepEqual(REVIEW_BOT_CATALOG.map((m) => m.value), [
+  'ext_mortal',
+  '70k',
+  'p4m11_u32',
+  'm0_72k',
+  'consensus_v1',
+  'nova_v1',
+  'luckyj_v1',
+  'unknown_v1',
+  'nova_v2',
+]);
 assert.equal(BOT_CATALOG.find((m) => m.value === '70k')?.label, 'K0');
 assert.equal(BOT_CATALOG.find((m) => m.value === 'p4m11_u32')?.badge, '实战首选');
 assert.equal(BOT_CATALOG.find((m) => m.value === 'm0_72k')?.badge, '可选备选');

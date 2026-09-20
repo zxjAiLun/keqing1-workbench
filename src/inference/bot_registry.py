@@ -27,6 +27,13 @@ _P4M11_U32 = Path("P4M11_U32/U32_eval_weights.pth")
 # ``M0_72k/...``, never by bare basename.
 _M0_72K = Path("M0_72k/mortal_72000.pth")
 
+# External / imported model pool
+_CONSENSUS_V1 = Path("mortal/authoritative/external/distill_consensus_v3.pth")
+_NOVA_V1 = Path("mortal/authoritative/external/distill_nova.pth")
+_LUCKYJ_V1 = Path("mortal/authoritative/external/luckyj_clone_v1.pth")
+_UNKNOWN_V1 = Path("mortal/authoritative/external/unknown1.pth")
+_NOVA_V2 = Path("mortal/authoritative/external/distill_nova_v2.pth")
+
 # Historical alias only: `mortal` retains V2 and its legacy K0 fallback.
 # New-game defaults live in workbench.model_catalog; never repoint this alias.
 MORTAL_CHECKPOINTS: dict[str, Path] = {
@@ -37,6 +44,11 @@ MORTAL_CHECKPOINTS: dict[str, Path] = {
     "weak_mortal": _EXT_MORTAL,
     "p4m11_u32": _P4M11_U32,
     "m0_72k": _M0_72K,
+    "consensus_v1": _CONSENSUS_V1,
+    "nova_v1": _NOVA_V1,
+    "luckyj_v1": _LUCKYJ_V1,
+    "unknown_v1": _UNKNOWN_V1,
+    "nova_v2": _NOVA_V2,
 }
 
 # What a model's per-action scores MEAN.  The DQN-era checkpoints emit an
@@ -55,6 +67,11 @@ MORTAL_SCORE_SEMANTICS: dict[str, str] = {
     "p4m11_u32": SCORE_SEMANTICS_ACTION_SCORE,
     # DQN-era action-value estimates, not guaranteed real-world收益.
     "m0_72k": SCORE_SEMANTICS_CALIBRATED_Q,
+    "consensus_v1": SCORE_SEMANTICS_CALIBRATED_Q,
+    "nova_v1": SCORE_SEMANTICS_CALIBRATED_Q,
+    "luckyj_v1": SCORE_SEMANTICS_CALIBRATED_Q,
+    "unknown_v1": SCORE_SEMANTICS_ACTION_SCORE,
+    "nova_v2": SCORE_SEMANTICS_CALIBRATED_Q,
 }
 
 

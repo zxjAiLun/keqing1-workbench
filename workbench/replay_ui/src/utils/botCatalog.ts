@@ -47,6 +47,41 @@ export const BOT_CATALOG: BotCatalogEntry[] = [
       'M0_control / seed 20260807 / 72k。DQN calibrated Q；可用于 Play/Review 对照，但不是默认、不是正式天梯晋级。',
   },
   {
+    value: 'consensus_v1',
+    label: '共识v1',
+    shortLabel: '共识',
+    badge: '赛季可用',
+    description: 'distill_consensus_v3.pth。DQN calibrated Q，已开放赛季天梯/Play/Review。',
+  },
+  {
+    value: 'nova_v1',
+    label: 'novav1',
+    shortLabel: 'nova',
+    badge: '赛季可用',
+    description: 'distill_nova.pth。DQN calibrated Q，已开放赛季天梯/Play/Review。',
+  },
+  {
+    value: 'luckyj_v1',
+    label: 'luckyjv1',
+    shortLabel: 'luckyj',
+    badge: '赛季可用',
+    description: 'luckyj_clone_v1.pth。DQN calibrated Q，已开放赛季天梯/Play/Review。',
+  },
+  {
+    value: 'unknown_v1',
+    label: '未知v1',
+    shortLabel: '未知',
+    badge: '赛季可用',
+    description: 'unknown1.pth。Policy action score，已开放赛季天梯/Play/Review。',
+  },
+  {
+    value: 'nova_v2',
+    label: 'novav2',
+    shortLabel: 'nova2',
+    badge: '赛季可用',
+    description: 'distill_nova_v2.pth。DQN calibrated Q，已开放赛季天梯/Play/Review。',
+  },
+  {
     value: 'rulebase',
     label: 'rulebase',
     shortLabel: '基线',
@@ -55,7 +90,17 @@ export const BOT_CATALOG: BotCatalogEntry[] = [
   },
 ];
 
-const GUI_MODEL_ORDER: BotType[] = ['p4m11_u32', 'm0_72k', '70k', 'ext_mortal'];
+const GUI_MODEL_ORDER: BotType[] = [
+  'p4m11_u32',
+  'm0_72k',
+  '70k',
+  'ext_mortal',
+  'consensus_v1',
+  'nova_v1',
+  'luckyj_v1',
+  'unknown_v1',
+  'nova_v2',
+];
 
 export const GUI_BOT_CATALOG: BotCatalogEntry[] = BOT_CATALOG
   .filter((entry) => GUI_MODEL_ORDER.includes(entry.value))
@@ -65,8 +110,17 @@ export const GUI_BOT_CATALOG: BotCatalogEntry[] = BOT_CATALOG
 export const DEFAULT_BOT_TYPE: BotType = 'p4m11_u32';
 export const DEFAULT_REVIEW_BOT_TYPE: BotType = 'ext_mortal';
 export const DEFAULT_REVIEW_MODELS: BotType[] = ['ext_mortal', '70k'];
-export const REVIEW_BOT_CATALOG = ['ext_mortal', '70k', 'p4m11_u32', 'm0_72k']
-  .map((id) => BOT_CATALOG.find((entry) => entry.value === id)!);
+export const REVIEW_BOT_CATALOG = [
+  'ext_mortal',
+  '70k',
+  'p4m11_u32',
+  'm0_72k',
+  'consensus_v1',
+  'nova_v1',
+  'luckyj_v1',
+  'unknown_v1',
+  'nova_v2',
+].map((id) => BOT_CATALOG.find((entry) => entry.value === id)!);
 
 export function defaultPlayModel(models: ReadonlyArray<{ model_id: string }>): string {
   // Never silently replace the preferred model if a stale server omits it.
@@ -79,6 +133,11 @@ export const BOT_CHECKPOINT_DEFAULTS: Record<BotType, string> = {
   ext_mortal: 'artifacts/external_mortal_20240308_best_min.pth',
   p4m11_u32: 'mortal/authoritative/P4M11_U32_2026_09/models/P4M11_U32/U32_eval_weights.pth',
   m0_72k: 'mortal/authoritative/M0_72k_s20260807/models/M0_72k/mortal_72000.pth',
+  consensus_v1: 'mortal/authoritative/external/distill_consensus_v3.pth',
+  nova_v1: 'mortal/authoritative/external/distill_nova.pth',
+  luckyj_v1: 'mortal/authoritative/external/luckyj_clone_v1.pth',
+  unknown_v1: 'mortal/authoritative/external/unknown1.pth',
+  nova_v2: 'mortal/authoritative/external/distill_nova_v2.pth',
   rulebase: '',
 };
 

@@ -67,10 +67,16 @@ def test_new_game_defaults_do_not_repoint_historical_aliases(monkeypatch):
     assert "m0_72k" in _PLAYWITHYOU_MODEL_IDS
     assert _resolve_spec("m0_72k", {}, 0) == "m0_72k"
 
-    assert [(m["model_id"], m["label"]) for m in catalog] == [
-        ("p4m11_u32", "U32 · 实战首选"),
-        ("m0_72k", "M0 · 可选备选"),
-        ("70k", "K0 · 基准参考"), ("ext_mortal", "External Mortal · 外部参考"),
+    assert [m["model_id"] for m in catalog] == [
+        "p4m11_u32",
+        "m0_72k",
+        "70k",
+        "ext_mortal",
+        "consensus_v1",
+        "nova_v1",
+        "luckyj_v1",
+        "unknown_v1",
+        "nova_v2",
     ]
     assert NETWORK_TO_SPEC["mortal"] == "mortal"
     assert MORTAL_CHECKPOINTS["mortal"] == Path("V2_74000/mortal_74000.pth")

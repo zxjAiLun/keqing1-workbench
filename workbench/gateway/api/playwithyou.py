@@ -61,6 +61,11 @@ NETWORK_TO_SPEC: Dict[str, str] = {
     "ext_mortal": "ext_mortal",
     "p4m11_u32": "p4m11_u32",
     "m0_72k": "m0_72k",
+    "consensus_v1": "consensus_v1",
+    "nova_v1": "nova_v1",
+    "luckyj_v1": "luckyj_v1",
+    "unknown_v1": "unknown_v1",
+    "nova_v2": "nova_v2",
 }
 
 # Named runtime choices, not Participants identities. IDs and checkpoint bindings

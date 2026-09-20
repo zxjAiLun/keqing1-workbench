@@ -466,8 +466,17 @@ function ModelSelector({
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-                <span style={{ fontSize: 12, fontWeight: 800 }}>{bot.label}</span>
-                {active && <span style={{ fontSize: 10 }}>已选</span>}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input
+                    type="checkbox"
+                    checked={active}
+                    readOnly
+                    tabIndex={-1}
+                    style={{ accentColor: 'var(--accent)', cursor: 'pointer', width: 14, height: 14, margin: 0 }}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 800 }}>{bot.label}</span>
+                </div>
+                {active && <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)' }}>已勾选</span>}
               </div>
               <div style={{ marginTop: 4 }}>
                 <span

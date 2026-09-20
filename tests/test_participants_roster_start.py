@@ -639,7 +639,17 @@ def test_playwithyou_models_catalog():
     """
     from gateway.api.playwithyou import PLAYWITHYOU_MODEL_CATALOG, list_playwithyou_models
 
-    assert {m["model_id"] for m in PLAYWITHYOU_MODEL_CATALOG} == {"70k", "ext_mortal", "p4m11_u32", "m0_72k"}
+    assert {m["model_id"] for m in PLAYWITHYOU_MODEL_CATALOG} == {
+        "70k",
+        "ext_mortal",
+        "p4m11_u32",
+        "m0_72k",
+        "consensus_v1",
+        "nova_v1",
+        "luckyj_v1",
+        "unknown_v1",
+        "nova_v2",
+    }
     payload = list_playwithyou_models()
     assert payload["models"] == PLAYWITHYOU_MODEL_CATALOG
 

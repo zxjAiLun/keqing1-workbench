@@ -161,6 +161,96 @@ def _validate_first_kyoku(source: str, start: dict, decisions: dict, player_id: 
         raise ValueError(f"{source} Review 报告与当前牌谱或玩家视角不一致")
 
 
+def _first_source_start_kyoku(events: list[dict] | None) -> dict | None:
+    """取本地牌谱事件流里第一个 start_kyoku（校验外部报告视角用）。"""
+    for event in events or []:
+        if isinstance(event, dict) and event.get("type") == "start_kyoku":
+            return event
+    return None
+
+
+def _validate_view_against_events(
+    source: str,
+    start: dict,
+    events: list[dict] | None,
+    player_id: int,
+) -> None:
+    """把外部报告的视角直接对**本地事件流**校验，不依赖本地推理结果。
+
+    与 ``_validate_first_kyoku`` 的区别：后者拿``decisions``（本地 review 产物）
+    作基准，只能等本地权重前向跑完之后才能执行；本函数只用事件流里第一个
+    ``start_kyoku``，因此可以在昂贵推理**之前**就发现视角不符。
+    """
+    local_start = _first_source_start_kyoku(events)
+    if not isinstance(local_start, dict):
+        return
+    expected = (
+        str(local_start.get("bakaze", "")),
+        int(local_start.get("kyoku", 0)),
+        int(local_start.get("honba", 0)),
+        list(local_start.get("scores") or []),
+        [local_start.get("dora_marker")]
+        if local_start.get("dora_marker") is not None
+        else list(local_start.get("dora_markers") or []),
+    )
+    actual = (
+        str(start.get("bakaze", "")),
+        int(start.get("kyoku", 0)),
+        int(start.get("honba", 0)),
+        list(start.get("scores") or []),
+        [start.get("dora_marker")]
+        if start.get("dora_marker") is not None
+        else list(start.get("dora_markers") or []),
+    )
+    tehais = local_start.get("tehais") or []
+    source_hand = tehais[player_id] if player_id < len(tehais) else []
+    external_tehais = start.get("tehais") or []
+    external_hand = external_tehais[player_id] if player_id < len(external_tehais) else []
+    if expected != actual or Counter(map(str, source_hand)) != Counter(map(str, external_hand)):
+        raise ValueError(f"{source} Review 报告与当前牌谱或玩家视角不一致")
+
+
+def preflight_external_reports(
+    links: dict[str, str],
+    raws: dict[str, dict],
+    events: list[dict] | None,
+    player_id: int,
+) -> None:
+    """在本地推理之前校验外部报告与当前牌谱/视角是否匹配。
+
+    目前能提前发现两类问题（都不需要本地 review 产物）：
+    - Mortal 报告的 ``player_id`` 与 GUI 所选视角不一致；
+    - 外部报告与本地事件流的首局（场风/局数/本场/分数/宝牌/配牌）不一致。
+
+    这样用户不必等 30s+ 的权重前向跑完才看到“视角不符”。
+    """
+    if not links:
+        return
+    if links.get("mortal") and isinstance(raws.get("mortal"), dict):
+        report_player_id = raws["mortal"].get("player_id")
+        if report_player_id is not None and int(report_player_id) != int(player_id):
+            raise ValueError(
+                f"Mortal Review 视角为 {int(report_player_id)}，当前 GUI 视角为 {int(player_id)}"
+            )
+    if links.get("naga") and isinstance(raws.get("naga"), dict):
+        raw = raws["naga"]
+        if isinstance(raw.get("pred"), list) and raw["pred"]:
+            first_kyoku = raw["pred"][0] if raw["pred"] else []
+            first_start = ((first_kyoku[0].get("info") or {}).get("msg") or {}) if first_kyoku else {}
+            if first_start:
+                _validate_view_against_events("NAGA", first_start, events, player_id)
+    if links.get("mortal") and isinstance(raws.get("mortal"), dict):
+        first_start = next(
+            (
+                event for event in raws["mortal"].get("mjai_log", [])
+                if isinstance(event, dict) and event.get("type") == "start_kyoku"
+            ),
+            None,
+        )
+        if first_start is not None:
+            _validate_view_against_events("Mortal", first_start, events, player_id)
+
+
 def _same_hint(action: dict | None, hint: dict | None) -> bool:
     if not isinstance(action, dict) or not isinstance(hint, dict):
         return False

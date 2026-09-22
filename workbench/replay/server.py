@@ -25,6 +25,7 @@ from replay.ladder import SeasonNotFoundError, SeasonRegistryError
 from replay.external_reports import (
     fetch_external_raw_reports,
     write_external_teacher_reports,
+    preflight_external_reports,
     _action_actor,
     _decision_kind,
 )
@@ -1504,6 +1505,13 @@ async def replay_multi_teacher(
             except Exception:
                 pass
         events = await _events_from_replay_form(files=files, json_text=json_text, input_type=input_type)
+        # 视角/牌谱预检必须在使用昂贵权重前向**之前**：外部报告与当前牌谱或
+        # 所选视角不符时，不应等 30s+ 的本地 review 跑完才报错。
+        if external_raws:
+            try:
+                preflight_external_reports(external_links, external_raws, events, player_id)
+            except ValueError as e:
+                return JSONResponse(status_code=400, content={"error": str(e)})
         normalized_events = _normalize_replay_events(events)
         storage = get_storage()
         decisions_by_model: dict[str, dict] = {}

@@ -422,3 +422,90 @@ def test_only_site_downloads_are_valid_raw_reports():
     naga = {**site_wrapped, "source": "naga", "review": {"model_tag": "NAGA ニシキ"}}
     assert teacher_reports.strip_local_wrapping(naga)["review"]["model_tag"] == "ニシキ"
     assert teacher_reports.strip_local_wrapping({"mjai_log": []}) == {"mjai_log": []}
+
+
+# ---------------------------------------------------------------------------
+# 预检：视角/牌谱不符必须在本地推理之前发现（不依赖 decisions 产物）
+# ---------------------------------------------------------------------------
+
+
+def _local_events_for_preflight(*, player_id: int = 2, honba: int = 0) -> list[dict]:
+    """本地事件流的最小首局（与 _raw_report 的 mjai_log 首局同构）。"""
+    return [
+        {"type": "start_game"},
+        {
+            "type": "start_kyoku",
+            "bakaze": "E",
+            "kyoku": 1,
+            "honba": honba,
+            "scores": [25000, 25000, 25000, 25000],
+            "dora_marker": "1p",
+            "tehais": [[], [], ["1m", "2m"], []],
+        },
+    ]
+
+
+def test_preflight_passes_when_view_matches_source_events():
+    raw = _raw_report(player_id=2)
+    links = {"mortal": "https://mjai.ekyu.moe/report/x.json"}
+    # 不抛异常 = 允许进入推理
+    external_reports.preflight_external_reports(
+        links, {"mortal": raw}, _local_events_for_preflight(player_id=2), 2
+    )
+
+
+def test_preflight_rejects_mortal_report_with_different_player_id():
+    """报告视角与 GUI 视角不符时，必须在推理前直接拒绝。"""
+    raw = _raw_report(player_id=2)
+    links = {"mortal": "https://mjai.ekyu.moe/report/x.json"}
+    with pytest.raises(ValueError, match="视角"):
+        external_reports.preflight_external_reports(
+            links, {"mortal": raw}, _local_events_for_preflight(player_id=2), 3
+        )
+
+
+def test_preflight_rejects_hand_mismatch_against_source_events():
+    """配牌不符（牌谱与报告不是同一局）同样在推理前拒绝。"""
+    raw = _raw_report(player_id=2)
+    events = _local_events_for_preflight(player_id=2)
+    events[1]["tehais"][2] = ["9s", "9s"]
+    links = {"mortal": "https://mjai.ekyu.moe/report/x.json"}
+    with pytest.raises(ValueError, match="不一致"):
+        external_reports.preflight_external_reports(links, {"mortal": raw}, events, 2)
+
+
+def test_preflight_rejects_start_kyoku_field_mismatch():
+    """首局场况（本场数）不符时拒绝。"""
+    raw = _raw_report(player_id=2)
+    events = _local_events_for_preflight(player_id=2, honba=1)
+    links = {"mortal": "https://mjai.ekyu.moe/report/x.json"}
+    with pytest.raises(ValueError, match="不一致"):
+        external_reports.preflight_external_reports(links, {"mortal": raw}, events, 2)
+
+
+def test_preflight_is_noop_without_external_links_or_events():
+    """没有外部链接、或事件流没有 start_kyoku 时不应误报。"""
+    external_reports.preflight_external_reports({}, {}, _local_events_for_preflight(), 2)
+    raw = _raw_report(player_id=2)
+    links = {"mortal": "https://mjai.ekyu.moe/report/x.json"}
+    external_reports.preflight_external_reports(links, {"mortal": raw}, [], 2)
+    external_reports.preflight_external_reports(links, {"mortal": raw}, None, 2)
+
+
+def test_preflight_matches_final_validate_first_kyoku_verdict():
+    """预检与终局 _validate_first_kyoku 必须同判：不一致的场景两边都要拦。
+
+    两者基准不同（预检对事件流，终局对 decisions 产物），但对外部报告
+    与牌谱不匹配这一事实的判断必须一致，否则会出现"预检放过、推理后才报"。
+    """
+    raw = _raw_report(player_id=2)
+    events = _local_events_for_preflight(player_id=2)
+    links = {"mortal": "https://mjai.ekyu.moe/report/x.json"}
+
+    # 视角不符：预检拦
+    with pytest.raises(ValueError, match="视角"):
+        external_reports.preflight_external_reports(links, {"mortal": raw}, events, 3)
+
+    # 终局侧对同一报告的视角检查（build_mortal_teacher_report 的 player_id 分支）
+    with pytest.raises(ValueError, match="视角"):
+        external_reports.build_mortal_teacher_report(raw, {"log": []}, 3, "replay_x")

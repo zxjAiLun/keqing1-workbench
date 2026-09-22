@@ -147,9 +147,9 @@ def test_review_defaults_and_explicit_models_reach_the_resolver(tmp_path, monkey
 
     status, payload = post(server.app, "/api/replay/multi-teacher", {"json_text": "[]"})
     assert status == 200, payload
-    assert resolved == ["ext_mortal", "70k"] == list(DEFAULT_REVIEW_MODELS)
+    assert resolved == ["consensus_v1", "nova_v2"] == list(DEFAULT_REVIEW_MODELS)
     assert [c["bot_type"] for c in calls] == resolved
-    assert [m["label"] for m in payload["selected_teacher_models"]] == ["External Mortal", "K0"]
+    assert [m["label"] for m in payload["selected_teacher_models"]] == ["共识v1", "novav2"]
     calls.clear()
     resolved.clear()
     status, payload = post(server.app, "/api/replay/multi-teacher", {

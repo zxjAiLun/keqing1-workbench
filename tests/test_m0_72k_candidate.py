@@ -116,14 +116,14 @@ def test_m0_is_selectable_in_the_gui_model_picker_but_is_not_the_default():
     assert MODEL_ID in listed
     assert MODEL_ID in _GUI_MORTAL_MODEL_LABELS
     assert "DEFAULT_BOT_TYPE: BotType = 'p4m11_u32'" in catalog_ts
-    assert "DEFAULT_REVIEW_MODELS: BotType[] = ['ext_mortal', '70k']" in catalog_ts
+    assert "DEFAULT_REVIEW_MODELS: BotType[] = ['consensus_v1', 'nova_v2']" in catalog_ts
     upload = (REPO_ROOT / "workbench" / "replay_ui" / "src" / "components" / "Upload" / "UploadForm.tsx").read_text(
         encoding="utf-8"
     )
     assert "useState<BotType[]>([...DEFAULT_REVIEW_MODELS])" in upload
 
     assert f"'{MODEL_ID}'" in bot_types_ts, "the GUI BotType union does not know M0"
-    assert "DEFAULT_REVIEW_MODELS: BotType[] = ['ext_mortal', '70k']" in catalog_ts
+    assert "DEFAULT_REVIEW_MODELS: BotType[] = ['consensus_v1', 'nova_v2']" in catalog_ts
 
 
 # --------------------------------------------------------------------------

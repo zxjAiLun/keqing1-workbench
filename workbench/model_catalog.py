@@ -4,8 +4,9 @@
 Review defaults are independent of the preferred model for new games.
 """
 DEFAULT_PLAY_MODEL = "p4m11_u32"
-DEFAULT_REVIEW_MODEL = "ext_mortal"
-DEFAULT_REVIEW_MODELS = ("ext_mortal", "70k")
+# First enabled review model; used when a caller sends no explicit bot_type.
+DEFAULT_REVIEW_MODEL = "consensus_v1"
+DEFAULT_REVIEW_MODELS = ("consensus_v1", "nova_v2")
 
 MODEL_LABELS = {
     "p4m11_u32": "U32",
@@ -19,22 +20,22 @@ MODEL_LABELS = {
     "nova_v2": "novav2",
     "mortal": "V2 (historical)",
 }
-# No V2 in new Review selections; M0 is an explicit optional historical/candidate
-# choice, not a default and not a ladder promotion.
-REVIEW_MODEL_LABELS = {
-    model: MODEL_LABELS[model]
-    for model in (
-        "ext_mortal",
-        "70k",
-        "p4m11_u32",
-        "m0_72k",
-        "consensus_v1",
-        "nova_v1",
-        "luckyj_v1",
-        "unknown_v1",
-        "nova_v2",
-    )
-}
+# First three are the default-visible review picker choices, in product order;
+# the rest stay selectable behind the UI's "more models" toggle. No V2, and M0
+# stays an explicit optional historical/candidate choice, not a default and not
+# a ladder promotion.
+REVIEW_MODEL_ORDER = (
+    "consensus_v1",
+    "nova_v2",
+    "luckyj_v1",
+    "nova_v1",
+    "unknown_v1",
+    "p4m11_u32",
+    "m0_72k",
+    "70k",
+    "ext_mortal",
+)
+REVIEW_MODEL_LABELS = {model: MODEL_LABELS[model] for model in REVIEW_MODEL_ORDER}
 PLAY_MODEL_CATALOG = [
     {"model_id": "p4m11_u32", "label": "U32 · 实战首选"},
     {"model_id": "m0_72k", "label": "M0 · 可选备选"},

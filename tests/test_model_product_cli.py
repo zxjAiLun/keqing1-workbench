@@ -17,8 +17,9 @@ def test_review_cli_choices_and_default(monkeypatch):
     with pytest.raises(SystemExit):
         bot.main()
     parser = captured[0]
-    assert original(parser, ["--input", "unused"]).bot_type == "ext_mortal"
-    for name in ["70k", "ext_mortal", "p4m11_u32"]:
+    # Review CLI default follows the first enabled review model (consensus_v1).
+    assert original(parser, ["--input", "unused"]).bot_type == "consensus_v1"
+    for name in ["70k", "ext_mortal", "p4m11_u32", "consensus_v1", "nova_v2", "luckyj_v1"]:
         assert original(parser, ["--input", "unused", "--bot-type", name]).bot_type == name
     with pytest.raises(SystemExit):
         original(parser, ["--input", "unused", "--bot-type", "mortal"])

@@ -162,7 +162,7 @@ def test_u32_is_selectable_and_preferred_for_play_not_default_review():
 
     # Owner final decision: new Play = U32; Review remains independent.
     assert "DEFAULT_BOT_TYPE: BotType = 'p4m11_u32'" in catalog_ts
-    assert "DEFAULT_REVIEW_MODELS: BotType[] = ['ext_mortal', '70k']" in catalog_ts
+    assert "DEFAULT_REVIEW_MODELS: BotType[] = ['consensus_v1', 'nova_v2']" in catalog_ts
     upload = (
         REPO_ROOT / "workbench" / "replay_ui" / "src" / "components" / "Upload" / "UploadForm.tsx"
     ).read_text(encoding="utf-8")

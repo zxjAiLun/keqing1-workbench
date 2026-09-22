@@ -19,6 +19,17 @@ def _normalize_or_keep_aka(tile: str) -> str:
     return normalize_tile(tile)
 
 
+def _normalize_ura_markers(markers: object) -> List[str]:
+    """Ura-dora indicators, keeping '?' face-down placeholders (unlike a real tile)."""
+    if not isinstance(markers, list):
+        return []
+    out: List[str] = []
+    for marker in markers:
+        text = str(marker)
+        out.append(text if text == "?" else _normalize_or_keep_aka(text))
+    return out
+
+
 @dataclass
 class PlayerState:
     hand: Counter = field(default_factory=Counter)
@@ -182,7 +193,8 @@ def apply_event(state: GameState, event: MjaiEvent) -> None:
         state.oya = event["oya"]
         state.scores = event["scores"][:]
         state.dora_markers = [_normalize_or_keep_aka(event["dora_marker"])]
-        state.ura_dora_markers = []
+        # 里宝牌指示牌随开局面传入（天凤 kyoku[3]）；没有该字段时才是空。
+        state.ura_dora_markers = _normalize_ura_markers(event.get("ura_dora_markers"))
         state.last_discard = None
         state.last_kakan = None
         state.actor_to_move = state.oya
@@ -405,9 +417,7 @@ def apply_event(state: GameState, event: MjaiEvent) -> None:
         if "oya" in event:
             state.oya = int(event["oya"])
         if "ura_dora_markers" in event:
-            state.ura_dora_markers = [
-                _normalize_or_keep_aka(tile) for tile in event["ura_dora_markers"]
-            ]
+            state.ura_dora_markers = _normalize_ura_markers(event["ura_dora_markers"])
         if "tenpai_players" in event:
             state.ryukyoku_tenpai_players = [int(pid) for pid in event["tenpai_players"]]
         elif et == "hora":

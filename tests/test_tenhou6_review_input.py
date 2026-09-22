@@ -115,20 +115,17 @@ def test_tenhou6_double_ron_uses_each_result_pair() -> None:
         [0, 1, 0, "満貫8000点", "立直(1飜)", "赤ドラ(1飜)"],
     ]
 
-    assert _result_events(result) == [
-        {
-            "type": "hora",
-            "actor": 2,
-            "target": 1,
-            "deltas": [0, -8300, 9300, 0],
-        },
-        {
-            "type": "hora",
-            "actor": 0,
-            "target": 1,
-            "deltas": [8600, -8600, 0, 0],
-        },
+    events = _result_events(result, ura_dora_markers=["8p"])
+
+    # 两次和了各取自己的 (deltas, detail) 对；天凤原生结算串随事件透传。
+    assert [(e["actor"], e["target"], e["deltas"]) for e in events] == [
+        (2, 1, [0, -8300, 9300, 0]),
+        (0, 1, [8600, -8600, 0, 0]),
     ]
+    assert [e["result_label"] for e in events] == ["30符4飜7700点", "満貫8000点"]
+    # is_limit 仅在命中限制役时出现，普通手不写该字段。
+    assert [e.get("is_limit", False) for e in events] == [False, True]
+    assert all(e["ura_dora_markers"] == ["8p"] for e in events)
 
 
 def test_tenhou6_meld_must_match_current_discard() -> None:

@@ -15,6 +15,17 @@ def _normalize_or_keep_aka(tile: str) -> str:
     return normalize_tile(tile)
 
 
+def _normalize_marker_list(markers: object) -> List[str]:
+    """Normalize ura-dora indicators while preserving '?' face-down placeholders."""
+    if not isinstance(markers, list):
+        return []
+    out: List[str] = []
+    for marker in markers:
+        text = str(marker)
+        out.append(text if text == "?" else _normalize_or_keep_aka(text))
+    return out
+
+
 def is_replay_meta_event(event_or_type: MjaiEvent | str | None) -> bool:
     if isinstance(event_or_type, dict):
         event_type = event_or_type.get("type")
@@ -47,6 +58,11 @@ def normalize_replay_event(event: MjaiEvent) -> MjaiEvent:
 
 def _canonicalize_hora_event(event: MjaiEvent, state: GameState) -> MjaiEvent:
     out = dict(event)
+    # Ura-dora indicators are carried on the hora event; shape them once here so
+    # both the probe pass and the real apply_event accept the same payload.
+    for key in ("ura_dora_markers", "ura_markers"):
+        if key in out:
+            out[key] = _normalize_marker_list(out[key])
     actor = out.get("actor")
     target = out.get("target")
     if actor is None or target is None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,6 +22,14 @@ CONVLOG_BIN = (
 _TSUMOGIRI = 60
 _ROUND_BY_OFFSET = {0: "E", 4: "S", 8: "W", 12: "N"}
 _HONORS_BY_CODE = {41: "E", 42: "S", 43: "W", 44: "N", 45: "P", 46: "F", 47: "C"}
+
+
+def _normalize_marker(tile: str) -> str:
+    """Red-five suffix is stripped ('5sr' -> '5s'); '?' placeholders are kept."""
+    text = str(tile)
+    if text == "?":
+        return text
+    return text[:-1] if text.endswith("r") else text
 
 
 def _tile_from_tenhou6(value: int | str) -> str:
@@ -102,15 +111,34 @@ def _rule_has_aka(rule: dict[str, Any]) -> bool:
     return bool(rule.get("aka") or rule.get("aka51") or rule.get("aka52") or rule.get("aka53"))
 
 
+def _tile_codes(values: Any) -> list[str]:
+    """tenhou6 tile-code list -> mjai tile faces（非法/空值一律跳过）。"""
+    if not isinstance(values, list):
+        return []
+    tiles: list[str] = []
+    for value in values:
+        try:
+            tiles.append(_tile_from_tenhou6(value))
+        except (TypeError, ValueError):
+            continue
+    return tiles
+
+
 def _start_kyoku_event(kyoku: list[Any], names: list[str], rule: dict[str, Any]) -> dict[str, Any]:
     del names, rule
     meta = kyoku[0]
     round_index = int(meta[0])
     round_base = (round_index // 4) * 4
+    # tenhou6 每局字段：kyoku[2] = [開局宝牌指示牌, 杠宝牌指示牌...]，
+    # kyoku[3] = [裏宝牌指示牌, 杠裏宝牌指示牌...]（后者只对已立直的和了有效）。
+    dora_codes = kyoku[2] if len(kyoku) > 2 and isinstance(kyoku[2], list) else []
+    ura_codes = kyoku[3] if len(kyoku) > 3 and isinstance(kyoku[3], list) else []
     return {
         "type": "start_kyoku",
         "bakaze": _ROUND_BY_OFFSET.get(round_base, "E"),
-        "dora_marker": _tile_from_tenhou6(kyoku[2][0]) if len(kyoku) > 2 and kyoku[2] else None,
+        "dora_marker": _tile_codes(dora_codes)[0] if dora_codes else None,
+        # 里宝牌指示牌：缺失时输出空列表（已知无里宝牌），不是省略字段。
+        "ura_dora_markers": _tile_codes(ura_codes),
         "kyoku": round_index % 4 + 1,
         "honba": int(meta[1]) if len(meta) > 1 else 0,
         "kyotaku": int(meta[2]) if len(meta) > 2 else 0,
@@ -120,7 +148,103 @@ def _start_kyoku_event(kyoku: list[Any], names: list[str], rule: dict[str, Any])
     }
 
 
-def _result_events(result: list[Any]) -> list[dict[str, Any]]:
+# 天凤原生结算串的等级前缀（如 "三倍満36000点"）；自摸串形如 "満貫4000点∀"。
+_TENHOU_LEVELS = (
+    ("六倍満", "6x yakuman"),
+    ("五倍満", "5x yakuman"),
+    ("四倍満", "4x yakuman"),
+    ("三倍満", "sanbaiman"),
+    ("倍満", "baiman"),
+    ("跳満", "haneman"),
+    ("満貫", "mangan"),
+    ("役満", "yakuman"),
+)
+# 结算串中出现限制役字样（"満貫4000点∀" / "三倍満36000点"）时视为限制手。
+_TENHOU_LIMIT_RE = re.compile("|".join(level for level, _ in _TENHOU_LEVELS))
+# 天凤役种名（日文）→ 本仓 yaku key（与 mahjong 库命名保持一致）。
+_TENHOU_YAKU_ALIASES = {
+    "立直": "Riichi",
+    "一発": "Ippatsu",
+    "門前清自摸和": "Menzen Tsumo",
+    "断幺九": "Tanyao",
+    "混全帯幺九": "Chantai",
+    "純全帯幺九": "Junchan",
+    "平和": "Pinfu",
+    "一盃口": "Iipeiko",
+    "二盃口": "Ryanpeikou",
+    "三色同順": "Sanshoku Doujun",
+    "三色同刻": "Sanshoku Doukou",
+    "一気通貫": "Ittsu",
+    "混一色": "Honitsu",
+    "清一色": "Chinitsu",
+    "対々和": "Toitoi",
+    "三暗刻": "Sanankou",
+    "三槓子": "Sankantsu",
+    "混老頭": "Honroutou",
+    "七対子": "Chiitoitsu",
+    "小三元": "Shousangen",
+    "混幺九": "Honroutou",
+    "ドラ": "Dora",
+    "裏ドラ": "Ura Dora",
+    "赤ドラ": "Aka Dora",
+    "役牌 白": "Yakuhai (haku)",
+    "役牌 發": "Yakuhai (hatsu)",
+    "役牌 中": "Yakuhai (chun)",
+    "役牌 東": "Yakuhai (east)",
+    "役牌 南": "Yakuhai (south)",
+    "役牌 西": "Yakuhai (west)",
+    "役牌 北": "Yakuhai (north)",
+    "嶺上開花": "Rinshan",
+    "搶槓": "Chankan",
+    "海底摸月": "Haitei Raoyue",
+    "河底撈魚": "Houtei Raoyui",
+    "天和": "Tenhou",
+    "地和": "Chiihou",
+}
+
+
+def _parse_tenhou_yaku_detail(text: str) -> tuple[str, str, int] | None:
+    """'立直(1飜)' -> ('Riichi', 'Riichi', 1)；无法识别则返回 None。"""
+    if not text.endswith("飜)") and not text.endswith("飜）"):
+        return None
+    open_index = max(text.rfind("("), text.rfind("（"))
+    if open_index <= 0:
+        return None
+    name = text[:open_index].strip()
+    digits = "".join(ch for ch in text[open_index:] if ch.isdigit())
+    if not name or not digits:
+        return None
+    key = _TENHOU_YAKU_ALIASES.get(name, name)
+    return (key, name, int(digits))
+
+
+def _parse_tenhou_result_fields(fields: list[Any]) -> dict[str, Any]:
+    """Parse Tenhou's native result detail (fields[3:]) into our settlement shape.
+
+    Tenhou already states the authoritative limit/score label and the full yaku
+    list, so when this succeeds we prefer it over recomputing the hand.  Returns
+    ``{}`` when the shape is not recognised, leaving the caller free to fall back.
+    """
+    if len(fields) < 4 or not isinstance(fields[3], str):
+        return {}
+    parsed: dict[str, Any] = {"result_label": fields[3]}
+    if _TENHOU_LIMIT_RE.search(fields[3]):
+        parsed["is_limit"] = True
+    yaku_details: list[dict[str, Any]] = []
+    for item in fields[4:]:
+        if not isinstance(item, str):
+            continue
+        detail = _parse_tenhou_yaku_detail(item)
+        if detail is not None:
+            yaku_details.append({"key": detail[0], "name": detail[1], "han": detail[2]})
+    if yaku_details:
+        parsed["yaku_details"] = yaku_details
+        parsed["yaku"] = [d["name"] for d in yaku_details]
+        parsed["han"] = sum(d["han"] for d in yaku_details)
+    return parsed
+
+
+def _result_events(result: list[Any], *, ura_dora_markers: list[str] | None = None) -> list[dict[str, Any]]:
     if not result:
         return []
     kind = result[0]
@@ -149,14 +273,18 @@ def _result_events(result: list[Any]) -> list[dict[str, Any]]:
         deltas = [int(delta) for delta in raw_deltas]
         actor = int(detail[0])
         target = int(detail[1])
-        events.append(
-            {
-                "type": "hora",
-                "actor": actor,
-                "target": target,
-                "deltas": deltas,
-            }
-        )
+        event: dict[str, Any] = {
+            "type": "hora",
+            "actor": actor,
+            "target": target,
+            "deltas": deltas,
+        }
+        # 天凤原生已给出等级/点数/役种（如 "三倍満36000点" + "裏ドラ(5飜)"），
+        # 直接携带为权威结算，避免本地重算丢失里宝牌等信息。
+        event.update(_parse_tenhou_result_fields(detail))
+        # 里宝牌指示牌整局透传；打分层的立直守卫决定是否生效。
+        event["ura_dora_markers"] = list(ura_dora_markers or [])
+        events.append(event)
     return events
 
 
@@ -220,6 +348,9 @@ def _convert_kyoku_to_events(kyoku: list[Any], names: list[str], rule: dict[str,
     extra_dora_markers = [_tile_from_tenhou6(value) for value in kyoku[2][1:]]
     pending_dora_marker: str | None = None
     actor = oya
+    # 里宝牌指示牌在 kyoku[3]（第 1 个为开局里宝牌，其余为杠里宝牌）。
+    # 该字段只对已立直的和了生效，此处整局透传，由打分层的立直守卫决定是否计入。
+    ura_dora_markers = _tile_codes(kyoku[3] if len(kyoku) > 3 else [])
 
     def queue_next_dora_marker() -> None:
         nonlocal pending_dora_marker
@@ -329,7 +460,7 @@ def _convert_kyoku_to_events(kyoku: list[Any], names: list[str], rule: dict[str,
         if not progressed:
             actor = (actor + 1) % 4
 
-    events.extend(_result_events(kyoku[-1] if kyoku else []))
+    events.extend(_result_events(kyoku[-1] if kyoku else [], ura_dora_markers=ura_dora_markers))
     events.append({"type": "end_kyoku"})
     # R12-A Repair：立直成立与否按 upstream convlog 状态机决定（宣言牌被荣和
     # 或局在宣言牌后结束 → 不成立）。canonical converter 统一产出正确语义，

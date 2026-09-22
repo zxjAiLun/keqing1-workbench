@@ -188,6 +188,13 @@ def _normalize_replay_events(events: list[dict] | None) -> list[dict]:
                 elif state.last_discard:
                     pai = state.last_discard.get("pai_raw") or state.last_discard.get("pai")
             ura_markers = [str(m) for m in (event.get("ura_dora_markers") or event.get("ura_markers") or [])]
+            # 天凤原生结算（如 "三倍満36000点" + "裏ドラ(5飜)"）是权威值：已在
+            # convert 层解析到 hora 事件上。仅在本地重算能给出同等 han 时才采信
+            # 本地结果（保留本地 fu 细节），否则保留天凤原生 han/yaku，避免本地
+            # 少算里宝牌时把正确结算改错。
+            native_han = event.get("han")
+            native_yaku = event.get("yaku")
+            native_yaku_details = event.get("yaku_details")
             if pai:
                 try:
                     result = score_hora(
@@ -200,14 +207,16 @@ def _normalize_replay_events(events: list[dict] | None) -> list[dict]:
                     )
                     deltas = list(result.deltas)
                     scores = [int(state.scores[i] + deltas[i]) for i in range(4)]
+                    has_native = isinstance(native_han, int) and native_han > 0
+                    trust_local = not has_native or int(result.han or 0) >= int(native_han)
                     normalized[idx] = {
                         **event,
                         "pai": str(pai),
                         "is_tsumo": is_tsumo,
-                        "han": result.han,
+                        "han": int(result.han or 0) if trust_local else int(native_han),
                         "fu": result.fu,
-                        "yaku": result.yaku,
-                        "yaku_details": result.yaku_details,
+                        "yaku": result.yaku if trust_local else native_yaku,
+                        "yaku_details": result.yaku_details if trust_local else native_yaku_details,
                         "cost": result.cost,
                         "deltas": deltas,
                         "scores": scores,

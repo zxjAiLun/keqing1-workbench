@@ -144,19 +144,53 @@ def _build_prepared_hora_payload_from_view(
     }
 
 
+def canonical_yaku_level(han: int, cost: dict) -> str:
+    """Authoritative limit label derived from han.
+
+    The native adapter hardcodes ``yaku_level`` to ``mangan`` for every limited
+    hand, so a 12-han sanbaiman was reported as mangan. Ranks above mangan are a
+    pure function of han, so derive those deterministically instead of trusting
+    the adapter; hands below the mangan threshold keep whatever the scorer said.
+    """
+    if han >= 78:
+        return "6x yakuman"
+    if han >= 65:
+        return "5x yakuman"
+    if han >= 52:
+        return "4x yakuman"
+    if han >= 39:
+        return "3x yakuman"
+    if han >= 26:
+        return "2x yakuman"
+    if han >= 13:
+        return "yakuman"
+    if han >= 11:
+        return "sanbaiman"
+    if han >= 8:
+        return "baiman"
+    if han >= 6:
+        return "haneman"
+    if han >= 5:
+        return "mangan"
+    return str(cost.get("yaku_level") or "")
+
+
 def _extract_hora_truth_from_native_payload(payload: dict) -> _HoraTruth:
     if not payload.get("cost"):
         raise RuntimeError("malformed Rust hora truth: missing cost")
     dora_count = int(payload.get("dora_count") or 0)
     ura_count = int(payload.get("ura_count") or 0)
     aka_count = int(payload.get("aka_count") or 0)
+    han = int(payload.get("han") or 0)
+    cost = dict(payload.get("cost") or {})
+    cost["yaku_level"] = canonical_yaku_level(han, cost)
     return _HoraTruth(
-        han=int(payload.get("han") or 0),
+        han=han,
         fu=int(payload.get("fu") or 0),
         yaku=[str(name) for name in (payload.get("yaku") or [])],
         yaku_details=[dict(item) for item in (payload.get("yaku_details") or [])],
         is_open_hand=bool(payload.get("is_open_hand")),
-        cost=dict(payload.get("cost") or {}),
+        cost=cost,
         deltas=[int(v) for v in (payload.get("deltas") or [])],
         dora_count=dora_count,
         ura_count=ura_count,

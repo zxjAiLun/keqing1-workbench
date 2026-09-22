@@ -187,15 +187,18 @@ def _normalize_replay_events(events: list[dict] | None) -> list[dict]:
                     pai = state.last_tsumo_raw[actor] or state.last_tsumo[actor]
                 elif state.last_discard:
                     pai = state.last_discard.get("pai_raw") or state.last_discard.get("pai")
-            ura_markers = [str(m) for m in (event.get("ura_dora_markers") or event.get("ura_markers") or [])]
-            # 天凤原生结算（如 "三倍満36000点" + "裏ドラ(5飜)"）是权威值：已在
-            # convert 层解析到 hora 事件上。仅在本地重算能给出同等 han 时才采信
-            # 本地结果（保留本地 fu 细节），否则保留天凤原生 han/yaku，避免本地
-            # 少算里宝牌时把正确结算改错。
-            native_han = event.get("han")
-            native_yaku = event.get("yaku")
-            native_yaku_details = event.get("yaku_details")
+            ura_markers = [str(m) for m in (event.get("ura_dora_markers") or event.get("ura_markers") or [])]            # 外部牌谱（天凤等）的终局结算字段是**权威真值**，已在 convert 层解析到
+            # hora 事件上（此时事件带 result_label = 天凤原生结算串）。
+            # 本地 scorer 只允许**补缺失字段**，绝不允许覆盖事件里已经存在的非 None 值
+            # —— 否则一旦本地 scorer 算错（例如少算里宝牌），就会先把真值改坏，随后
+            # _merge_terminal_event_details() 再把这个坏值当成 event 真值塞给 gt_action
+            # （obs 步的 chosen/gt_action 由此分叉）。
+            # 自战/无原生结算的牌谱不带 result_label，仍按旧行为由本地重算填充（保留
+            # Ippatsu 等本地才能补上的修正）。
+            # 自战路径不经过本函数，其结算由 BattleManager 直接产出，不受影响。
+            external_authoritative = event.get("result_label") is not None
             if pai:
+                result = None
                 try:
                     result = score_hora(
                         state,
@@ -205,28 +208,66 @@ def _normalize_replay_events(events: list[dict] | None) -> list[dict]:
                         is_tsumo=is_tsumo,
                         ura_dora_markers=ura_markers,
                     )
-                    deltas = list(result.deltas)
-                    scores = [int(state.scores[i] + deltas[i]) for i in range(4)]
-                    has_native = isinstance(native_han, int) and native_han > 0
-                    trust_local = not has_native or int(result.han or 0) >= int(native_han)
-                    normalized[idx] = {
-                        **event,
+                except Exception:
+                    result = None
+                if result is not None:
+                    computed = {
                         "pai": str(pai),
                         "is_tsumo": is_tsumo,
-                        "han": int(result.han or 0) if trust_local else int(native_han),
+                        "han": int(result.han or 0),
                         "fu": result.fu,
-                        "yaku": result.yaku if trust_local else native_yaku,
-                        "yaku_details": result.yaku_details if trust_local else native_yaku_details,
+                        "yaku": result.yaku,
+                        "yaku_details": result.yaku_details,
                         "cost": result.cost,
-                        "deltas": deltas,
-                        "scores": scores,
+                        "deltas": list(result.deltas),
                         "honba": int(event.get("honba", state.honba)),
                         "kyotaku": int(event.get("kyotaku", state.kyotaku)),
                         "ura_dora_markers": ura_markers,
                     }
-                    event = normalized[idx]
-                except Exception:
-                    pass
+                    # field-by-field：事件已有非 None 值则保留（authoritative），否则补本地重算值。
+                    # ura 指示牌在事件里可能名为 ura_markers（mjai 习惯）或 ura_dora_markers（本仓习惯），
+                    # 两个名字都非 None 才算“已有权威值”，否则统一填补标准化字段名。
+                    has_event_ura = (
+                        event.get("ura_dora_markers") is not None
+                        or event.get("ura_markers") is not None
+                    )
+                    resolved = dict(event)
+                    for key, value in computed.items():
+                        if key == "ura_dora_markers" and has_event_ura:
+                            resolved.setdefault("ura_dora_markers", ura_markers)
+                            continue
+                        if external_authoritative:
+                            # 外部权威结算：事件已有的非 None 值一律保留，只补缺口。
+                            if resolved.get(key) is None:
+                                resolved[key] = value
+                        else:
+                            # 无原生结算的牌谱：维持旧行为，本地重算结果覆盖，
+                            # 以保留 Ippatsu / 本场棒 等只有本地才能补上的修正。
+                            resolved[key] = value
+                    # scores 必须与“最终采用的 deltas”一致：若 deltas 来自事件（authoritative）
+                    # 而 scores 缺失，不能拿本地重算的 deltas 去推 scores，否则又引入不一致。
+                    if resolved.get("scores") is None:
+                        final_deltas = resolved.get("deltas")
+                        if isinstance(final_deltas, list) and len(final_deltas) == 4:
+                            resolved["scores"] = [
+                                int(state.scores[i]) + int(final_deltas[i]) for i in range(4)
+                            ]
+                    normalized[idx] = resolved
+                    event = resolved
+                else:
+                    # 本地 scorer 不可用/不适用时，仍然要把事件的权威结算字段归一化
+                    # （保证下游能读到 ura_dora_markers，而不是只看到 mjai 习惯名）。
+                    resolved = dict(event)
+                    if resolved.get("ura_dora_markers") is None and ura_markers:
+                        resolved["ura_dora_markers"] = ura_markers
+                    if resolved.get("scores") is None and resolved.get("deltas") is not None:
+                        final_deltas = resolved.get("deltas")
+                        if isinstance(final_deltas, list) and len(final_deltas) == 4:
+                            resolved["scores"] = [
+                                int(state.scores[i]) + int(final_deltas[i]) for i in range(4)
+                            ]
+                    normalized[idx] = resolved
+                    event = resolved
 
         try:
             apply_event(state, event)
@@ -254,6 +295,11 @@ def _merge_terminal_event_details(decisions: dict, events: list[dict] | None) ->
 
     终局事件里两个键的语义仍然不同：``gt_action`` 就是这次实际动作，事件是唯一
     真值（并附带结算字段）；``chosen`` 只允许补它缺的键，已给出的动作字段不改写。
+
+    **例外（不变量）**：``is_obs=True`` 的观察步，按 ``bot.py`` 创建时的定义
+    （``"chosen": event`` 、``"gt_action": event``，注释“他家实际执行的动作”），
+    ``chosen == gt_action == event``。这类条目的 chosen 不是模型决策，
+    因此两个键都直接置为事件副本（各自独立，避免别名互相污染）。
     """
     if not isinstance(decisions, dict) or not events:
         return decisions
@@ -269,6 +315,20 @@ def _merge_terminal_event_details(decisions: dict, events: list[dict] | None) ->
         if not isinstance(event, dict) or event.get("type") not in _TERMINAL_RESULT_EVENT_TYPES:
             continue
         event_type = event.get("type")
+        # 观察步（is_obs）的不变量：obs entry 创建时 chosen = gt_action = event
+        # （bot.py 注释“他家实际执行的动作”）。终局事件同样适用：两者必须同为
+        # 该 event 的副本。之前对 chosen 只补 None，导致 obs 步的 chosen 保留了
+        # 与事件不一致的旧值（实测 deltas 分叉），下游把它误当成模型决策。
+        # 非 obs 的自家决策步保持原区别：gt_action 是实际事件真值，chosen 是
+        # 模型选择（只补展示字段，不允许事件把模型动作本身覆盖掉）。
+        if entry.get("is_obs"):
+            for action_key in ("chosen", "gt_action"):
+                action = entry.get(action_key)
+                if not isinstance(action, dict) or action.get("type") != event_type:
+                    continue
+                # 两份独立副本，避免后续 alias mutation 互相影响。
+                entry[action_key] = dict(event)
+            continue
         for action_key in ("chosen", "gt_action"):
             action = entry.get(action_key)
             if not isinstance(action, dict) or action.get("type") != event_type:

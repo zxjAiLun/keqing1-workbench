@@ -1,7 +1,7 @@
 // src/replay_ui/src/components/Upload/UploadForm.tsx
 import { useState, useRef } from 'react';
 import type { BotType } from '../../types/bot';
-import { REVIEW_BOT_CATALOG, DEFAULT_REVIEW_MODELS } from '../../utils/botCatalog';
+import { REVIEW_BOT_CATALOG, REVIEW_PINNED_MODELS, DEFAULT_REVIEW_MODELS } from '../../utils/botCatalog';
 
 interface UploadFormProps {
   onDataLoaded: (data: unknown) => void;
@@ -431,6 +431,13 @@ function ModelSelector({
   onClear: () => void;
   disabled?: boolean;
 }) {
+  const [showAllModels, setShowAllModels] = useState(false);
+  const pinnedModels = REVIEW_PINNED_MODELS;
+  const moreModels = REVIEW_BOT_CATALOG.filter((bot) => !pinnedModels.includes(bot.value));
+  // A selected model must never be hidden, otherwise the selection looks empty.
+  const moreModelsActive = moreModels.some((bot) => selectedModels.includes(bot.value));
+  const expanded = showAllModels || moreModelsActive;
+  const visibleModels = expanded ? REVIEW_BOT_CATALOG : REVIEW_BOT_CATALOG.filter((bot) => pinnedModels.includes(bot.value));
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -444,9 +451,9 @@ function ModelSelector({
           </button>
         </span>
       </div>
-      <FieldHint>默认教师为 External Mortal + K0，与 U32 实战默认独立。U32 / M0 可加入动作对照；V2 仅保留历史复盘。</FieldHint>
+      <FieldHint>默认勾选共识v1 + novav2，与 U32 实战默认独立。其余模型（含 External Mortal / K0 / U32 / M0）可展开更多后加入对照；V2 仅保留历史复盘。</FieldHint>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 6, marginTop: 6 }}>
-        {REVIEW_BOT_CATALOG.map((bot) => {
+        {visibleModels.map((bot) => {
           const active = selectedModels.includes(bot.value);
           return (
             <button
@@ -499,6 +506,17 @@ function ModelSelector({
             </button>
           );
         })}
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <button
+          type="button"
+          onClick={() => setShowAllModels((value) => !value)}
+          disabled={disabled}
+          aria-expanded={expanded}
+          style={miniActionStyle}
+        >
+          {showAllModels ? '收起更多模型' : `展开更多模型（${moreModels.length}）`}
+        </button>
       </div>
     </div>
   );

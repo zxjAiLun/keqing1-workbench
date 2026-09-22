@@ -108,19 +108,23 @@ export const GUI_BOT_CATALOG: BotCatalogEntry[] = BOT_CATALOG
 
 // New-game preference is NOT the Review teacher default.
 export const DEFAULT_BOT_TYPE: BotType = 'p4m11_u32';
-export const DEFAULT_REVIEW_BOT_TYPE: BotType = 'ext_mortal';
-export const DEFAULT_REVIEW_MODELS: BotType[] = ['ext_mortal', '70k'];
+// Review teacher default: the enabled choices, in product order. First enabled
+// model doubles as the legacy single-model default for `POST /api/replay`.
+export const DEFAULT_REVIEW_BOT_TYPE: BotType = 'consensus_v1';
+export const DEFAULT_REVIEW_MODELS: BotType[] = ['consensus_v1', 'nova_v2'];
 export const REVIEW_BOT_CATALOG = [
-  'ext_mortal',
-  '70k',
+  'consensus_v1',
+  'nova_v2',
+  'luckyj_v1',
+  'nova_v1',
+  'unknown_v1',
   'p4m11_u32',
   'm0_72k',
-  'consensus_v1',
-  'nova_v1',
-  'luckyj_v1',
-  'unknown_v1',
-  'nova_v2',
+  '70k',
+  'ext_mortal',
 ].map((id) => BOT_CATALOG.find((entry) => entry.value === id)!);
+/** Always-visible review choices. The rest of the catalog needs a "more" toggle. */
+export const REVIEW_PINNED_MODELS: BotType[] = ['consensus_v1', 'nova_v2', 'luckyj_v1'];
 
 export function defaultPlayModel(models: ReadonlyArray<{ model_id: string }>): string {
   // Never silently replace the preferred model if a stale server omits it.

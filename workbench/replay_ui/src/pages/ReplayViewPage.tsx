@@ -12,6 +12,7 @@ import { ReplayStatsDialog } from '../components/ReviewWorkspace/ReplayStatsDial
 import { CN_BAKAZE, SEAT_NAMES_CN } from '../utils/constants';
 import { decisionColors, decisionBg } from '../components/BattleBoard/tableStyles';
 import { normalizeReplayPlayerNames, replayPlayerDisplayName } from '../utils/replayNames';
+import { candidateProbabilities as sharedCandidateProbabilities } from '../utils/candidateProbability';
 
 const TILE_BASE = '/tiles';
 const TILE_SVG: Record<string, string> = {
@@ -42,27 +43,8 @@ interface TileWithMeta {
   isTsumo: boolean;
 }
 
-function softmaxProbabilities(scores: number[]): number[] {
-  if (scores.length === 0) return [];
-  const maxScore = Math.max(...scores);
-  const exps = scores.map((score) => Math.exp(score - maxScore));
-  const total = exps.reduce((sum, value) => sum + value, 0);
-  if (!Number.isFinite(total) || total <= 0) return scores.map(() => 0);
-  return exps.map((value) => value / total);
-}
-
-function candidateScore(c: { logit: number; beam_score?: number; final_score?: number }): number {
-  return c.final_score ?? c.beam_score ?? c.logit;
-}
-
-function candidateProbabilities(candidates: Array<{ logit: number; beam_score?: number; final_score?: number; prob?: number }>): number[] {
-  const fallback = softmaxProbabilities(candidates.map(candidateScore));
-  return candidates.map((candidate, idx) => (
-    typeof candidate.prob === 'number' && Number.isFinite(candidate.prob)
-      ? candidate.prob
-      : fallback[idx] ?? 0
-  ));
-}
+// 概率统一走 utils/candidateProbability.ts（tau=0.1，与后端/Mortal 站点一致）
+const candidateProbabilities = sharedCandidateProbabilities;
 
 function buildSortedTiles(entry: DecisionLogEntry): TileWithMeta[] {
   const hand = entry.hand || [];

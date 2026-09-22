@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { DecisionLogEntry } from '../../types/replay';
 import { modelDisplayName } from '../../utils/modelDisplay';
 import { sameReplayAction } from '../../utils/tileUtils';
+import { candidateProbabilities as sharedCandidateProbabilities } from '../../utils/candidateProbability';
 import { decisionColors, decisionBg, decisionBorder } from '../BattleBoard/tableStyles';
 
 interface ReplayDecisionPanelProps {
@@ -28,17 +29,6 @@ function displayScore(c: { logit: number; beam_score?: number; final_score?: num
 
 function displayScoreLabel(c: { logit: number; beam_score?: number; final_score?: number }): string {
   return displayScore(c).toFixed(2);
-}
-
-function softmaxProbabilities(scores: number[]): number[] {
-  if (scores.length === 0) return [];
-  const maxScore = Math.max(...scores);
-  const exps = scores.map((score) => Math.exp(score - maxScore));
-  const total = exps.reduce((sum, value) => sum + value, 0);
-  if (!Number.isFinite(total) || total <= 0) {
-    return scores.map(() => 0);
-  }
-  return exps.map((value) => value / total);
 }
 
 function displayProbLabel(probability: number): string {
@@ -256,7 +246,7 @@ export function ReplayDecisionPanel({
     ? activeTeacherReview?.actual_action ?? null
     : gt_action;
 
-  const fallbackProbs = softmaxProbabilities(candidates.map((candidate) => displayScore(candidate)));
+  const fallbackProbs = sharedCandidateProbabilities(candidates);
   const fallbackProbByCandidate = new Map<DecisionLogEntry['candidates'][number], number>(
     candidates.map((candidate, idx) => [candidate, fallbackProbs[idx] ?? 0]),
   );

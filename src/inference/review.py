@@ -6,7 +6,21 @@ from mahjong_env.types import action_dict_to_spec, action_specs_match
 
 from inference.contracts import DecisionContext, DecisionResult, ScoredCandidate
 
-DEFAULT_CANDIDATE_SOFTMAX_TEMPERATURE = 1.0
+# 展示层候选概率的 softmax 温度。
+#
+# 这个值**不影响选牌**（选牌是 q_out.argmax，见 MortalEngine.react_batch，
+# 因为 review 以 boltzmann_epsilon=0 构造），只决定前端把候选的 final_score
+# 转成百分比概率时的**尖锐程度**。
+#
+# 取 0.1 是为了与 Mortal 官方 review 站点（mjai.ekyu.moe）对齐：站点报告的
+# details[].prob 就是用 tau=0.1 对 q_value 做 softmax 得到的。实测从该站点
+# 报告的 (q_value, prob) 反解温度，72/72 个决策条目的估计值均为 0.10000。
+#
+# 历史上这里是 1.0，导致同一手牌在本仓展示的概率远比 Mortal 站点扁平
+# （例如 top1 实际 0.9998 会被显示成 ~0.21），于是同一局里"本仓 rating"
+# 与"Mortal 站点 rating"看起来对不上（rating 本身走 min-max，与此无关，
+# 但概率展示差异会让用户认为两边算的不是一回事）。
+DEFAULT_CANDIDATE_SOFTMAX_TEMPERATURE = 0.1
 
 
 def candidate_to_log_dict(candidate: ScoredCandidate) -> dict:

@@ -36,7 +36,7 @@ import {
   SELF_SEAT_SIDE_MARGIN,
   validateMeldTiles,
 } from '../src/components/BattleBoard/seatLayout.ts';
-import { BASE_TABLE_WIDTH, HAND_TILE_GAP, HAND_DRAW_GAP } from '../src/components/BattleBoard/tableLayout.ts';
+import { BASE_TABLE_WIDTH, HAND_TILE_GAP, HAND_DRAW_GAP, MELD_TILE_GAP } from '../src/components/BattleBoard/tableLayout.ts';
 import { TILE_SIZES } from '../src/components/BattleBoard/tileSizes.ts';
 import type { Action, DecisionLogEntry, MeldEntry } from '../src/types/replay.ts';
 
@@ -505,10 +505,10 @@ for (let m = 0; m <= 4; m++) {
     stableOffset + noDrawContent <= geometry.handLaneWidth,
     `meld=${m}: 稳定偏移(${stableOffset}) + 无摸牌态(${noDrawContent}) ≤ lane(${geometry.handLaneWidth})`,
   );
-  if (m <= 2) {
-    check(stableOffset === SELF_HAND_LEFT_OFFSET, `meld=${m}: 应保持完整 ${SELF_HAND_LEFT_OFFSET}px 偏移（得到 ${stableOffset}）`);
+  if (geometry.handLaneWidth - drawContent >= SELF_HAND_LEFT_OFFSET) {
+    check(stableOffset === SELF_HAND_LEFT_OFFSET, `meld=${m}: 空间充足时保持完整左偏移`);
   } else {
-    check(stableOffset < SELF_HAND_LEFT_OFFSET, `meld=${m}: 偏移应自动收缩（得到 ${stableOffset}）`);
+    check(stableOffset < SELF_HAND_LEFT_OFFSET, `meld=${m}: 空间不足时偏移自动收缩`);
   }
   // 可见牌面起点 = lane 左边界 + 稳定偏移（摸/不摸一致）
   const visibleTileStart = geometry.handLeft + stableOffset;
@@ -541,21 +541,20 @@ check(
   `0 副露时手牌/副露间隔仍恒为 ${SELF_HAND_MELD_GAP}px`,
 );
 
-// --- K：meld 朝向矩阵与 kakan 叠放偏移（R2）---------------------------------
-// 普通副露牌 vs 横置被鸣牌/kakan 叠牌的朝向矩阵：south 0/90、north 180/270、
-// east 90/0、west 270/180。
+// --- K：meld 朝向矩阵与完整加杠牌面 -----------------------------------------
+// 统一玩家局部坐标再旋转：south 0/90、north 180/270、east 90/180、west 270/0。
 check(getMeldTileOrientation('south', false) === 0 && getMeldTileOrientation('south', true) === 90, `south meld 朝向 0/90`);
 check(getMeldTileOrientation('north', false) === 180 && getMeldTileOrientation('north', true) === 270, `north meld 朝向 180/270`);
-check(getMeldTileOrientation('east', false) === 90 && getMeldTileOrientation('east', true) === 0, `east meld 朝向 90/0`);
-check(getMeldTileOrientation('west', false) === 270 && getMeldTileOrientation('west', true) === 180, `west meld 朝向 270/180`);
+check(getMeldTileOrientation('east', false) === 90 && getMeldTileOrientation('east', true) === 180, `east meld 朝向 90/180`);
+check(getMeldTileOrientation('west', false) === 270 && getMeldTileOrientation('west', true) === 0, `west meld 朝向 270/0`);
 
-// 叠放偏移由 TILE_SIZES 推导，不硬编码 24/14。
-const liftLarge = Math.ceil(TILE_SIZES.large.w / 2);
-const liftNormal = Math.ceil(TILE_SIZES.normal.w / 2);
+// 偏移为完整横牌高度 + 组内缝，不再遮挡半张牌。
+const liftLarge = TILE_SIZES.large.w + MELD_TILE_GAP;
+const liftNormal = TILE_SIZES.normal.w + MELD_TILE_GAP;
 const southStack = getKakanStackOffset('south', 'large');
 check(
   southStack.x === 0 && southStack.y === -liftLarge,
-  `south kakan 应垂直向上叠放半张牌，无横向漂移（${JSON.stringify(southStack)}）`,
+  `south kakan 应向上展示完整横牌，无横向漂移（${JSON.stringify(southStack)}）`,
 );
 check(
   getKakanStackOffset('north', 'normal').x === 0 && getKakanStackOffset('north', 'normal').y === liftNormal,
@@ -570,24 +569,18 @@ check(
   `west kakan 应向左叠放（朝中心）`,
 );
 
-// --- L：south 副露显示顺序（最早副露在最右，右吸附）-------------------------
+// --- L：四家副露统一使用局部顺序（最早副露在玩家自己的最右）---------------
 const chronoMelds = [
   meld('pon', 'P', ['P', 'P'], 2),
   meld('chi', '1m', ['2m', '3m'], 3),
   meld('pon', 'N', ['N', 'N'], 3),
 ];
-const southOrder = orderMeldsForDisplay(chronoMelds, 'south');
+const southOrder = orderMeldsForDisplay(chronoMelds);
 check(
   southOrder[0].pai === 'N' && southOrder[1].pai === '1m' && southOrder[2].pai === 'P',
   `south 副露应按时间逆序显示：最早 P 在最右、最新 N 在最左（得到 ${southOrder.map(m => m.pai).join('/')}）`,
 );
-for (const pos of (['north', 'east', 'west'] as const)) {
-  const kept = orderMeldsForDisplay(chronoMelds, pos);
-  check(
-    kept[0].pai === 'P' && kept[2].pai === 'N',
-    `${pos} 副露应保持时间顺序（最早 P 在前）`,
-  );
-}
+check(chronoMelds[0].pai === 'P' && chronoMelds[2].pai === 'N', '排序不修改回放原始副露数组');
 
 if (failures > 0) {
   console.error(`review daiminkan regression FAILED (${failures} issues)`);

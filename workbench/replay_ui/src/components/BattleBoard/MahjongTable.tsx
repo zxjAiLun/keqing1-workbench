@@ -17,15 +17,15 @@ import {
   HAND_DRAW_GAP,
   MELD_GROUP_GAP,
   SIDE_ZONE_GAP,
-  DISC_COLS,
-  DISC_GAP,
+  OPPONENT_HAND_MELD_GAP,
 } from "./tableLayout";
 import { ActionBar } from "./ActionBar";
 import type { BattleState, Action, DiscardEntry, MeldEntry } from "../../types/battle";
 import type { LogitTileData } from "../../utils/replayAdapter";
 import { BAKAZE_CN, JIKAZE_CN } from "../../utils/constants";
 import { sortHand } from "../../utils/tileUtils";
-import { buildMeldDisplayTiles, computeSelfHandContentOffset, computeSelfHandWidth, computeSouthMeldLaneWidth, getKakanStackOffset, getMeldTileOrientation, getSeatModel, orderMeldsForDisplay, SELF_HAND_LEFT_OFFSET, SELF_HAND_MELD_GAP, SELF_SEAT_SHELL_WIDTH_PX, SELF_SEAT_SIDE_MARGIN, type LayoutAxis, type SeatPosition } from "./seatLayout";
+import { computeSelfHandContentOffset, computeSelfHandWidth, computeSouthMeldLaneWidth, getSeatModel, getSeatRowLayout, orderMeldsForDisplay, SELF_HAND_LEFT_OFFSET, SELF_HAND_MELD_GAP, SELF_SEAT_SHELL_WIDTH_PX, SELF_SEAT_SIDE_MARGIN, type LayoutAxis, type SeatPosition } from "./seatLayout";
+import { layoutDiscardTiles, layoutMeldTiles } from "./tableTileLayout";
 import { useTheme } from "../../context/themeStore";
 import {
   getTableclothOptions,
@@ -51,18 +51,6 @@ import {
 const SEAT_COLORS = ["var(--seat-0)", "var(--seat-1)", "var(--seat-2)", "var(--seat-3)"];
 
 // ---------------------------------------------------------------------------
-// 工具
-// ---------------------------------------------------------------------------
-function chunkDiscards(discards: DiscardEntry[], cols: number): DiscardEntry[][] {
-  const rows: DiscardEntry[][] = [];
-  for (let i = 0; i < discards.length; i += cols)
-    rows.push(discards.slice(i, i + cols));
-  return rows;
-}
-
-
-
-// ---------------------------------------------------------------------------
 // 弃牌堆 tile 尺寸
 // ---------------------------------------------------------------------------
 const SELF_HAND_GAP = HAND_TILE_GAP;
@@ -71,12 +59,6 @@ const SELF_HAND_BAR_MAX_HEIGHT = Math.round(TILE_SIZES.large.h * 1.05);
 const SELF_HAND_BAR_WIDTH = TILE_SIZES.large.w * 0.8;
 const SELF_HAND_BAR_MIN_VISIBLE_PCT = 1;
 const SELF_HAND_TEACHER_BAR_GAP = 2;
-
-function normalizeOrientation(orientation: number): 0 | 90 | 180 | 270 {
-  const normalized = ((orientation % 360) + 360) % 360;
-  if (normalized === 90 || normalized === 180 || normalized === 270) return normalized;
-  return 0;
-}
 
 function getTileBox(size: "small" | "normal" | "large", orientation: 0 | 90 | 180 | 270) {
   const dim = TILE_SIZES[size];
@@ -162,119 +144,28 @@ function buildClaimedDiscardFlags(
   return flags;
 }
 
-function DiscardTile({ d, position, zIndex, claimed }: { d: DiscardEntry; position: SeatPosition; zIndex?: number; claimed?: boolean }) {
-  const modelOrientation = getSeatModel(position).tileOrientation;
-  const baseOrientation =
-    position === "east" ? 90
-    : position === "west" ? 270
-    : modelOrientation;
-  const orientation = normalizeOrientation(baseOrientation + (d.reach_declared ? 90 : 0));
+function DiscardPond({ discards, position, claimedFlags = [] }: {
+  discards: DiscardEntry[];
+  position: SeatPosition;
+  claimedFlags?: boolean[];
+}) {
+  const layout = layoutDiscardTiles(discards, position);
   return (
-    <div style={{ position: "relative", zIndex }}>
-      <OrientedTile
-        tile={d.pai}
-        size="normal"
-        orientation={orientation}
-        dimmed={d.tsumogiri}
-        outlined={Boolean(claimed || d.reach_declared)}
-        outlineColor={claimed ? "var(--negative)" : undefined}
-      />
-    </div>
-  );
-}
-
-// 自家（底部）：左下角起，行左→右，新行向下
-function DiscardPondSouth({ discards, claimedFlags = [] }: { discards: DiscardEntry[]; claimedFlags?: boolean[] }) {
-  const rows = chunkDiscards(discards, DISC_COLS);
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 1, alignItems: "flex-start" }}>
-      {rows.map((row, ri) => (
-        <div key={ri} style={{ display: "flex", flexDirection: "row", gap: DISC_GAP }}>
-          {row.map((d, di) => {
-            const globalIndex = ri * DISC_COLS + di;
-            return (
-              <DiscardTile
-                key={`${globalIndex}-${d.pai}-${d.tsumogiri ? "t" : "d"}-${d.reach_declared ? "r" : "n"}`}
-                d={d}
-                position="south"
-                claimed={claimedFlags[globalIndex]}
-              />
-            );
-          })}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// 对家（顶部）：右上角起，行右→左，新行向上（column-reverse）
-function DiscardPondNorth({ discards, claimedFlags = [] }: { discards: DiscardEntry[]; claimedFlags?: boolean[] }) {
-  const rows = chunkDiscards(discards, DISC_COLS);
-  return (
-    <div style={{ display: "flex", flexDirection: "column-reverse", gap: 1, alignItems: "flex-end" }}>
-      {rows.map((row, ri) => (
-        <div key={ri} style={{ display: "flex", flexDirection: "row-reverse", gap: DISC_GAP }}>
-          {row.map((d, di) => {
-            const globalIndex = ri * DISC_COLS + di;
-            return (
-              <DiscardTile
-                key={`${globalIndex}-${d.pai}-${d.tsumogiri ? "t" : "d"}-${d.reach_declared ? "r" : "n"}`}
-                d={d}
-                position="north"
-                claimed={claimedFlags[globalIndex]}
-              />
-            );
-          })}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// 左家（上家）：牌旋转90°，列从上→下，新列向左
-function DiscardPondLeft({ discards, claimedFlags = [] }: { discards: DiscardEntry[]; claimedFlags?: boolean[] }) {
-  const cols = chunkDiscards(discards, DISC_COLS);
-  return (
-    <div style={{ display: "flex", flexDirection: "row-reverse", gap: 1, alignItems: "flex-start" }}>
-      {cols.map((col, ci) => (
-        <div key={ci} style={{ display: "flex", flexDirection: "column", gap: DISC_GAP, position: "relative", zIndex: cols.length - ci }}>
-          {col.map((d, di) => {
-            const globalIndex = ci * DISC_COLS + di;
-            return (
-              <DiscardTile
-                key={`${globalIndex}-${d.pai}-${d.tsumogiri ? "t" : "d"}-${d.reach_declared ? "r" : "n"}`}
-                d={d}
-                position="east"
-                zIndex={di + 1}
-                claimed={claimedFlags[globalIndex]}
-              />
-            );
-          })}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// 右家（下家）：牌旋转90°+180°=270°，列从下→上，新列向右
-function DiscardPondRight({ discards, claimedFlags = [] }: { discards: DiscardEntry[]; claimedFlags?: boolean[] }) {
-  const cols = chunkDiscards(discards, DISC_COLS);
-  return (
-    <div style={{ display: "flex", flexDirection: "row", gap: 1, alignItems: "flex-end" }}>
-      {cols.map((col, ci) => (
-        <div key={ci} style={{ display: "flex", flexDirection: "column-reverse", gap: DISC_GAP, position: "relative", zIndex: cols.length - ci }}>
-          {col.map((d, di) => {
-            const globalIndex = ci * DISC_COLS + di;
-            return (
-              <DiscardTile
-                key={`${globalIndex}-${d.pai}-${d.tsumogiri ? "t" : "d"}-${d.reach_declared ? "r" : "n"}`}
-                d={d}
-                position="west"
-                zIndex={di + 1}
-                claimed={claimedFlags[globalIndex]}
-              />
-            );
-          })}
+    <div data-discard-pond={position} style={{ width: layout.width, height: layout.height, position: "relative" }}>
+      {layout.tiles.map(({ discard: d, discardIndex, x, y, width, height, orientation }) => (
+        <div
+          key={`${discardIndex}-${d.pai}`}
+          data-discard-index={discardIndex}
+          style={{ position: "absolute", left: x, top: y, width, height }}
+        >
+          <OrientedTile
+            tile={d.pai}
+            size="normal"
+            orientation={orientation}
+            dimmed={d.tsumogiri}
+            outlined={Boolean(claimedFlags[discardIndex] || d.reach_declared)}
+            outlineColor={claimedFlags[discardIndex] ? "var(--negative)" : undefined}
+          />
         </div>
       ))}
     </div>
@@ -350,68 +241,36 @@ function getOpponentDiscardHole(
 }
 
 function MeldBlock({ pid, meld, position }: { pid: number; meld: MeldEntry; position: SeatPosition }) {
-  const model = getSeatModel(position);
-  const meldTileSize = position === "south" ? "large" : "normal";
-  const displayTiles = buildMeldDisplayTiles(pid, meld);
-  const flowDirection = getFlexDirection(model.meldAxis, false);
-  const stackOffset = getKakanStackOffset(position, meldTileSize);
+  const size = position === "south" ? "large" : "normal";
+  const layout = layoutMeldTiles(pid, meld, position, size);
   return (
-    <div style={{
-      display: "flex",
-      flexDirection: flowDirection,
-      gap: position === "south" ? 4 : 3,
-      alignItems: position === "south" ? "flex-end" : "center",
+    <div data-meld-type={meld.type} data-meld-target={meld.target} style={{
+      width: layout.width, height: layout.height, position: "relative", flexShrink: 0,
     }}>
-      {displayTiles.map((entry, idx) => {
-        const orientation = getMeldTileOrientation(position, entry.rotated);
-        const stackedTile = displayTiles.find((candidate) => candidate.stackedOn === idx);
-        const { width, height } = getTileBox(meldTileSize, orientation);
-        return (
-          <div key={`${entry.tile}-${idx}`} style={{ width, height, position: "relative", flexShrink: 0 }}>
-            {entry.hidden ? (
-              <TileBack size={meldTileSize} orientation={orientation} />
-            ) : (
-              <OrientedTile
-                tile={entry.tile}
-                size={meldTileSize}
-                orientation={orientation}
-              />
-            )}
-            {stackedTile && (
-              // R2：kakan 第四张与被鸣牌同为横置，叠在基础 tile box 内，
-              // 向牌桌中心偏移半张牌，保持约一半重叠。
-              <div style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                transform: `translate(${stackOffset.x}px, ${stackOffset.y}px)`,
-                pointerEvents: "none",
-                zIndex: 2,
-              }}>
-                <OrientedTile
-                  tile={stackedTile.tile}
-                  size={meldTileSize}
-                  orientation={getMeldTileOrientation(position, stackedTile.rotated)}
-                />
-              </div>
-            )}
-          </div>
-        );
-      }).filter((_, idx) => displayTiles[idx].stackedOn === undefined)}
+      {layout.tiles.map((entry, idx) => (
+        <div
+          key={`${entry.tile}-${idx}`}
+          data-meld-tile={idx}
+          data-called-tile={entry.rotated && entry.stackedOn === undefined ? "true" : undefined}
+          data-stacked-tile={entry.stackedOn !== undefined ? "true" : undefined}
+          style={{ position: "absolute", left: entry.x, top: entry.y, width: entry.width, height: entry.height }}
+        >
+          {entry.hidden ? (
+            <TileBack size={size} orientation={entry.orientation} />
+          ) : (
+            <OrientedTile tile={entry.tile} size={size} orientation={entry.orientation} />
+          )}
+        </div>
+      ))}
     </div>
   );
 }
 
 function MeldArea({ pid, melds, position }: { pid: number; melds: MeldEntry[]; position: SeatPosition }) {
   if (melds.length === 0) return null;
-  const model = getSeatModel(position);
-  const flowDirection = getFlexDirection(model.meldAxis, model.meldPlacement === "before");
-  // south 最早副露在最右（右吸附于边栏），后附露依次向左；其余保持时间顺序。
-  const orderedMelds = orderMeldsForDisplay(melds, position);
+  const orderedMelds = orderMeldsForDisplay(melds);
   return (
-    <div style={{ display: "flex", flexDirection: flowDirection, gap: MELD_GROUP_GAP, flexShrink: 0 }}>
+    <div data-meld-area={position} data-player-id={pid} style={{ display: "flex", ...getSeatRowLayout(position), gap: MELD_GROUP_GAP, flexShrink: 0 }}>
       {orderedMelds.map((meld, idx) => (
         <MeldBlock key={`${meld.type}-${meld.pai}-${idx}`} pid={pid} meld={meld} position={position} />
       ))}
@@ -433,10 +292,7 @@ function ConcealedHand({
   onClick?: () => void;
 }) {
   const model = getSeatModel(position);
-  const concealedOrientation: 0 | 90 | 180 | 270 =
-    position === "east" ? 90
-    : position === "west" ? 270
-    : model.tileOrientation;
+  const concealedOrientation = model.tileOrientation;
   const concealedAxis = model.concealedAxis;
   const concealedReverse = model.concealedReverse;
   const flowDirection = getFlexDirection(concealedAxis, concealedReverse);
@@ -534,10 +390,7 @@ function RevealedOpponentHand({
   onClick?: () => void;
 }) {
   const model = getSeatModel(position);
-  const revealedOrientation: 0 | 90 | 180 | 270 =
-    position === "east" ? 90
-    : position === "west" ? 270
-    : model.tileOrientation;
+  const revealedOrientation = model.tileOrientation;
   const sortedTiles = getDisplayedOpponentTiles(position, hand);
   const drawTile = showDrawTile && hand.length > 0 ? hand[hand.length - 1] : null;
   const mainTiles = showDrawTile ? getDisplayedOpponentTiles(position, hand.slice(0, -1)) : sortedTiles;
@@ -835,8 +688,8 @@ function PlayerZone({
   // ── 对面（north）── 整体旋转180deg
   if (position === "north") {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, paddingTop: 1 }}>
-        <div style={{ display: "flex", flexDirection: "row", alignItems: "flex-end", gap: 5 }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "flex-start", gap: OPPONENT_HAND_MELD_GAP }}>
           {model.meldPlacement === "before" && <MeldArea pid={pid} melds={melds} position={position} />}
           {revealedHand ? (
             <RevealedOpponentHand position={position} hand={revealedHand} showDrawTile={showReplayDrawTile} discardHole={discardHole} onClick={onOpponentHandToggle} />
@@ -859,7 +712,7 @@ function PlayerZone({
   if (position === "east") {
     return (
       <div style={{ display: "flex", flexDirection: "row", alignItems: "flex-start", gap: SIDE_ZONE_GAP }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: OPPONENT_HAND_MELD_GAP, alignItems: "flex-start" }}>
           {revealedHand ? (
             <RevealedOpponentHand position={position} hand={revealedHand} showDrawTile={showReplayDrawTile} discardHole={discardHole} onClick={onOpponentHandToggle} />
           ) : (
@@ -880,7 +733,7 @@ function PlayerZone({
   // ── 右家（west）── 竖列暗牌，副露贴右手边
   return (
     <div style={{ display: "flex", flexDirection: "row", alignItems: "flex-start", gap: SIDE_ZONE_GAP }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: OPPONENT_HAND_MELD_GAP, alignItems: "flex-end" }}>
         <MeldArea pid={pid} melds={melds} position={position} />
         {revealedHand ? (
           <RevealedOpponentHand position={position} hand={revealedHand} showDrawTile={showReplayDrawTile} discardHole={discardHole} onClick={onOpponentHandToggle} />
@@ -1442,16 +1295,16 @@ export function MahjongTable({
 
           {/* 中央弃牌堆 */}
           <div style={{ position: "absolute", left: `calc(50% - ${CENTER_SIZE/2 + POND_INSET}px)`, top: `calc(50% + ${CENTER_SIZE/2 + POND_INSET}px)` }}>
-            <DiscardPondSouth discards={discards[humanId] || []} claimedFlags={claimedDiscardFlags[humanId] || []} />
+            <DiscardPond position="south" discards={discards[humanId] || []} claimedFlags={claimedDiscardFlags[humanId] || []} />
           </div>
           <div style={{ position: "absolute", left: `calc(50% + ${CENTER_SIZE/2 + POND_INSET}px)`, top: `calc(50% - ${CENTER_SIZE/2 + POND_INSET}px)`, transform: "translate(-100%, -100%)" }}>
-            <DiscardPondNorth discards={discards[oppTop] || []} claimedFlags={claimedDiscardFlags[oppTop] || []} />
+            <DiscardPond position="north" discards={discards[oppTop] || []} claimedFlags={claimedDiscardFlags[oppTop] || []} />
           </div>
           <div style={{ position: "absolute", left: `calc(50% - ${CENTER_SIZE/2 + POND_INSET}px)`, top: `calc(50% - ${CENTER_SIZE/2 + POND_INSET}px)`, transform: "translateX(-100%)" }}>
-            <DiscardPondLeft discards={discards[oppLeft] || []} claimedFlags={claimedDiscardFlags[oppLeft] || []} />
+            <DiscardPond position="east" discards={discards[oppLeft] || []} claimedFlags={claimedDiscardFlags[oppLeft] || []} />
           </div>
           <div style={{ position: "absolute", left: `calc(50% + ${CENTER_SIZE/2 + POND_INSET}px)`, top: `calc(50% + ${CENTER_SIZE/2 + POND_INSET}px)`, transform: "translateY(-100%)" }}>
-            <DiscardPondRight discards={discards[oppRight] || []} claimedFlags={claimedDiscardFlags[oppRight] || []} />
+            <DiscardPond position="west" discards={discards[oppRight] || []} claimedFlags={claimedDiscardFlags[oppRight] || []} />
           </div>
 
           <SeatNameMarker

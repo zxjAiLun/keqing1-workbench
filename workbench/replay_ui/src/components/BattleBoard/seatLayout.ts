@@ -1,6 +1,6 @@
 import type { MeldEntry } from "../../types/battle";
 import { TILE_SIZES } from "./tileSizes.ts";
-import { BASE_TABLE_WIDTH, MELD_GROUP_GAP } from "./tableLayout.ts";
+import { BASE_TABLE_WIDTH, MELD_GROUP_GAP, MELD_TILE_GAP } from "./tableLayout.ts";
 
 // ── 自家底部固定区域常量（Commit A 收口 + R2 手牌起点）───────────────────
 // shell 右边缘保持 1240（right margin 40）不动，宽度由真实牌桌坐标推导：
@@ -8,9 +8,9 @@ import { BASE_TABLE_WIDTH, MELD_GROUP_GAP } from "./tableLayout.ts";
 // 手牌 tile row 左吸附，并在 lane 内额外应用可收缩的 SELF_HAND_LEFT_OFFSET：
 // 可见第一张牌起点 = handLeft + effectiveOffset（见 computeSelfHandContentOffset）。
 // 副露 lane 右吸附（meldRight = 1240 恒定）。
-// 最坏组合：4 组最宽副露（daiminkan，south large：66 + 3×48 + 3×4 = 222）≈ 897px，
+// 最坏组合：4 组最宽副露（daiminkan，south large：66 + 3×48 + 3×1 = 213）= 876px，
 // 加暗手 1 张 + 摸牌 = 2 张可见（2×48 + 1 + 4 = 101px），再计固定 24px gap；
-// shell 1080 → 四副露 hand lane = 1080 − 897 − 24 = 159 ≥ 101，不裁切、不重叠。
+// shell 1080 → 四副露 hand lane = 1080 − 876 − 24 = 180 ≥ 101，不裁切、不重叠。
 export const SELF_HAND_ORIGIN_X_PX = 160;
 /** 手牌内容（tile row + 柱状图）相对 lane 左边缘的目标左偏移：3 个牌的宽度。 */
 export const SELF_HAND_LEFT_OFFSET = 3 * TILE_SIZES.large.w;
@@ -74,7 +74,7 @@ const SEAT_MODELS: Record<SeatPosition, SeatModel> = {
   },
   east: {
     position: "east",
-    tileOrientation: 270,
+    tileOrientation: 90,
     concealedAxis: "column",
     concealedReverse: true,
     meldAxis: "column",
@@ -83,7 +83,7 @@ const SEAT_MODELS: Record<SeatPosition, SeatModel> = {
   },
   west: {
     position: "west",
-    tileOrientation: 90,
+    tileOrientation: 270,
     concealedAxis: "column",
     concealedReverse: false,
     meldAxis: "column",
@@ -188,49 +188,41 @@ export function buildMeldDisplayTiles(actor: number, meld: MeldEntry): MeldDispl
 }
 
 /**
- * 副露组内单张牌的渲染朝向（R2 统一 helper，供 MeldBlock 与 checker 共用）。
- * 普通副露牌使用该座的 tileOrientation；横置被鸣牌与 kakan 第四张按四家矩阵：
- *   south 90 / north 270 / east 0 / west 180。
+ * 所有牌先按玩家自己的视角摆放，再转到桌面座位。
+ * east 是屏幕左侧（上家），west 是屏幕右侧（下家），不是绝对风位。
+ * 横置牌始终在普通牌的基础上顺时针转 90°，不能给左右家另用反向矩阵。
  */
 export function getMeldTileOrientation(
   position: SeatPosition,
   rotated: boolean,
 ): 0 | 90 | 180 | 270 {
-  if (!rotated) {
-    if (position === "east") return 90;
-    if (position === "west") return 270;
-    return getSeatModel(position).tileOrientation;
+  return ((getSeatModel(position).tileOrientation + (rotated ? 90 : 0)) % 360) as 0 | 90 | 180 | 270;
+}
+
+/** 从玩家的左向右排牌，外沿贴齐桌边。组内和组间必须采用同一座位变换。 */
+export function getSeatRowLayout(position: SeatPosition): {
+  flexDirection: "row" | "row-reverse" | "column" | "column-reverse";
+  alignItems: "flex-start" | "flex-end";
+} {
+  switch (position) {
+    case "south": return { flexDirection: "row", alignItems: "flex-end" };
+    case "north": return { flexDirection: "row-reverse", alignItems: "flex-start" };
+    case "east": return { flexDirection: "column", alignItems: "flex-start" };
+    case "west": return { flexDirection: "column-reverse", alignItems: "flex-end" };
   }
-  if (position === "south") return 90;
-  if (position === "north") return 270;
-  if (position === "east") return 0;
-  return 180;
 }
 
-/**
- * 副露显示顺序（south 右吸附规则）。
- * melds 数组按时间顺序（最早在前）；south 副露 lane 右吸附于右侧边栏，
- * 因此最早副露应位于最右、后附露依次向左排 → 反转。
- * 其余座位保持时间顺序。
- */
-export function orderMeldsForDisplay(
-  melds: MeldEntry[],
-  position: SeatPosition,
-): MeldEntry[] {
-  if (position === "south") return [...melds].reverse();
-  return melds;
+/** 每家最早副露在自己的最右侧，后鸣的组向左追加（返回玩家局部坐标的顺序）。 */
+export function orderMeldsForDisplay(melds: MeldEntry[]): MeldEntry[] {
+  return [...melds].reverse();
 }
 
-/**
- * kakan 叠牌相对基础被鸣牌 tile box 的确定性偏移（R2）。
- * 方向延续四家"朝牌桌中心叠放"语义，偏移量为半张牌（w/2）：
- *   south 向上、north 向下、east 向右（朝中心）、west 向左（朝中心）。
- */
+/** 加杠在原横牌靠桌心一侧完整展示第二张横牌，留缝而非遮住半张牌面。 */
 export function getKakanStackOffset(
   position: SeatPosition,
   size: "small" | "normal" | "large",
 ): { x: number; y: number } {
-  const lift = Math.ceil(TILE_SIZES[size].w / 2);
+  const lift = TILE_SIZES[size].w + MELD_TILE_GAP;
   switch (position) {
     case "south":
       return { x: 0, y: -lift };
@@ -317,13 +309,12 @@ export function computeSelfSeatGeometry(params: {
 /**
  * south 副露 lane 的保守宽度（用于几何校验）。
  * south 使用 large tile；组内最宽为 daiminkan：1 张横置（box 宽 = tile 高）+ 3 张直立
- * + 3 个组内 gap（MeldBlock south 为 4px）。0 组返回 0。
+ * + 3 个组内 gap（与 layoutMeldTiles 共用 MELD_TILE_GAP）。0 组返回 0。
  */
 export function computeSouthMeldLaneWidth(meldCount: number): number {
   if (meldCount <= 0) return 0;
   const tileWidth = TILE_SIZES.large.w;
   const rotatedBoxWidth = TILE_SIZES.large.h; // 横置 90/270 后 box 宽 = 原高
-  const innerTileGap = 4; // MeldBlock 对 south 使用的组内 gap
-  const maxGroupWidth = rotatedBoxWidth + 3 * tileWidth + 3 * innerTileGap;
+  const maxGroupWidth = rotatedBoxWidth + 3 * tileWidth + 3 * MELD_TILE_GAP;
   return meldCount * maxGroupWidth + (meldCount - 1) * MELD_GROUP_GAP;
 }

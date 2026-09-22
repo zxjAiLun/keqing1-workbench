@@ -10,8 +10,10 @@ import { TILE_SIZES } from "./tileSizes.ts";
 export const BASE_TABLE_WIDTH = 1280;
 export const BASE_TABLE_HEIGHT = 900;
 
-/** 中心信息区边长 = 6列弃牌 + 5间隙（天凤实际略小） */
-export const CENTER_SIZE = 6 * TILE_SIZES.normal.w + 5 * 2; // ≈ 214px
+/** 一行六张舍牌；立直横牌额外占用的宽度由 POND_INSET 预留。 */
+export const DISC_COLS = 6;
+export const DISC_GAP = 1;
+export const CENTER_SIZE = DISC_COLS * TILE_SIZES.normal.w + (DISC_COLS - 1) * DISC_GAP;
 
 /** 中心信息核尺寸（天凤实际有足够的空间显示局数/本场/分数） */
 export const CENTER_INFO_SIZE = 152;
@@ -31,8 +33,8 @@ export const WEST_RIGHT_OFFSET = 4;
 // ---------------------------------------------------------------------------
 // 弃牌池偏移量（相对于 CENTER 正方形边缘）
 // ---------------------------------------------------------------------------
-/** 弃牌池紧贴 CENTER 正方形的边，用作四家弃牌的统一定位基准 */
-export const POND_INSET = -4; // 弃牌池略向中央信息核靠拢，减轻空场感
+/** 四条牌河共用同一方形内沿；即使某行有立直横牌，拐角仍保留至少 1px。 */
+export const POND_INSET = Math.ceil((TILE_SIZES.normal.h - TILE_SIZES.normal.w + DISC_GAP) / 2);
 
 // ---------------------------------------------------------------------------
 // 手牌内部间距 - 2D天凤风更紧凑
@@ -47,17 +49,13 @@ export const HAND_DRAW_GAP = 4;
 // ---------------------------------------------------------------------------
 // 副露组间距 - 2D天凤风更紧凑
 // ---------------------------------------------------------------------------
-/** 同一玩家不同副露组之间的间距 */
-export const MELD_GROUP_GAP = 3;
+/** 组内紧排、组间留明确间隔；四家共享，禁止按座位另设 gap。 */
+export const MELD_TILE_GAP = 1;
+export const MELD_GROUP_GAP = 8;
+export const OPPONENT_HAND_MELD_GAP = 12;
 
 // ---------------------------------------------------------------------------
 // 各家 PlayerZone 容器间距 - 2D天凤风更紧凑
 // ---------------------------------------------------------------------------
 /** 左右家容器内部元素间距 */
 export const SIDE_ZONE_GAP = 3;
-
-// ---------------------------------------------------------------------------
-// 弃牌列数（决定 CENTER_SIZE 计算）
-// ---------------------------------------------------------------------------
-export const DISC_COLS = 6;
-export const DISC_GAP = 1;

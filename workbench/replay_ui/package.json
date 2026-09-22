@@ -14,6 +14,7 @@
     "check:ladder-ingest-semantics": "node --experimental-transform-types scripts/checkLadderIngestSemantics.ts",
     "check:playwithyou-capture-semantics": "node --experimental-transform-types scripts/checkPlaywithyouCaptureSemantics.ts",
     "check:review-daiminkan": "node --experimental-transform-types scripts/checkReviewDaiminkan.ts",
+    "check:table-tile-layout": "node --experimental-transform-types scripts/checkTableTileLayout.ts",
     "check:review-diff-semantics": "node --experimental-transform-types scripts/checkReviewDiffSemantics.ts",
     "check:review-e2e": "node --experimental-transform-types scripts/checkReviewE2E.ts",
     "check:participant-semantics": "node --experimental-transform-types scripts/checkParticipantSemantics.ts",

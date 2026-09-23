@@ -11,7 +11,7 @@
 // teacher report、strict checkpoint（V2 不 alias 到 70k）、expected_prob/actual_prob
 // 落库（见 tests/test_replay_review_correctness.py）。
 import { isReplayReviewDiffForPlayer } from '../src/utils/tileUtils.ts';
-import { isForcedRiichiTsumogiriEntry, isReplayReviewComparableEntry } from '../src/utils/reviewComparable.ts';
+import { isForcedActionEntry, isForcedRiichiTsumogiriEntry, isReplayReviewComparableEntry } from '../src/utils/reviewComparable.ts';
 import { computeReviewModelStats } from '../src/utils/reviewStats.ts';
 import type { DecisionLogEntry } from '../src/types/replay.ts';
 
@@ -89,11 +89,32 @@ const forcedTsumogiri = asEntry({
   ],
 });
 check(isForcedRiichiTsumogiriEntry(forcedTsumogiri) === true, 'F2: 立直后摸切应被识别');
+check(isForcedActionEntry(forcedTsumogiri) === true, 'F2: 强制摸切应属于 forced action');
 check(isReplayReviewComparableEntry(forcedTsumogiri, P0) === false, 'F2: 强制摸切不得计入统计');
 const forcedOnly = computeReviewModelStats([forcedTsumogiri], P0);
 check(
   forcedOnly.every((row) => row.total === 0),
   'F2: 强制摸切不得进入统计分母',
+);
+
+const singleCandidateReachDiscard = asEntry({
+  step: 141,
+  is_obs: false,
+  actor_to_move: P0,
+  reached: [false, false, false, false],
+  chosen: dahai('5m', true),
+  gt_action: dahai('5m', true),
+  candidates: [{ action: dahai('5m', true) }],
+  teacher_reviews: [
+    review({ model: 'A', actual_action: dahai('5m', true), expected_action: dahai('5m', true), is_equal: true }),
+  ],
+});
+check(isForcedActionEntry(singleCandidateReachDiscard) === true, 'F2: 单候选 must-do 动作应被识别为 forced action');
+check(isReplayReviewComparableEntry(singleCandidateReachDiscard, P0) === false, 'F2: 单候选 must-do 动作不得计入统计分母');
+const singleCandOnly = computeReviewModelStats([singleCandidateReachDiscard], P0);
+check(
+  singleCandOnly.every((row) => row.total === 0),
+  'F2: 单候选 must-do 动作不得进入统计分母',
 );
 
 const realPass = asEntry({

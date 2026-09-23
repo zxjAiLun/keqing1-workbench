@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { DecisionLogEntry } from '../../types/replay';
 import { modelDisplayName } from '../../utils/modelDisplay';
-import { sameReplayAction } from '../../utils/tileUtils';
+import { actionLabel, sameReplayAction } from '../../utils/tileUtils';
 import { candidateProbabilities as sharedCandidateProbabilities } from '../../utils/candidateProbability';
 import { decisionColors, decisionBg, decisionBorder } from '../BattleBoard/tableStyles';
 
@@ -20,6 +20,8 @@ interface ReplayDecisionPanelProps {
   onActiveTeacherModelChange?: (model: string | null) => void;
   /** 为 true 时隐藏候选动作权重表格（如 post 阶段） */
   hideWeights?: boolean;
+  /** 为 true 时代表必须执行的单一动作（如立直后摸切、单候选立直宣言打牌等） */
+  isForcedAction?: boolean;
 }
 
 /** 候选动作的显示值：final_score（统一口径） */
@@ -137,6 +139,7 @@ export function ReplayDecisionPanel({
   activeTeacherModel: controlledActiveTeacherModel,
   onActiveTeacherModelChange,
   hideWeights = false,
+  isForcedAction = false,
 }: ReplayDecisionPanelProps) {
   const teacherReviews = useMemo(
     () => entry
@@ -210,6 +213,33 @@ export function ReplayDecisionPanel({
   }
 
   const { chosen, gt_action, candidates } = entry;
+
+  // 强制单一动作步（must-do）：无分支，不展示 Q 值候选对比，不误导用户
+  if (isForcedAction || (candidates && candidates.length <= 1)) {
+    const action = gt_action ?? chosen;
+    return (
+      <div style={panelStyle(compact)}>
+        {teacherSelector}
+        <div style={{ padding: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>
+            实际动作: {action ? actionLabel(action) : '—'}
+          </div>
+          <div style={{
+            color: 'var(--text-muted)',
+            fontSize: 12,
+            lineHeight: 1.5,
+            padding: '8px 12px',
+            background: 'var(--bg-card-subtle, rgba(128,128,128,0.08))',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+          }}>
+            强制单一动作（唯一合法选项，无可选分支，不计入决策统计）
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const comparisonExempt = Boolean(entry.comparison_exempt);
 
   const activeTeacherReview = teacherReviews.find((review) => review.model === selectedTeacherModel);

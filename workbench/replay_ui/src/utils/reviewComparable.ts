@@ -48,10 +48,27 @@ export function isReplayResponsePassOpportunity(
 }
 
 /**
+ * 强制无选择步（must-do）：
+ * 1. 立直后的强制摸切（isForcedRiichiTsumogiriEntry）；
+ * 2. 候选动作不超过 1 个（例如立直宣言仅 1 牌可打以维持听牌、或无分支的强制动作）。
+ * 这种步骤属于必须执行动作（must-do），无可选分支，不是真实决策，
+ * UI 中不展示 Q 值对比/条形图，不计入 Review 统计（不进入 Total / Match）。
+ */
+export function isForcedActionEntry(
+  entry: DecisionLogEntry | null | undefined,
+): boolean {
+  if (!entry || entry.is_obs) return false;
+  if (isForcedRiichiTsumogiriEntry(entry)) return true;
+  const cands = entry.candidates;
+  if (cands && cands.length === 1) return true;
+  return false;
+}
+
+/**
  * 这一手是否属于「有意义的 Review 比较决策」。
  *
  * 排除：他家观察步、被更高优先级动作截断的响应窗口（comparison_exempt）、
- * 立直后的强制摸切。真实响应窗口的「过」必须保留。
+ * 强制无选择步（立直后强制摸切、单候选宣言打牌等）。真实响应窗口的「过」必须保留。
  */
 export function isReplayReviewComparableEntry(
   entry: DecisionLogEntry | null | undefined,
@@ -60,5 +77,5 @@ export function isReplayReviewComparableEntry(
   if (!entry) return false;
   if (!isReplayPlayerDecision(entry, playerId)) return false;
   if (entry.comparison_exempt) return false;
-  return !isForcedRiichiTsumogiriEntry(entry);
+  return !isForcedActionEntry(entry);
 }

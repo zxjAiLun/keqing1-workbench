@@ -15,7 +15,7 @@ import { routes } from '../routes';
 import { modelDisplayName } from '../utils/modelDisplay';
 import { CN_BAKAZE } from '../utils/constants';
 import { isReplayReviewDiffForPlayer, TILE_ORDER } from '../utils/tileUtils';
-import { isForcedRiichiTsumogiriEntry } from '../utils/reviewComparable';
+import { isForcedActionEntry } from '../utils/reviewComparable';
 import { normalizeReplayPlayerNames, replayPlayerDisplayName } from '../utils/replayNames';
 import type { Action, ReplayData } from '../types/replay';
 import {
@@ -288,7 +288,7 @@ export function GameBoardReplayPage() {
     if (!data) return;
     const pid = data.player_id;
     for (let i = currentStep - 1; i >= 0; i--) {
-      if (isForcedRiichiTsumogiriEntry(data.log[i])) continue;
+      if (isForcedActionEntry(data.log[i])) continue;
       if (isReplayReviewDiffForPlayer(data.log[i], pid, activeTeacherModel)) {
         resetBoardPhase();
         setShowOpponentHands(false);
@@ -302,7 +302,7 @@ export function GameBoardReplayPage() {
     if (!data) return;
     const pid = data.player_id;
     for (let i = currentStep + 1; i < data.log.length; i++) {
-      if (isForcedRiichiTsumogiriEntry(data.log[i])) continue;
+      if (isForcedActionEntry(data.log[i])) continue;
       if (isReplayReviewDiffForPlayer(data.log[i], pid, activeTeacherModel)) {
         resetBoardPhase();
         setShowOpponentHands(false);
@@ -402,7 +402,7 @@ export function GameBoardReplayPage() {
   // 优先使用后端返回的真实玩家名，fallback 到 P0/P1/P2/P3
   const playerNames = normalizeReplayPlayerNames(data);
 
-  const isForcedRiichiTsumogiri = isForcedRiichiTsumogiriEntry(currentEntry);
+  const isForcedAction = isForcedActionEntry(currentEntry);
 
   // 适配数据
   const battleState = useMemo(
@@ -413,8 +413,8 @@ export function GameBoardReplayPage() {
     },
     [currentEntry, data, currentStep, playerNames, viewPlayerId, boardPhase],
   );
-  // 只在打出前显示权重条；打出后/立直展示阶段不再显示。
-  const baseLogitData = currentEntry && !currentEntry.is_obs && boardPhase === 'pre' && !isForcedRiichiTsumogiri
+  // 只在打出前显示权重条；打出后/立直展示阶段/强制动作不再显示。
+  const baseLogitData = currentEntry && !currentEntry.is_obs && boardPhase === 'pre' && !isForcedAction
     ? buildLogitData(currentEntry)
     : undefined;
   const replayTeacherModels = useMemo(() => {
@@ -483,7 +483,7 @@ export function GameBoardReplayPage() {
   // replayHands 仅用于对手 Oracle reveal / 终局牌姿 / 调试对照。
   const effectiveReplayEntry = currentEntry;
   const effectiveBattleState = battleState;
-  const logitData = currentEntry && !currentEntry.is_obs && boardPhase === 'pre' && !isForcedRiichiTsumogiri
+  const logitData = currentEntry && !currentEntry.is_obs && boardPhase === 'pre' && !isForcedAction
     ? buildLogitData(currentEntry)
     : baseLogitData;
 
@@ -622,7 +622,8 @@ export function GameBoardReplayPage() {
           </div>
           <div className="review-workspace-right-body">
             <ReplayDecisionPanel
-              entry={isForcedRiichiTsumogiri ? null : effectiveReplayEntry}
+              entry={effectiveReplayEntry}
+              isForcedAction={isForcedAction}
               step={currentStep}
               totalSteps={totalSteps}
               compact={false}

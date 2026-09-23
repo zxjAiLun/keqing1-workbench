@@ -1029,10 +1029,15 @@ def _build_runtime_teacher_report(
     for entry in decisions.get("log", []):
         if not isinstance(entry, dict) or entry.get("is_obs"):
             continue
+        cands = entry.get("candidates") or []
+        if len(cands) <= 1:
+            # 候选动作 <= 1 个（例如立直后强制摸切、立直宣言且只有唯一合法听牌打牌等）：
+            # 属于必须执行动作（must-do），无可选分支，不作为 teacher 决策。
+            continue
         actual_action = _actual_action_for_review(entry)
-        if _decision_kind(actual_action) not in ("draw_discard", "reach", "call"):
+        if _decision_kind(actual_action) not in ("draw_discard", "reach", "call", "hora"):
             # 真实响应窗口里的"过"是决策（模型可能想鸣牌/荣和），必须挂载；
-            # hora/ryukyoku 等终局动作无候选权重，仍不作为 teacher 决策。
+            # ryukyoku 等终局动作无候选权重，仍不作为 teacher 决策。
             actual_action = _response_pass_actual(entry, player_id, actual_action)
             if actual_action is None:
                 continue

@@ -17,6 +17,7 @@ for _path in (PROJECT_ROOT, PROJECT_ROOT / "src", PROJECT_ROOT / "workbench"):
         sys.path.insert(0, str(_path))
 
 from workbench.replay.server import (  # noqa: E402
+    _build_runtime_teacher_report,
     _merge_terminal_event_details,
     _normalize_replay_events,
 )
@@ -338,3 +339,75 @@ def test_ordinary_dora_counted_without_riichi_or_ura() -> None:
     # 该用例完全不涉及立直与里宝牌，锁死普通宝牌独立可用
     assert result.yaku.count("Riichi") == 0
     assert not [d for d in (result.yaku_details or []) if d.get("key") == "Ura Dora"]
+
+
+# --------------------------------------------------------------------------
+# 4. runtime teacher report: hora 决策放开 + 强制单选步 (must-do) 剔除
+# --------------------------------------------------------------------------
+
+
+def test_hora_decision_with_candidates_is_included_in_runtime_teacher_report() -> None:
+    """荣和响应窗口（hora vs none 等）是有候选与 Q 值的决策，必须进入 teacher report。"""
+    decisions = {
+        "player_id": 3,
+        "log": [
+            {
+                "step": 166,
+                "is_obs": False,
+                "bakaze": "E",
+                "kyoku": 1,
+                "honba": 0,
+                "chosen": {"type": "hora", "actor": 3, "target": 1, "pai": "7p"},
+                "gt_action": {"type": "hora", "actor": 3, "target": 1, "pai": "7p"},
+                "candidates": [
+                    {"action": {"type": "hora", "actor": 3, "target": 1, "pai": "7p"}, "final_score": 17.18, "prob": 1.0},
+                    {"action": {"type": "none"}, "final_score": 7.62, "prob": 0.0},
+                ],
+            }
+        ],
+    }
+    report = _build_runtime_teacher_report(
+        replay_id="test_hora_included",
+        model_type="consensus_v1",
+        player_id=3,
+        checkpoint=Path("fake_ckpt"),
+        decisions=decisions,
+    )
+    entries = [e for k in report["review"]["kyokus"] for e in k["entries"]]
+    assert len(entries) == 1, "有候选权重的荣和响应步必须计入 teacher 报告"
+    entry = entries[0]
+    assert entry["decision_kind"] == "hora"
+    assert entry["actual"] == {"type": "hora", "actor": 3, "target": 1, "pai": "7p"}
+    assert entry["expected"] == {"type": "hora", "actor": 3, "target": 1, "pai": "7p"}
+    assert len(entry["details"]) == 2
+
+
+def test_single_candidate_must_do_step_excluded_from_runtime_teacher_report() -> None:
+    """立直宣言打牌等仅有 1 个合法动作的 must-do 步：无分支选择，不应进入 teacher report。"""
+    decisions = {
+        "player_id": 3,
+        "log": [
+            {
+                "step": 581,
+                "is_obs": False,
+                "bakaze": "E",
+                "kyoku": 2,
+                "honba": 0,
+                "chosen": {"type": "dahai", "actor": 3, "pai": "5m", "tsumogiri": True},
+                "gt_action": {"type": "dahai", "actor": 3, "pai": "5m", "tsumogiri": True},
+                "candidates": [
+                    {"action": {"type": "dahai", "actor": 3, "pai": "5m", "tsumogiri": True}, "final_score": 18.28, "prob": 1.0},
+                ],
+            }
+        ],
+    }
+    report = _build_runtime_teacher_report(
+        replay_id="test_single_cand_excluded",
+        model_type="consensus_v1",
+        player_id=3,
+        checkpoint=Path("fake_ckpt"),
+        decisions=decisions,
+    )
+    entries = [e for k in report["review"]["kyokus"] for e in k["entries"]]
+    assert len(entries) == 0, "候选只有 1 个的强制动作步不应计入 teacher 报告"
+

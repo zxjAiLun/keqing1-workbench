@@ -151,8 +151,8 @@ def test_response_pass_is_reported_as_real_decision(chosen_type):
     assert len(entry["details"]) == 2
 
 
-def test_player_hora_is_not_rewritten_into_a_pass():
-    """玩家自己荣和：终局动作另有归属，不得被当成"过"（借none→pass路径改写 actual）。"""
+def test_player_hora_with_candidates_is_reported_as_decision():
+    """玩家自己荣和：有候选权重（hora vs none）时作为真实决策报告，不得被当成'过'。"""
     entry = _own_entry(
         step=8,
         chosen={"type": "hora", "actor": PLAYER_ID, "target": 2, "pai": "5m"},
@@ -160,6 +160,24 @@ def test_player_hora_is_not_rewritten_into_a_pass():
         candidates=[
             {"action": {"type": "none", "actor": PLAYER_ID}, "final_score": -0.1, "prob": 0.25},
             {"action": {"type": "hora", "actor": PLAYER_ID, "target": 2, "pai": "5m"}, "final_score": 0.4, "prob": 0.75},
+        ],
+    )
+    entries = _report_entries("70k", {"player_id": PLAYER_ID, "log": [entry]})
+    assert len(entries) == 1
+    assert entries[0]["decision_kind"] == "hora"
+    assert entries[0]["actual"]["type"] == "hora"
+    assert entries[0]["expected"]["type"] == "hora"
+    assert entries[0]["is_equal"] is True
+
+
+def test_single_candidate_must_do_step_is_excluded_from_report():
+    """候选动作 <= 1 个（例如立直宣言牌只有一张可打以维持听牌）：属于 must-do 强制动作，不作为 teacher 决策。"""
+    entry = _own_entry(
+        step=581,
+        chosen={"type": "dahai", "actor": PLAYER_ID, "pai": "5m", "tsumogiri": True},
+        gt_action={"type": "dahai", "actor": PLAYER_ID, "pai": "5m", "tsumogiri": True},
+        candidates=[
+            {"action": {"type": "dahai", "actor": PLAYER_ID, "pai": "5m", "tsumogiri": True}, "final_score": 18.28, "prob": 1.0},
         ],
     )
     assert _report_entries("70k", {"player_id": PLAYER_ID, "log": [entry]}) == []

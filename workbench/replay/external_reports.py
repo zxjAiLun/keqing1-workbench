@@ -123,6 +123,8 @@ def _decision_kind(action: dict | None) -> str | None:
         return "call"
     if action_type == "none":
         return "pass"
+    if action_type == "hora":
+        return "hora"
     return None
 
 
